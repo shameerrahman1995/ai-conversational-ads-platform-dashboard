@@ -121,6 +121,7 @@ model Organization {
   experiments      Experiment[]
   events           Event[]
   auditEvents      AuditEvent[]
+  sourceFacts      SourceFact[]
 }
 
 model User {
@@ -187,6 +188,8 @@ model SourceDocument {
 
   org    Organization     @relation(fields: [orgId], references: [id], onDelete: Cascade)
   chunks KnowledgeChunk[]
+  facts  SourceFact[]
+  assets Asset[]
 
   @@index([orgId])
 }
@@ -209,18 +212,21 @@ model KnowledgeChunk {
 }
 
 model Asset {
-  id         String   @id @default(cuid())
-  orgId      String
-  kind       String // image | video | html5 | export_zip
-  storageKey String
-  checksum   String
-  scanClean  Boolean  @default(false)
-  createdAt  DateTime @default(now())
+  id          String   @id @default(cuid())
+  orgId       String
+  sourceDocId String? // set for ingest uploads; null for creative exports
+  kind        String // image | video | html5 | export_zip | pdf | feed
+  storageKey  String
+  checksum    String
+  scanClean   Boolean  @default(false)
+  createdAt   DateTime @default(now())
 
-  org      Organization      @relation(fields: [orgId], references: [id], onDelete: Cascade)
-  variants CreativeVariant[]
+  org       Organization      @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  sourceDoc SourceDocument?   @relation(fields: [sourceDocId], references: [id], onDelete: Cascade)
+  variants  CreativeVariant[]
 
   @@index([orgId])
+  @@index([sourceDocId])
 }
 
 // ---------------- Campaigns, versions, creative ----------------
@@ -515,4 +521,22 @@ model AuditEvent {
 
   @@index([orgId])
   @@index([createdAt])
+}
+
+// Candidate product facts extracted from a source; each requires human approval
+// before campaign generation may use it (blueprint §5 / §21 "extracted fact approval").
+model SourceFact {
+  id          String   @id @default(cuid())
+  orgId       String
+  sourceDocId String
+  text        String
+  approved    Boolean  @default(false)
+  approvedBy  String?
+  createdAt   DateTime @default(now())
+
+  org       Organization   @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  sourceDoc SourceDocument @relation(fields: [sourceDocId], references: [id], onDelete: Cascade)
+
+  @@index([orgId])
+  @@index([sourceDocId])
 }
