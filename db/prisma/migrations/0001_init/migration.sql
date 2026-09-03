@@ -403,6 +403,31 @@ CREATE TABLE "AuditEvent" (
 );
 
 -- CreateTable
+CREATE TABLE "Budget" (
+    "id" TEXT NOT NULL,
+    "orgId" TEXT NOT NULL,
+    "monthlyLimitUsd" DOUBLE PRECISION NOT NULL DEFAULT 0,
+    "alertThresholdPct" INTEGER NOT NULL DEFAULT 80,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "Budget_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "UsageRecord" (
+    "id" TEXT NOT NULL,
+    "orgId" TEXT NOT NULL,
+    "sessionId" TEXT,
+    "kind" TEXT NOT NULL,
+    "units" INTEGER NOT NULL DEFAULT 0,
+    "cost" DOUBLE PRECISION NOT NULL DEFAULT 0,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "UsageRecord_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
 CREATE TABLE "Booking" (
     "id" TEXT NOT NULL,
     "orgId" TEXT NOT NULL,
@@ -565,6 +590,15 @@ CREATE INDEX "AuditEvent_orgId_idx" ON "AuditEvent"("orgId");
 CREATE INDEX "AuditEvent_createdAt_idx" ON "AuditEvent"("createdAt");
 
 -- CreateIndex
+CREATE UNIQUE INDEX "Budget_orgId_key" ON "Budget"("orgId");
+
+-- CreateIndex
+CREATE INDEX "UsageRecord_orgId_idx" ON "UsageRecord"("orgId");
+
+-- CreateIndex
+CREATE INDEX "UsageRecord_createdAt_idx" ON "UsageRecord"("createdAt");
+
+-- CreateIndex
 CREATE INDEX "Booking_orgId_idx" ON "Booking"("orgId");
 
 -- CreateIndex
@@ -683,6 +717,12 @@ ALTER TABLE "Event" ADD CONSTRAINT "Event_orgId_fkey" FOREIGN KEY ("orgId") REFE
 
 -- AddForeignKey
 ALTER TABLE "AuditEvent" ADD CONSTRAINT "AuditEvent_orgId_fkey" FOREIGN KEY ("orgId") REFERENCES "Organization"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "Budget" ADD CONSTRAINT "Budget_orgId_fkey" FOREIGN KEY ("orgId") REFERENCES "Organization"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "UsageRecord" ADD CONSTRAINT "UsageRecord_orgId_fkey" FOREIGN KEY ("orgId") REFERENCES "Organization"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "Booking" ADD CONSTRAINT "Booking_orgId_fkey" FOREIGN KEY ("orgId") REFERENCES "Organization"("id") ON DELETE CASCADE ON UPDATE CASCADE;
