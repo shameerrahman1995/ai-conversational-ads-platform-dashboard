@@ -1,7 +1,8 @@
 import { Body, Controller, Get, Param, Post, Req, UseGuards } from '@nestjs/common';
 import { ApiHeader, ApiTags } from '@nestjs/swagger';
 import { DeliveryService } from './delivery.service';
-import { CreateMappingDto, DeliverDto } from './dto';
+import { FeedbackService } from './feedback.service';
+import { CreateMappingDto, DeliverDto, StageChangeDto } from './dto';
 import { TenantGuard } from '../../common/tenant/tenant.guard';
 import { RolesGuard } from '../../common/rbac/roles.guard';
 import { Roles } from '../../common/rbac/roles.decorator';
@@ -12,7 +13,16 @@ import { Roles } from '../../common/rbac/roles.decorator';
 @UseGuards(TenantGuard, RolesGuard)
 @Controller('v1')
 export class IntegrationHubController {
-  constructor(private readonly delivery: DeliveryService) {}
+  constructor(
+    private readonly delivery: DeliveryService,
+    private readonly feedback: FeedbackService,
+  ) {}
+
+  @Post('crm/feedback')
+  @Roles('reviewer')
+  stageChange(@Req() req: { orgId: string }, @Body() dto: StageChangeDto) {
+    return this.feedback.recordStageChange(req.orgId, dto);
+  }
 
   @Post('leads/:id/deliver')
   @Roles('reviewer')

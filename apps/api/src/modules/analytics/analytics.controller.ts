@@ -2,6 +2,7 @@ import { Body, Controller, Get, Post, Query, Req, UseGuards } from '@nestjs/comm
 import { ApiHeader, ApiTags } from '@nestjs/swagger';
 import { AnalyticsService } from './analytics.service';
 import { SpendService } from './spend.service';
+import { AttributionService } from './attribution.service';
 import { ImportSpendDto, TrackEventDto } from './dto';
 import { TenantGuard } from '../../common/tenant/tenant.guard';
 import { RolesGuard } from '../../common/rbac/roles.guard';
@@ -16,6 +17,7 @@ export class AnalyticsController {
   constructor(
     private readonly analytics: AnalyticsService,
     private readonly spend: SpendService,
+    private readonly attribution: AttributionService,
   ) {}
 
   @Post('events')
@@ -50,5 +52,15 @@ export class AnalyticsController {
     @Query('until') until?: string,
   ) {
     return this.spend.getSpend(req.orgId, { provider, since, until });
+  }
+
+  @Get('analytics/attribution')
+  @Roles('analyst')
+  attributionReport(
+    @Req() req: { orgId: string },
+    @Query('since') since?: string,
+    @Query('until') until?: string,
+  ) {
+    return this.attribution.report(req.orgId, { since, until });
   }
 }

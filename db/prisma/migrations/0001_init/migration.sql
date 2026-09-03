@@ -227,6 +227,8 @@ CREATE TABLE "Lead" (
     "ownerId" TEXT,
     "lifecycleStage" TEXT,
     "crmId" TEXT,
+    "qualified" BOOLEAN NOT NULL DEFAULT false,
+    "revenue" DOUBLE PRECISION,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
 
