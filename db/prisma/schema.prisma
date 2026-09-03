@@ -1,0 +1,518 @@
+// AI Conversational Ads Platform — core data model (blueprint §11).
+// Data rules: every business record carries organizationId; provider tokens live
+// in a secrets manager (rows hold references only); approved creative/agent/prompt/
+// disclosure/publish snapshots are immutable versions; messages + PII have separate
+// retention/redaction; remote-object mapping preserves provider/account/ids/revision.
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../generated/client"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------- Enums ----------------
+
+enum OrgPlan {
+  trial
+  starter
+  growth
+  enterprise
+}
+
+enum UserRole {
+  creator
+  reviewer
+  publisher
+  analyst
+  admin
+}
+
+enum UserStatus {
+  invited
+  active
+  suspended
+}
+
+enum CampaignStatus {
+  DRAFT
+  GENERATED
+  VALIDATION_FAILED
+  READY_FOR_REVIEW
+  APPROVED
+  SCHEDULED
+  PUBLISHING
+  IN_REVIEW
+  LIVE
+  PAUSED
+  REJECTED
+  ARCHIVED
+}
+
+enum ConnectorStatus {
+  DISCONNECTED
+  AUTHORIZING
+  CONNECTED
+  DEGRADED
+  REAUTH_REQUIRED
+  REVOKED
+}
+
+enum ApprovalStatus {
+  pending
+  approved
+  rejected
+}
+
+enum ConsentType {
+  ad_platform
+  ai_disclosure
+  marketing
+  call_recording
+}
+
+enum QualificationLevel {
+  low
+  medium
+  high
+}
+
+enum ParseStatus {
+  pending
+  parsing
+  parsed
+  failed
+}
+
+enum DeliveryStatus {
+  queued
+  sent
+  accepted
+  failed
+  dead_letter
+}
+
+// ---------------- Tenancy & access ----------------
+
+model Organization {
+  id        String   @id @default(cuid())
+  name      String
+  plan      OrgPlan  @default(trial)
+  region    String   @default("us")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  users            User[]
+  connections      Connection[]
+  platformAccounts PlatformAccount[]
+  campaigns        Campaign[]
+  assets           Asset[]
+  sourceDocuments  SourceDocument[]
+  knowledgeChunks  KnowledgeChunk[]
+  conversations    Conversation[]
+  leads            Lead[]
+  crmMappings      CrmMapping[]
+  publishJobs      PublishJob[]
+  remoteObjects    RemoteObject[]
+  approvals        Approval[]
+  experiments      Experiment[]
+  events           Event[]
+  auditEvents      AuditEvent[]
+}
+
+model User {
+  id        String     @id @default(cuid())
+  orgId     String
+  email     String
+  role      UserRole   @default(creator)
+  status    UserStatus @default(invited)
+  name      String?
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+
+  org Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@unique([orgId, email])
+  @@index([orgId])
+}
+
+// ---------------- Connections & accounts ----------------
+
+model Connection {
+  id        String          @id @default(cuid())
+  orgId     String
+  provider  String // ad platform or CRM provider key
+  status    ConnectorStatus @default(DISCONNECTED)
+  secretRef String? // reference into the secrets manager; never a raw token
+  scopes    String[]        @default([])
+  meta      Json?
+  createdAt DateTime        @default(now())
+  updatedAt DateTime        @updatedAt
+
+  org      Organization      @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  accounts PlatformAccount[]
+
+  @@index([orgId])
+}
+
+model PlatformAccount {
+  id              String   @id @default(cuid())
+  orgId           String
+  connectionId    String
+  remoteAccountId String
+  name            String
+  capabilities    Json? // capabilities document by objective/region/placement
+  createdAt       DateTime @default(now())
+
+  org        Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  connection Connection   @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+
+  @@unique([connectionId, remoteAccountId])
+  @@index([orgId])
+}
+
+// ---------------- Sources & knowledge ----------------
+
+model SourceDocument {
+  id          String      @id @default(cuid())
+  orgId       String
+  type        String // url | pdf | feed | brand_kit
+  uri         String
+  parseStatus ParseStatus @default(pending)
+  ownerCheck  Boolean     @default(false)
+  createdAt   DateTime    @default(now())
+
+  org    Organization     @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  chunks KnowledgeChunk[]
+
+  @@index([orgId])
+}
+
+model KnowledgeChunk {
+  id           String   @id @default(cuid())
+  orgId        String
+  sourceDocId  String
+  content      String
+  embeddingRef String? // pointer into the vector index
+  metadata     Json?
+  expiresAt    DateTime?
+  createdAt    DateTime @default(now())
+
+  org       Organization   @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  sourceDoc SourceDocument @relation(fields: [sourceDocId], references: [id], onDelete: Cascade)
+
+  @@index([orgId])
+  @@index([sourceDocId])
+}
+
+model Asset {
+  id         String   @id @default(cuid())
+  orgId      String
+  kind       String // image | video | html5 | export_zip
+  storageKey String
+  checksum   String
+  scanClean  Boolean  @default(false)
+  createdAt  DateTime @default(now())
+
+  org      Organization      @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  variants CreativeVariant[]
+
+  @@index([orgId])
+}
+
+// ---------------- Campaigns, versions, creative ----------------
+
+model Campaign {
+  id        String         @id @default(cuid())
+  orgId     String
+  objective String
+  status    CampaignStatus @default(DRAFT)
+  version   Int            @default(1)
+  name      String?
+  createdAt DateTime       @default(now())
+  updatedAt DateTime       @updatedAt
+
+  org         Organization      @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  versions    CampaignVersion[]
+  variants    CreativeVariant[]
+  agentConfig AgentConfig?
+  experiments Experiment[]
+
+  @@index([orgId])
+}
+
+// Immutable approved snapshots (blueprint §8 publishing safety).
+model CampaignVersion {
+  id         String   @id @default(cuid())
+  campaignId String
+  version    Int
+  snapshot   Json
+  createdBy  String?
+  createdAt  DateTime @default(now())
+
+  campaign  Campaign   @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  approvals Approval[]
+
+  @@unique([campaignId, version])
+}
+
+model CreativeVariant {
+  id         String   @id @default(cuid())
+  campaignId String
+  orgId      String
+  format     String
+  spec       Json
+  assetId    String?
+  status     String   @default("draft")
+  createdAt  DateTime @default(now())
+
+  campaign    Campaign     @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  asset       Asset?       @relation(fields: [assetId], references: [id])
+  publishJobs PublishJob[]
+
+  @@index([campaignId])
+  @@index([orgId])
+}
+
+// ---------------- Agent ----------------
+
+model AgentConfig {
+  id         String   @id @default(cuid())
+  orgId      String
+  campaignId String   @unique
+  promptVer  String   @default("1")
+  kbId       String?
+  createdAt  DateTime @default(now())
+
+  campaign      Campaign       @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  versions      AgentVersion[]
+  conversations Conversation[]
+
+  @@index([orgId])
+}
+
+model AgentVersion {
+  id            String   @id @default(cuid())
+  agentConfigId String
+  version       Int
+  config        Json // identity, knowledge, conversation, tools, data, evaluation
+  disclosure    String
+  publishedAt   DateTime?
+  createdAt     DateTime @default(now())
+
+  agentConfig AgentConfig @relation(fields: [agentConfigId], references: [id], onDelete: Cascade)
+
+  @@unique([agentConfigId, version])
+}
+
+model Conversation {
+  id        String   @id @default(cuid())
+  orgId     String
+  agentId   String
+  visitorId String
+  consent   Boolean  @default(false)
+  startedAt DateTime @default(now())
+
+  org      Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  agent    AgentConfig  @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  messages Message[]
+  lead     Lead?
+
+  @@index([orgId])
+  @@index([agentId])
+}
+
+// PII / message content carries separate retention + redaction controls.
+model Message {
+  id             String   @id @default(cuid())
+  conversationId String
+  role           String // system | assistant | user | tool
+  contentRef     String // storage ref; content kept out of primary rows/logs
+  createdAt      DateTime @default(now())
+  redactedAt     DateTime?
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId])
+}
+
+// ---------------- Leads & delivery ----------------
+
+model Lead {
+  id                 String              @id @default(cuid())
+  orgId              String
+  conversationId     String?             @unique
+  score              Int?
+  qualificationLevel QualificationLevel?
+  agentSummary       String?
+  ownerId            String?
+  lifecycleStage     String?
+  crmId              String? // remote CRM record id after delivery
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+
+  org             Organization      @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  conversation    Conversation?     @relation(fields: [conversationId], references: [id])
+  fieldValues     LeadFieldValue[]
+  consentRecords  ConsentRecord[]
+  deliveryAttempts DeliveryAttempt[]
+
+  @@index([orgId])
+}
+
+model LeadFieldValue {
+  id     String @id @default(cuid())
+  leadId String
+  field  String
+  value  String
+  source String // platform_form | user_message | enrichment | crm
+
+  lead Lead @relation(fields: [leadId], references: [id], onDelete: Cascade)
+
+  @@index([leadId])
+}
+
+model ConsentRecord {
+  id                String      @id @default(cuid())
+  leadId            String
+  type              ConsentType
+  granted           Boolean
+  disclosureVersion String
+  timestamp         DateTime    @default(now())
+
+  lead Lead @relation(fields: [leadId], references: [id], onDelete: Cascade)
+
+  @@index([leadId])
+}
+
+model CrmMapping {
+  id        String  @id @default(cuid())
+  orgId     String
+  provider  String
+  fromPath  String // dot-path into canonical lead
+  toField   String
+  required  Boolean @default(false)
+  transform String  @default("none")
+
+  org Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@index([orgId])
+}
+
+model DeliveryAttempt {
+  id             String         @id @default(cuid())
+  leadId         String
+  provider       String
+  status         DeliveryStatus @default(queued)
+  remoteId       String?
+  idempotencyKey String
+  error          Json? // sanitized error context (blueprint §13)
+  attempt        Int            @default(1)
+  createdAt      DateTime       @default(now())
+
+  lead Lead @relation(fields: [leadId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, idempotencyKey])
+  @@index([leadId])
+}
+
+// ---------------- Publishing ----------------
+
+model PublishJob {
+  id             String         @id @default(cuid())
+  orgId          String
+  variantId      String
+  platform       String
+  remoteId       String?
+  status         CampaignStatus @default(PUBLISHING)
+  idempotencyKey String
+  snapshotId     String?
+  createdAt      DateTime       @default(now())
+
+  org     Organization    @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  variant CreativeVariant @relation(fields: [variantId], references: [id], onDelete: Cascade)
+
+  @@unique([platform, idempotencyKey])
+  @@index([orgId])
+}
+
+model RemoteObject {
+  id               String   @id @default(cuid())
+  orgId            String
+  provider         String
+  accountId        String
+  campaignRemoteId String?
+  adGroupRemoteId  String?
+  adRemoteId       String?
+  revision         Int      @default(1)
+  reviewStatus     String?
+  lastSyncCursor   String?
+  updatedAt        DateTime @updatedAt
+
+  org Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@index([orgId])
+}
+
+model Approval {
+  id                String         @id @default(cuid())
+  orgId             String
+  campaignVersionId String
+  status            ApprovalStatus @default(pending)
+  approvedBy        String?
+  snapshotId        String?
+  createdAt         DateTime       @default(now())
+
+  org             Organization    @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  campaignVersion CampaignVersion @relation(fields: [campaignVersionId], references: [id], onDelete: Cascade)
+
+  @@index([orgId])
+}
+
+// ---------------- Analytics & audit ----------------
+
+model Experiment {
+  id         String   @id @default(cuid())
+  orgId      String
+  campaignId String
+  hypothesis String
+  status     String   @default("draft")
+  createdAt  DateTime @default(now())
+
+  org      Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  campaign Campaign     @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  @@index([orgId])
+}
+
+// Append-only funnel/analytics events (blueprint §13).
+model Event {
+  id        String   @id @default(cuid())
+  orgId     String
+  type      String
+  payload   Json
+  createdAt DateTime @default(now())
+
+  org Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@index([orgId, type])
+  @@index([createdAt])
+}
+
+model AuditEvent {
+  id        String   @id @default(cuid())
+  orgId     String
+  actorId   String?
+  action    String
+  target    String?
+  metadata  Json?
+  createdAt DateTime @default(now())
+
+  org Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@index([orgId])
+  @@index([createdAt])
+}

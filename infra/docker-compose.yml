@@ -1,0 +1,56 @@
+name: acp-local
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: acp
+      POSTGRES_PASSWORD: acp
+      POSTGRES_DB: acp
+    ports:
+      - "5432:5432"
+    volumes:
+      - acp_pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U acp -d acp"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - acp_redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  minio:
+    image: minio/minio:latest
+    restart: unless-stopped
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: acp-minio
+      MINIO_ROOT_PASSWORD: acp-minio-secret
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - acp_minio:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  acp_pg:
+  acp_redis:
+  acp_minio:

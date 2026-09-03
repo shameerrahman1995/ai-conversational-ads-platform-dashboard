@@ -1,0 +1,19 @@
+{
+  "name": "@acp/db",
+  "version": "0.0.0",
+  "private": true,
+  "scripts": {
+    "generate": "prisma generate",
+    "migrate": "prisma migrate dev",
+    "migrate:deploy": "prisma migrate deploy",
+    "studio": "prisma studio",
+    "format": "prisma format",
+    "validate": "prisma validate"
+  },
+  "dependencies": {
+    "@prisma/client": "7.10.0"
+  },
+  "devDependencies": {
+    "prisma": "7.10.0"
+  }
+}

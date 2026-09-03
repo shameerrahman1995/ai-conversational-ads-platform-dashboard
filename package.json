@@ -1,0 +1,28 @@
+{
+  "name": "ai-conversational-ads-platform",
+  "private": true,
+  "version": "0.0.0",
+  "packageManager": "pnpm@11.5.2",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "turbo run build",
+    "dev": "turbo run dev",
+    "typecheck": "turbo run typecheck",
+    "lint": "turbo run lint",
+    "test": "turbo run test",
+    "clean": "turbo run clean",
+    "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,md}\"",
+    "db:generate": "pnpm --filter @acp/db generate",
+    "db:migrate": "pnpm --filter @acp/db migrate",
+    "infra:up": "docker compose -f infra/docker-compose.yml up -d",
+    "infra:down": "docker compose -f infra/docker-compose.yml down"
+  },
+  "devDependencies": {
+    "@types/node": "26.4.1",
+    "prettier": "3.6.2",
+    "turbo": "2.10.12",
+    "typescript": "5.9.3"
+  }
+}

@@ -1,0 +1,10 @@
+packages:
+  - "apps/*"
+  - "packages/*"
+  - "db"
+allowBuilds:
+  '@prisma/engines': true
+  '@scarf/scarf': false
+  esbuild: true
+  msgpackr-extract: true
+  prisma: true

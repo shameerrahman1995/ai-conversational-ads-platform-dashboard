@@ -1,0 +1,124 @@
+@import "tailwindcss";
+
+/* ------------------------------------------------------------------ */
+/* Design-system status badge classes consumed by @acp/ui StatusBadge  */
+/* (persistent Draft / In review / Approved / Live / Paused model).     */
+/* ------------------------------------------------------------------ */
+
+.acp-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.125rem 0.5rem;
+  border-radius: 9999px;
+  border: 1px solid transparent;
+  font-size: 12px;
+  line-height: 1.25;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: capitalize;
+  white-space: nowrap;
+}
+
+/* Tone modifiers — colors chosen to read on a white/light surface. */
+.acp-badge--neutral {
+  background-color: #f1f5f9;
+  color: #334155;
+  border-color: #e2e8f0;
+}
+.acp-badge--info {
+  background-color: #e0f2fe;
+  color: #075985;
+  border-color: #bae6fd;
+}
+.acp-badge--success {
+  background-color: #dcfce7;
+  color: #166534;
+  border-color: #bbf7d0;
+}
+.acp-badge--warning {
+  background-color: #fef3c7;
+  color: #92400e;
+  border-color: #fde68a;
+}
+.acp-badge--danger {
+  background-color: #fee2e2;
+  color: #991b1b;
+  border-color: #fecaca;
+}
+
+/* Dark-mode tones. */
+@media (prefers-color-scheme: dark) {
+  .acp-badge--neutral {
+    background-color: #1e293b;
+    color: #cbd5e1;
+    border-color: #334155;
+  }
+  .acp-badge--info {
+    background-color: #0c4a6e;
+    color: #bae6fd;
+    border-color: #075985;
+  }
+  .acp-badge--success {
+    background-color: #14532d;
+    color: #bbf7d0;
+    border-color: #166534;
+  }
+  .acp-badge--warning {
+    background-color: #78350f;
+    color: #fde68a;
+    border-color: #92400e;
+  }
+  .acp-badge--danger {
+    background-color: #7f1d1d;
+    color: #fecaca;
+    border-color: #991b1b;
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Small layout helpers used by the app shell / pages.                 */
+/* ------------------------------------------------------------------ */
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family:
+    system-ui,
+    -apple-system,
+    "Segoe UI",
+    Roboto,
+    Helvetica,
+    Arial,
+    sans-serif;
+  background-color: #f8fafc;
+  color: #0f172a;
+}
+
+@media (prefers-color-scheme: dark) {
+  body {
+    background-color: #0b1120;
+    color: #e2e8f0;
+  }
+}
+
+.acp-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.acp-card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 1rem;
+}
