@@ -17,7 +17,7 @@ export class CampaignController {
   @Post()
   @Roles('creator')
   create(@Req() req: { orgId: string }, @Body() dto: CreateCampaignDto) {
-    return this.campaigns.createDraft(req.orgId, dto.objective, dto.name);
+    return this.campaigns.createDraft(req.orgId, dto.objective, dto.name, dto.vertical);
   }
 
   @Post(':id/generate')

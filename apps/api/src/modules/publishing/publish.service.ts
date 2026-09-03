@@ -4,6 +4,7 @@ import { AuditService } from '../../common/audit/audit.service';
 import { scopedWhere } from '../../common/tenant/scoped-where';
 import { JobsProducer } from '../../jobs/jobs.producer';
 import { ConnectorRegistry } from './connector-registry';
+import { PolicyService } from '../policy/policy.service';
 
 export interface CreatePlanInput {
   campaignId: string;
@@ -26,6 +27,7 @@ export class PublishService {
     private readonly audit: AuditService,
     private readonly registry: ConnectorRegistry,
     private readonly jobs: JobsProducer,
+    private readonly policy: PolicyService,
   ) {}
 
   async capabilities(platform: string, accountId: string) {
@@ -41,6 +43,20 @@ export class PublishService {
       where: scopedWhere(orgId, { id: input.variantId, campaignId: input.campaignId }),
     });
     if (!variant) throw new NotFoundException('Variant not found');
+
+    // Restricted-vertical compliance gate (blueprint §17): refuse to create a
+    // publish plan whose copy fails its vertical's rule pack (missing mandatory
+    // disclaimer / prohibited claim). Warnings (incl. the restricted-vertical
+    // marker) are recorded but do not block; a human still approves every plan.
+    const policy = this.policy.evaluateCampaignCopy({
+      vertical: campaign.vertical,
+      spec: variant.spec,
+    });
+    if (!policy.ok) {
+      throw new BadRequestException(
+        `Policy blocked publish: ${this.policy.blockingReasons(policy).join('; ')}`,
+      );
+    }
 
     const connector = this.registry.get(input.platform);
     const idempotencyKey = `${input.variantId}:${input.platform}`;
@@ -83,8 +99,17 @@ export class PublishService {
         },
       }));
 
-    await this.audit.record({ orgId, action: 'publish.plan_created', target: plan.id });
-    return { plan, validation, capabilities, snapshotId };
+    await this.audit.record({
+      orgId,
+      action: 'publish.plan_created',
+      target: plan.id,
+      metadata: {
+        vertical: campaign.vertical,
+        policyWarnings: policy.findings.map((f) => f.code),
+        requiresHumanReview: policy.findings.some((f) => f.requiresHumanReview),
+      },
+    });
+    return { plan, validation, capabilities, snapshotId, policy };
   }
 
   async approvePlan(orgId: string, planId: string, approverId: string) {
