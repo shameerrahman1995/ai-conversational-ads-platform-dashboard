@@ -159,6 +159,7 @@ CREATE TABLE "CreativeVariant" (
     "orgId" TEXT NOT NULL,
     "format" TEXT NOT NULL,
     "spec" JSONB NOT NULL,
+    "manifest" JSONB,
     "assetId" TEXT,
     "status" TEXT NOT NULL DEFAULT 'draft',
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
