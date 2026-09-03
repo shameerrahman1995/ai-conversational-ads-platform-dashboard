@@ -433,6 +433,7 @@ model PublishJob {
   orgId          String
   variantId      String
   platform       String
+  accountId      String?
   remoteId       String?
   status         CampaignStatus @default(PUBLISHING)
   idempotencyKey String
