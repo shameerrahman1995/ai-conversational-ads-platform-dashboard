@@ -1,5 +1,12 @@
-import { describe, it, expect } from 'vitest';
-import { isBlockedAddress, assertPublicHttpUrl } from '../src/modules/ingestion/parsing/safe-fetch';
+import { describe, it, expect, vi } from 'vitest';
+
+vi.mock('node:dns', () => ({ lookup: vi.fn() }));
+import { lookup as dnsLookupCb } from 'node:dns';
+import {
+  isBlockedAddress,
+  assertPublicHttpUrl,
+  guardedLookup,
+} from '../src/modules/ingestion/parsing/safe-fetch';
 
 describe('isBlockedAddress (SSRF guard)', () => {
   it('blocks loopback / private / link-local / CGNAT IPv4', () => {
@@ -39,4 +46,39 @@ describe('assertPublicHttpUrl', () => {
     await expect(assertPublicHttpUrl('file:///etc/passwd')).rejects.toThrow();
     await expect(assertPublicHttpUrl('not a url')).rejects.toThrow();
   });
+});
+
+describe('guardedLookup (connect-time validation, anti-DNS-rebinding)', () => {
+  it('rejects the connection when the host resolves to a private IP', () =>
+    new Promise<void>((resolve, reject) => {
+      (dnsLookupCb as unknown as ReturnType<typeof vi.fn>).mockImplementation(
+        (_h: string, _o: unknown, cb: (e: unknown, a?: unknown) => void) =>
+          cb(null, [{ address: '10.0.0.1', family: 4 }]),
+      );
+      guardedLookup('evil.test', { all: true }, (err) => {
+        try {
+          expect(err).toBeInstanceOf(Error);
+          resolve();
+        } catch (e) {
+          reject(e);
+        }
+      });
+    }));
+
+  it('allows a public IP and returns validated results', () =>
+    new Promise<void>((resolve, reject) => {
+      (dnsLookupCb as unknown as ReturnType<typeof vi.fn>).mockImplementation(
+        (_h: string, _o: unknown, cb: (e: unknown, a?: unknown) => void) =>
+          cb(null, [{ address: '93.184.216.34', family: 4 }]),
+      );
+      guardedLookup('good.test', { all: true }, (err, addrs) => {
+        try {
+          expect(err).toBeNull();
+          expect(addrs).toEqual([{ address: '93.184.216.34', family: 4 }]);
+          resolve();
+        } catch (e) {
+          reject(e);
+        }
+      });
+    }));
 });
