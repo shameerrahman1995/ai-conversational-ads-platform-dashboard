@@ -271,6 +271,7 @@ model CreativeVariant {
   orgId      String
   format     String
   spec       Json
+  manifest   Json? // render output manifest + validation (blueprint §10 creative rendering)
   assetId    String?
   status     String   @default("draft")
   createdAt  DateTime @default(now())
