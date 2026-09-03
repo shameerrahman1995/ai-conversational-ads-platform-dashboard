@@ -10,8 +10,10 @@ export class CreatePlanDto {
   @IsString()
   variantId!: string;
 
-  @ApiProperty({ enum: ['google_ads', 'meta', 'generic_export'] })
-  @IsIn(['google_ads', 'meta', 'generic_export'])
+  @ApiProperty({
+    enum: ['google_ads', 'meta', 'generic_export', 'tiktok', 'microsoft', 'amazon_dsp', 'linkedin'],
+  })
+  @IsIn(['google_ads', 'meta', 'generic_export', 'tiktok', 'microsoft', 'amazon_dsp', 'linkedin'])
   platform!: string;
 
   @ApiProperty()

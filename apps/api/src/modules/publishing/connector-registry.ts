@@ -1,13 +1,31 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import type { AdConnector } from '@acp/connectors';
-import { GenericExportConnector, GoogleAdsConnector, MetaConnector } from './connectors/adapters';
+import {
+  AmazonDspConnector,
+  GenericExportConnector,
+  GoogleAdsConnector,
+  LinkedInConnector,
+  MetaConnector,
+  MicrosoftConnector,
+  TikTokConnector,
+} from './connectors/adapters';
 
 @Injectable()
 export class ConnectorRegistry {
   private readonly connectors = new Map<string, AdConnector>();
 
-  constructor(google: GoogleAdsConnector, meta: MetaConnector, generic: GenericExportConnector) {
-    for (const c of [google, meta, generic]) this.connectors.set(c.platform, c);
+  constructor(
+    google: GoogleAdsConnector,
+    meta: MetaConnector,
+    generic: GenericExportConnector,
+    tiktok: TikTokConnector,
+    microsoft: MicrosoftConnector,
+    amazon: AmazonDspConnector,
+    linkedin: LinkedInConnector,
+  ) {
+    for (const c of [google, meta, generic, tiktok, microsoft, amazon, linkedin]) {
+      this.connectors.set(c.platform, c);
+    }
   }
 
   get(platform: string): AdConnector {
