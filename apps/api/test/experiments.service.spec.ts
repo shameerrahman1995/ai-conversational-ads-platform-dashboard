@@ -3,6 +3,7 @@ import { ExperimentsService } from '../src/modules/experiments/experiments.servi
 
 function deps(opts: { arms?: any[]; experiment?: any } = {}) {
   const prisma = {
+    campaign: { findFirst: vi.fn().mockResolvedValue({ id: 'c1' }) },
     experiment: {
       create: vi.fn().mockResolvedValue({ id: 'e1' }),
       findFirst: vi.fn().mockResolvedValue(opts.experiment ?? { id: 'e1', arms: [] }),

@@ -24,6 +24,11 @@ export class ExperimentsService {
 
   async create(orgId: string, campaignId: string, hypothesis: string, arms: ArmInput[]) {
     if (arms.length < 2) throw new BadRequestException('An experiment needs at least two arms');
+    // Prevent cross-tenant reference: the campaign must belong to the caller's org.
+    const campaign = await this.prisma.campaign.findFirst({
+      where: scopedWhere(orgId, { id: campaignId }),
+    });
+    if (!campaign) throw new NotFoundException('Campaign not found');
     const experiment = await this.prisma.experiment.create({
       data: { orgId, campaignId, hypothesis, status: 'running' },
     });
@@ -49,7 +54,7 @@ export class ExperimentsService {
     if (arms.length === 0) throw new NotFoundException('Experiment has no arms');
     const arm = pickArm(arms, `${experimentId}:${subjectId}`)!;
     await this.prisma.experimentArm.update({
-      where: { id: arm.id },
+      where: { id: arm.id, orgId },
       data: { exposures: { increment: 1 } },
     });
     return { armKey: arm.key, kind: arm.kind, refId: arm.refId };
