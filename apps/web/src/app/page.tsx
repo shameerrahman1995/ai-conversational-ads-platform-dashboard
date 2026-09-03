@@ -1,6 +1,7 @@
 import type { CSSProperties } from 'react';
 import { StatusBadge } from '@acp/ui';
 import { CAMPAIGN_STATUSES, type CampaignStatus } from '@acp/shared-types';
+import { FunnelPanel } from '@/components/FunnelPanel';
 
 /** KPI tiles mirroring the blueprint operations dashboard. */
 const KPIS: ReadonlyArray<{ label: string; value: string }> = [
@@ -62,6 +63,8 @@ export default function HomePage() {
           </div>
         ))}
       </div>
+
+      <FunnelPanel />
 
       <section style={section}>
         <h2 style={{ fontSize: '16px', margin: '0 0 0.25rem' }}>Status model</h2>

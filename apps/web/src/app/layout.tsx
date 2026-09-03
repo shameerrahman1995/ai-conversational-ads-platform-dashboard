@@ -1,6 +1,8 @@
 import type { Metadata } from 'next';
 import type { ReactNode, CSSProperties } from 'react';
 import Link from 'next/link';
+import { OrgProvider } from '@/lib/org-context';
+import { OrgSwitcher } from '@/components/OrgSwitcher';
 import './globals.css';
 
 export const metadata: Metadata = {
@@ -93,29 +95,34 @@ export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="en">
       <body>
-        <div style={shell}>
-          <div style={brand}>ConvoAds AI</div>
+        <OrgProvider>
+          <div style={shell}>
+            <div style={brand}>ConvoAds AI</div>
 
-          <header style={topbar}>
-            <span style={{ fontWeight: 600 }}>Operations Dashboard</span>
-            {/* Always show org + advertiser context (blueprint §3 global rule). */}
-            <span style={contextChip} aria-label="Organization and advertiser context">
-              <strong style={{ fontWeight: 600 }}>Acme Corp</strong>
-              <span aria-hidden="true">·</span>
-              <span>Google Ads account</span>
-            </span>
-          </header>
+            <header style={topbar}>
+              <span style={{ fontWeight: 600 }}>Operations Dashboard</span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+                <OrgSwitcher />
+                {/* Always show org + advertiser context (blueprint §3 global rule). */}
+                <span style={contextChip} aria-label="Organization and advertiser context">
+                  <strong style={{ fontWeight: 600 }}>Acme Corp</strong>
+                  <span aria-hidden="true">·</span>
+                  <span>Google Ads account</span>
+                </span>
+              </div>
+            </header>
 
-          <nav style={sidebar} aria-label="Primary">
-            {NAV_ITEMS.map((item) => (
-              <Link key={item.href} href={item.href} style={navLink}>
-                {item.label}
-              </Link>
-            ))}
-          </nav>
+            <nav style={sidebar} aria-label="Primary">
+              {NAV_ITEMS.map((item) => (
+                <Link key={item.href} href={item.href} style={navLink}>
+                  {item.label}
+                </Link>
+              ))}
+            </nav>
 
-          <main style={main}>{children}</main>
-        </div>
+            <main style={main}>{children}</main>
+          </div>
+        </OrgProvider>
       </body>
     </html>
   );

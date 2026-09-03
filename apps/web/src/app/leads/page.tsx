@@ -1,3 +1,5 @@
+import { LeadsTable } from '@/components/LeadsTable';
+
 export default function LeadsPage() {
   return (
     <div>
@@ -6,6 +8,8 @@ export default function LeadsPage() {
         Inbox of captured leads with full conversation transcript, qualification score,
         owner, consent records and CRM delivery status for each contact.
       </p>
+
+      <LeadsTable />
     </div>
   );
 }

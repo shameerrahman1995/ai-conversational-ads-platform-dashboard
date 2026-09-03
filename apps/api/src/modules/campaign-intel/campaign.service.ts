@@ -67,6 +67,10 @@ export class CampaignService {
     return this.commitVersion(orgId, campaignId, snapshot, 'campaign.field_regenerated', { field });
   }
 
+  async listCampaigns(orgId: string) {
+    return this.prisma.campaign.findMany({ where: scopedWhere(orgId) });
+  }
+
   async getVersions(orgId: string, campaignId: string) {
     await this.requireCampaign(orgId, campaignId);
     return this.prisma.campaignVersion.findMany({

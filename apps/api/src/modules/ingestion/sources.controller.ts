@@ -20,6 +20,12 @@ export class SourcesController {
     return this.ingestion.registerSource(req.orgId, dto);
   }
 
+  @Get()
+  @Roles('creator')
+  list(@Req() req: { orgId: string }) {
+    return this.ingestion.listSources(req.orgId);
+  }
+
   @Get(':id')
   @Roles('creator')
   status(@Req() req: { orgId: string }, @Param('id') id: string) {

@@ -7,6 +7,7 @@ function deps(opts: { facts?: string[]; versionCount?: number; latest?: any } = 
     campaign: {
       create: vi.fn().mockResolvedValue({ id: 'c1', version: 1, status: 'DRAFT' }),
       findFirst: vi.fn().mockResolvedValue({ id: 'c1', version: 1, status: 'DRAFT' }),
+      findMany: vi.fn().mockResolvedValue([]),
       update: vi.fn().mockResolvedValue({}),
     },
     sourceFact: {
@@ -86,5 +87,11 @@ describe('CampaignService', () => {
   it('regenerateField rejects an unsupported field', async () => {
     const d = deps();
     await expect(make(d).regenerateField('org_1', 'c1', 'proofPoints' as never)).rejects.toThrow();
+  });
+
+  it('listCampaigns lists campaigns scoped to the org', async () => {
+    const d = deps();
+    await make(d).listCampaigns('org_1');
+    expect(d.prisma.campaign.findMany).toHaveBeenCalledWith({ where: { orgId: 'org_1' } });
   });
 });

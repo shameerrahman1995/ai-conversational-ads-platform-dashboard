@@ -1,15 +1,14 @@
 /**
  * @acp/api-client
- * Placeholder typed client. In P1.F2 this is REPLACED by a client generated
- * from the API's OpenAPI contract (blueprint §12: "typed frontend/client SDK
- * from the same source"). Until then it offers a tiny hand-written surface so
- * the web app can talk to the API without duplicating fetch boilerplate.
+ * Hand-written typed client for the ConvoAds API. (To be regenerated from the
+ * OpenAPI contract later; the surface here mirrors the live routes.) The MVP
+ * auth stub is header-based: the caller supplies orgId + role via `getHeaders`.
  */
-import type { ApiError } from '@acp/shared-types';
+import type { ApiError, CampaignStatus, QualificationLevel } from '@acp/shared-types';
 
 export interface ClientOptions {
   baseUrl: string;
-  /** Called to attach auth (cookies preferred; never store provider tokens client-side). */
+  /** Attach tenant/role headers (dev stub) or a session token later. */
   getHeaders?: () => Record<string, string> | Promise<Record<string, string>>;
 }
 
@@ -17,6 +16,44 @@ export interface HealthResponse {
   status: 'ok';
   service: string;
   time: string;
+}
+
+export interface FunnelStage {
+  key: string;
+  event: string;
+  count: number;
+  conversionFromPrev: number;
+}
+
+export interface FunnelResponse {
+  stages: FunnelStage[];
+  dimensions: { creativeVariantId?: string; agentVersion?: string };
+}
+
+export interface CampaignSummary {
+  id: string;
+  objective: string;
+  status: CampaignStatus;
+  version: number;
+  name?: string | null;
+  createdAt: string;
+}
+
+export interface LeadSummary {
+  id: string;
+  score: number | null;
+  qualificationLevel: QualificationLevel | null;
+  lifecycleStage: string | null;
+  crmId: string | null;
+  createdAt: string;
+}
+
+export interface SourceSummary {
+  id: string;
+  type: string;
+  uri: string;
+  parseStatus: string;
+  createdAt: string;
 }
 
 export class ApiClientError extends Error {
@@ -49,7 +86,25 @@ export function createApiClient(opts: ClientOptions) {
 
   return {
     health: () => request<HealthResponse>('/health'),
-    // Generated resource methods (campaigns, leads, agents, …) land here in P1.F2.
+    analytics: {
+      funnel: (params: { creativeVariantId?: string; agentVersion?: string } = {}) => {
+        const q = new URLSearchParams(
+          Object.entries(params).filter(([, v]) => !!v) as [string, string][],
+        ).toString();
+        return request<FunnelResponse>(`/v1/analytics/funnel${q ? `?${q}` : ''}`);
+      },
+    },
+    campaigns: {
+      list: () => request<CampaignSummary[]>('/v1/campaigns'),
+      create: (body: { objective: string; name?: string }) =>
+        request<CampaignSummary>('/v1/campaigns', { method: 'POST', body: JSON.stringify(body) }),
+    },
+    leads: {
+      list: () => request<LeadSummary[]>('/v1/leads'),
+    },
+    sources: {
+      list: () => request<SourceSummary[]>('/v1/sources'),
+    },
   };
 }
 
