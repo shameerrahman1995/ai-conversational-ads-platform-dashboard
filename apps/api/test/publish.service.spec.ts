@@ -33,7 +33,12 @@ function stubConnector() {
 function deps(opts: { plan?: any; connector?: any } = {}) {
   const prisma = {
     campaign: { findFirst: vi.fn().mockResolvedValue({ id: 'c1' }) },
-    creativeVariant: { findFirst: vi.fn().mockResolvedValue({ id: 'v1', spec: {} }) },
+    creativeVariant: {
+      findFirst: vi.fn().mockResolvedValue({ id: 'v1', campaignId: 'c1', format: 'image_1_1', spec: {} }),
+      create: vi
+        .fn()
+        .mockResolvedValue({ id: 'clone1', campaignId: 'c1', format: 'image_1_1', spec: {} }),
+    },
     campaignVersion: { findFirst: vi.fn().mockResolvedValue({ id: 'cv1' }) },
     publishJob: {
       findUnique: vi.fn().mockResolvedValue(null),
@@ -119,5 +124,48 @@ describe('PublishService', () => {
     const d = deps({ plan: { id: 'p1', orgId: 'org_1', platform: 'google_ads', remoteId: 'ad1' } });
     const out = await make(d).syncReviewStatus('org_1', 'p1');
     expect(out.status).toBe('LIVE');
+  });
+
+  it('syncReviewStatus maps a rejected review to REJECTED and stores the reason', async () => {
+    const conn = stubConnector();
+    conn.getReviewStatus = vi
+      .fn()
+      .mockResolvedValue({ remoteId: 'ad1', state: 'rejected', reason: 'Policy: prohibited claim', updatedAt: 'now' });
+    const d = deps({ plan: { id: 'p1', orgId: 'org_1', platform: 'google_ads', remoteId: 'ad1' }, connector: conn });
+    const out = await make(d).syncReviewStatus('org_1', 'p1');
+    expect(out.status).toBe('REJECTED');
+    expect(out.reason).toContain('Policy');
+    expect(d.prisma.publishJob.update).toHaveBeenCalledWith({
+      where: { id: 'p1', orgId: 'org_1' },
+      data: { status: 'REJECTED', reviewReason: 'Policy: prohibited claim' },
+    });
+  });
+
+  it('resubmit clones the rejected variant into a new plan (evidence preserved)', async () => {
+    const d = deps({
+      plan: {
+        id: 'p1',
+        orgId: 'org_1',
+        status: 'REJECTED',
+        platform: 'google_ads',
+        accountId: 'acct',
+        variantId: 'v1',
+        remoteId: 'ad1',
+        reviewReason: 'Policy: prohibited claim',
+        idempotencyKey: 'v1:google_ads',
+        snapshotId: 'cv1',
+      },
+    });
+    const out = await make(d).resubmit('org_1', 'p1');
+    expect(d.prisma.creativeVariant.create).toHaveBeenCalled(); // cloned
+    expect(out.clonedVariantId).toBe('clone1');
+    expect(out.rejectedRemoteId).toBe('ad1'); // evidence preserved
+    expect(out.reason).toContain('Policy');
+    expect(out.newPlan).toBeTruthy();
+  });
+
+  it('resubmit refuses a non-rejected plan', async () => {
+    const d = deps({ plan: { id: 'p1', orgId: 'org_1', status: 'LIVE' } });
+    await expect(make(d).resubmit('org_1', 'p1')).rejects.toThrow();
   });
 });

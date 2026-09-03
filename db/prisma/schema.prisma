@@ -436,6 +436,7 @@ model PublishJob {
   accountId      String?
   remoteId       String?
   status         CampaignStatus @default(PUBLISHING)
+  reviewReason   String? // rejection reason / evidence preserved for the rejection loop
   idempotencyKey String
   snapshotId     String?
   createdAt      DateTime       @default(now())
