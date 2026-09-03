@@ -1,0 +1,88 @@
+import { BadRequestException, ForbiddenException, Inject, Injectable, NotFoundException } from '@nestjs/common';
+import { PrismaService } from '../../prisma/prisma.service';
+import { scopedWhere } from '../../common/tenant/scoped-where';
+import { KnowledgeService } from '../knowledge/knowledge.service';
+import { MODEL_GATEWAY, type ModelGatewayPort } from './model-gateway.port';
+import { FALLBACK_REPLY, SYSTEM_POLICY, isDisallowedTopic, redactPII, wrapUntrusted } from './guardrails';
+
+export interface AgentReply {
+  reply: string;
+  grounded: boolean;
+  citations: string[];
+  fallback: boolean;
+}
+
+/**
+ * Hosted conversational agent runtime (blueprint §16). Consent-gated sessions,
+ * grounded retrieval, prompt-injection isolation, PII redaction before storage,
+ * disallowed-topic screening, and a circuit-breaker fallback. Org-scoped.
+ */
+@Injectable()
+export class AgentRuntimeService {
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly knowledge: KnowledgeService,
+    @Inject(MODEL_GATEWAY) private readonly gateway: ModelGatewayPort,
+  ) {}
+
+  async startSession(orgId: string, agentId: string, visitorId: string, consentGranted: boolean) {
+    const agent = await this.prisma.agentConfig.findFirst({
+      where: scopedWhere(orgId, { id: agentId }),
+    });
+    if (!agent) throw new NotFoundException('Agent not found');
+    if (!consentGranted) {
+      throw new BadRequestException('AI-disclosure consent is required to start a session');
+    }
+    const convo = await this.prisma.conversation.create({
+      data: { orgId, agentId, visitorId, consent: true },
+    });
+    return { conversationId: convo.id };
+  }
+
+  async sendMessage(orgId: string, conversationId: string, userText: string): Promise<AgentReply> {
+    const convo = await this.prisma.conversation.findFirst({
+      where: scopedWhere(orgId, { id: conversationId }),
+    });
+    if (!convo) throw new NotFoundException('Conversation not found');
+    if (!convo.consent) throw new ForbiddenException('Consent required');
+
+    // Persist the (redacted) user turn — PII never lands in rows/logs.
+    await this.prisma.message.create({
+      data: { conversationId, role: 'user', contentRef: redactPII(userText) },
+    });
+
+    if (isDisallowedTopic(userText)) {
+      return this.respond(conversationId, FALLBACK_REPLY, { grounded: false, citations: [], fallback: true });
+    }
+
+    const chunks = await this.knowledge.retrieve(orgId, userText, 4);
+    const context = chunks.map((c) => c.content).join('\n');
+    const citations = [...new Set(chunks.map((c) => c.sourceDocId))];
+
+    try {
+      const { text } = await this.gateway.complete([
+        { role: 'system', content: `${SYSTEM_POLICY}\n\n${wrapUntrusted(context)}` },
+        { role: 'user', content: userText },
+      ]);
+      return this.respond(conversationId, redactPII(text), {
+        grounded: chunks.length > 0,
+        citations,
+        fallback: false,
+      });
+    } catch {
+      // Circuit breaker: keep the experience available with an approved fallback.
+      return this.respond(conversationId, FALLBACK_REPLY, { grounded: false, citations: [], fallback: true });
+    }
+  }
+
+  private async respond(
+    conversationId: string,
+    reply: string,
+    meta: { grounded: boolean; citations: string[]; fallback: boolean },
+  ): Promise<AgentReply> {
+    await this.prisma.message.create({
+      data: { conversationId, role: 'assistant', contentRef: reply },
+    });
+    return { reply, ...meta };
+  }
+}
