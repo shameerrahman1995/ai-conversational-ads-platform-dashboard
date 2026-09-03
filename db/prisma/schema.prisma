@@ -126,6 +126,8 @@ model Organization {
   experimentArms   ExperimentArm[]
   bookings         Booking[]
   handoffs         Handoff[]
+  budget           Budget?
+  usageRecords     UsageRecord[]
 }
 
 model User {
@@ -567,6 +569,33 @@ model AuditEvent {
   action    String
   target    String?
   metadata  Json?
+  createdAt DateTime @default(now())
+
+  org Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@index([orgId])
+  @@index([createdAt])
+}
+
+// Cost controls (blueprint §22 / risk register): per-tenant budget + usage alerts.
+model Budget {
+  id                String   @id @default(cuid())
+  orgId             String   @unique
+  monthlyLimitUsd   Float    @default(0) // 0 = unlimited
+  alertThresholdPct Int      @default(80)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  org Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+}
+
+model UsageRecord {
+  id        String   @id @default(cuid())
+  orgId     String
+  sessionId String?
+  kind      String // model | voice
+  units     Int      @default(0) // tokens / seconds
+  cost      Float    @default(0)
   createdAt DateTime @default(now())
 
   org Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
