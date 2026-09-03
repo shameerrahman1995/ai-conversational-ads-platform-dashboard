@@ -6,6 +6,7 @@ function deps() {
     sourceDocument: {
       create: vi.fn().mockResolvedValue({ id: 'src_1' }),
       findFirst: vi.fn().mockResolvedValue({ id: 'src_1', parseStatus: 'pending' }),
+      findMany: vi.fn().mockResolvedValue([]),
       delete: vi.fn().mockResolvedValue({ id: 'src_1' }),
     },
     asset: {
@@ -85,6 +86,13 @@ describe('IngestionService', () => {
     await svc.rejectFact('org_1', 'f_1');
     expect(prisma.sourceFact.delete).toHaveBeenCalledWith({ where: { id: 'f_1', orgId: 'org_1' } });
     expect(audit.record).toHaveBeenCalled();
+  });
+
+  it('listSources lists sources scoped to the org', async () => {
+    const { prisma, audit, storage } = deps();
+    const svc = new IngestionService(prisma, audit, storage);
+    await svc.listSources('org_1');
+    expect(prisma.sourceDocument.findMany).toHaveBeenCalledWith({ where: { orgId: 'org_1' } });
   });
 
   it('deleteSource removes stored objects and deletes the source scoped by org', async () => {

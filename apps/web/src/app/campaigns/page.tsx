@@ -1,3 +1,5 @@
+import { CampaignsTable } from '@/components/CampaignsTable';
+
 export default function CampaignsPage() {
   return (
     <div>
@@ -6,6 +8,8 @@ export default function CampaignsPage() {
         List, creation wizard, approval history and experiment plan for every campaign,
         tracked against the shared Draft / In review / Approved / Live / Paused lifecycle.
       </p>
+
+      <CampaignsTable />
     </div>
   );
 }

@@ -32,6 +32,12 @@ export class CampaignController {
     return this.campaigns.regenerateField(req.orgId, id, dto.field);
   }
 
+  @Get()
+  @Roles('creator')
+  list(@Req() req: { orgId: string }) {
+    return this.campaigns.listCampaigns(req.orgId);
+  }
+
   @Get(':id/versions')
   @Roles('creator')
   versions(@Req() req: { orgId: string }, @Param('id') id: string) {

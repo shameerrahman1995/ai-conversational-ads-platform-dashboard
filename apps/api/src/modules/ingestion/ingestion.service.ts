@@ -52,6 +52,10 @@ export class IngestionService {
     return { sourceId: source.id, uploadUrl: undefined as string | undefined };
   }
 
+  async listSources(orgId: string) {
+    return this.prisma.sourceDocument.findMany({ where: scopedWhere(orgId) });
+  }
+
   async getStatus(orgId: string, sourceId: string) {
     const src = await this.prisma.sourceDocument.findFirst({
       where: scopedWhere(orgId, { id: sourceId }),
