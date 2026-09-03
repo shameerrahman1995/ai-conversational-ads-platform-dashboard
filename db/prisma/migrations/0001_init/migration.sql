@@ -134,6 +134,7 @@ CREATE TABLE "Campaign" (
     "status" "CampaignStatus" NOT NULL DEFAULT 'DRAFT',
     "version" INTEGER NOT NULL DEFAULT 1,
     "name" TEXT,
+    "vertical" TEXT,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
 

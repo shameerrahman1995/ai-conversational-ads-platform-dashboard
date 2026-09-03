@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { PublishService } from '../src/modules/publishing/publish.service';
+import { PolicyService } from '../src/modules/policy/policy.service';
 
 function stubConnector() {
   return {
@@ -71,7 +72,7 @@ function deps(opts: { plan?: any; connector?: any } = {}) {
 }
 
 function make(d: ReturnType<typeof deps>) {
-  return new PublishService(d.prisma, d.audit, d.registry, d.jobs);
+  return new PublishService(d.prisma, d.audit, d.registry, d.jobs, new PolicyService());
 }
 
 const planInput = { campaignId: 'c1', variantId: 'v1', platform: 'google_ads', accountId: 'acct' };
@@ -167,5 +168,33 @@ describe('PublishService', () => {
   it('resubmit refuses a non-rejected plan', async () => {
     const d = deps({ plan: { id: 'p1', orgId: 'org_1', status: 'LIVE' } });
     await expect(make(d).resubmit('org_1', 'p1')).rejects.toThrow();
+  });
+
+  it('createPlan is blocked by the restricted-vertical policy gate', async () => {
+    const d = deps();
+    d.prisma.campaign.findFirst.mockResolvedValue({ id: 'c1', vertical: 'healthcare' });
+    d.prisma.creativeVariant.findFirst.mockResolvedValue({
+      id: 'v1',
+      campaignId: 'c1',
+      format: 'image_1_1',
+      spec: { headline: 'This miracle cure works!' }, // no disclaimers + prohibited claim
+    });
+    await expect(make(d).createPlan('org_1', planInput)).rejects.toThrow(/Policy blocked/);
+    expect(d.prisma.publishJob.create).not.toHaveBeenCalled();
+  });
+
+  it('createPlan allows compliant restricted-vertical copy (warns, does not block)', async () => {
+    const d = deps();
+    d.prisma.campaign.findFirst.mockResolvedValue({ id: 'c1', vertical: 'finance' });
+    d.prisma.creativeVariant.findFirst.mockResolvedValue({
+      id: 'v1',
+      campaignId: 'c1',
+      format: 'image_1_1',
+      spec: { headline: 'Grow your savings', body: 'Terms apply.' },
+    });
+    const out: any = await make(d).createPlan('org_1', planInput);
+    expect(out.plan).toBeTruthy();
+    expect(out.policy.findings.some((f: any) => f.code === 'restricted_vertical')).toBe(true);
+    expect(d.prisma.publishJob.create).toHaveBeenCalled();
   });
 });
