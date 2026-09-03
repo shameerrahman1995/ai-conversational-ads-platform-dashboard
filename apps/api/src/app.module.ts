@@ -4,6 +4,7 @@ import { PrismaModule } from './prisma/prisma.module';
 import { AuditModule } from './common/audit/audit.module';
 import { StorageModule } from './common/storage/storage.module';
 import { ScannerModule } from './common/scanner/scanner.module';
+import { KnowledgeModule } from './modules/knowledge/knowledge.module';
 import { IdentityModule } from './modules/identity/identity.module';
 import { IngestionModule } from './modules/ingestion/ingestion.module';
 import { CampaignIntelModule } from './modules/campaign-intel/campaign-intel.module';
@@ -22,6 +23,7 @@ import { HealthModule } from './health/health.module';
     AuditModule,
     StorageModule,
     ScannerModule,
+    KnowledgeModule,
     IdentityModule,
     IngestionModule,
     CampaignIntelModule,

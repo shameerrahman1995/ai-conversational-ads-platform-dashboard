@@ -4,6 +4,7 @@ import { scopedWhere } from '../../common/tenant/scoped-where';
 import { SOURCE_PARSER, type SourceParserPort } from './parsing/parser.port';
 import { FACT_EXTRACTOR, type FactExtractorPort } from './facts/extractor.port';
 import { MALWARE_SCANNER, type MalwareScannerPort } from '../../common/scanner/scanner.port';
+import { KnowledgeService } from '../knowledge/knowledge.service';
 
 /**
  * Parses a source, extracts candidate facts (stored UNAPPROVED), and moves the
@@ -19,6 +20,7 @@ export class ParseService {
     @Inject(SOURCE_PARSER) private readonly parser: SourceParserPort,
     @Inject(FACT_EXTRACTOR) private readonly extractor: FactExtractorPort,
     @Inject(MALWARE_SCANNER) private readonly scanner: MalwareScannerPort,
+    private readonly knowledge: KnowledgeService,
   ) {}
 
   async parseSource(orgId: string, sourceId: string): Promise<void> {
@@ -54,6 +56,8 @@ export class ParseService {
           data: facts.map((t) => ({ orgId, sourceDocId: sourceId, text: t, approved: false })),
         });
       }
+      // Index the parsed text for retrieval (RAG); best-effort, must not fail parse.
+      await this.knowledge.ingestChunks(orgId, sourceId, text);
       await this.prisma.sourceDocument.update({
         where: { id: sourceId, orgId },
         data: { parseStatus: 'parsed' },
