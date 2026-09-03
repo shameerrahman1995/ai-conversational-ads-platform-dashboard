@@ -1,5 +1,11 @@
 import { Module } from '@nestjs/common';
+import { LeadService } from './lead.service';
+import { LeadController } from './lead.controller';
 
-// Lead: lead capture, qualification & lifecycle management.
-@Module({})
+// Lead management (blueprint §7/§10): consent, dedupe, score, ownership, lifecycle.
+@Module({
+  controllers: [LeadController],
+  providers: [LeadService],
+  exports: [LeadService],
+})
 export class LeadModule {}
