@@ -116,6 +116,7 @@ CREATE TABLE "KnowledgeChunk" (
 CREATE TABLE "Asset" (
     "id" TEXT NOT NULL,
     "orgId" TEXT NOT NULL,
+    "sourceDocId" TEXT,
     "kind" TEXT NOT NULL,
     "storageKey" TEXT NOT NULL,
     "checksum" TEXT NOT NULL,
@@ -363,6 +364,19 @@ CREATE TABLE "AuditEvent" (
     CONSTRAINT "AuditEvent_pkey" PRIMARY KEY ("id")
 );
 
+-- CreateTable
+CREATE TABLE "SourceFact" (
+    "id" TEXT NOT NULL,
+    "orgId" TEXT NOT NULL,
+    "sourceDocId" TEXT NOT NULL,
+    "text" TEXT NOT NULL,
+    "approved" BOOLEAN NOT NULL DEFAULT false,
+    "approvedBy" TEXT,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "SourceFact_pkey" PRIMARY KEY ("id")
+);
+
 -- CreateIndex
 CREATE INDEX "User_orgId_idx" ON "User"("orgId");
 
@@ -389,6 +403,9 @@ CREATE INDEX "KnowledgeChunk_sourceDocId_idx" ON "KnowledgeChunk"("sourceDocId")
 
 -- CreateIndex
 CREATE INDEX "Asset_orgId_idx" ON "Asset"("orgId");
+
+-- CreateIndex
+CREATE INDEX "Asset_sourceDocId_idx" ON "Asset"("sourceDocId");
 
 -- CreateIndex
 CREATE INDEX "Campaign_orgId_idx" ON "Campaign"("orgId");
@@ -468,6 +485,12 @@ CREATE INDEX "AuditEvent_orgId_idx" ON "AuditEvent"("orgId");
 -- CreateIndex
 CREATE INDEX "AuditEvent_createdAt_idx" ON "AuditEvent"("createdAt");
 
+-- CreateIndex
+CREATE INDEX "SourceFact_orgId_idx" ON "SourceFact"("orgId");
+
+-- CreateIndex
+CREATE INDEX "SourceFact_sourceDocId_idx" ON "SourceFact"("sourceDocId");
+
 -- AddForeignKey
 ALTER TABLE "User" ADD CONSTRAINT "User_orgId_fkey" FOREIGN KEY ("orgId") REFERENCES "Organization"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
@@ -491,6 +514,9 @@ ALTER TABLE "KnowledgeChunk" ADD CONSTRAINT "KnowledgeChunk_sourceDocId_fkey" FO
 
 -- AddForeignKey
 ALTER TABLE "Asset" ADD CONSTRAINT "Asset_orgId_fkey" FOREIGN KEY ("orgId") REFERENCES "Organization"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "Asset" ADD CONSTRAINT "Asset_sourceDocId_fkey" FOREIGN KEY ("sourceDocId") REFERENCES "SourceDocument"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "Campaign" ADD CONSTRAINT "Campaign_orgId_fkey" FOREIGN KEY ("orgId") REFERENCES "Organization"("id") ON DELETE CASCADE ON UPDATE CASCADE;
@@ -563,4 +589,10 @@ ALTER TABLE "Event" ADD CONSTRAINT "Event_orgId_fkey" FOREIGN KEY ("orgId") REFE
 
 -- AddForeignKey
 ALTER TABLE "AuditEvent" ADD CONSTRAINT "AuditEvent_orgId_fkey" FOREIGN KEY ("orgId") REFERENCES "Organization"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "SourceFact" ADD CONSTRAINT "SourceFact_orgId_fkey" FOREIGN KEY ("orgId") REFERENCES "Organization"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "SourceFact" ADD CONSTRAINT "SourceFact_sourceDocId_fkey" FOREIGN KEY ("sourceDocId") REFERENCES "SourceDocument"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
