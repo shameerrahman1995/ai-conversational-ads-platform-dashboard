@@ -132,3 +132,10 @@ export type OrgId = Id<'org'>;
 export type UserId = Id<'user'>;
 export type CampaignId = Id<'campaign'>;
 export type LeadId = Id<'lead'>;
+
+// ---- RBAC ----
+
+/** RBAC check: admin is a superuser; otherwise the role must be in `allowed`. */
+export function roleSatisfies(userRole: UserRole, allowed: UserRole[]): boolean {
+  return userRole === 'admin' || allowed.includes(userRole);
+}

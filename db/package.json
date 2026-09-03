@@ -2,7 +2,16 @@
   "name": "@acp/db",
   "version": "0.0.0",
   "private": true,
+  "main": "./generated/client/index.js",
+  "types": "./generated/client/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./generated/client/index.d.ts",
+      "default": "./generated/client/index.js"
+    }
+  },
   "scripts": {
+    "build": "prisma generate",
     "generate": "prisma generate",
     "migrate": "prisma migrate dev",
     "migrate:deploy": "prisma migrate deploy",
@@ -11,9 +20,9 @@
     "validate": "prisma validate"
   },
   "dependencies": {
-    "@prisma/client": "7.10.0"
+    "@prisma/client": "6.19.3"
   },
   "devDependencies": {
-    "prisma": "7.10.0"
+    "prisma": "6.19.3"
   }
 }
