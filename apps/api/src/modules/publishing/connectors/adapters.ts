@@ -129,3 +129,33 @@ export class GenericExportConnector extends BaseAdConnectorStub {
   ];
   protected html5 = true;
 }
+
+// ---- Phase 4 expansion connectors (blueprint §14) ----
+
+@Injectable()
+export class TikTokConnector extends BaseAdConnectorStub {
+  readonly platform: AdPlatform = 'tiktok';
+  protected formats: CreativeFormat[] = ['video', 'image_9_16'];
+  protected nativeLeadForms = true; // TikTok lead generation
+}
+
+@Injectable()
+export class MicrosoftConnector extends BaseAdConnectorStub {
+  readonly platform: AdPlatform = 'microsoft';
+  protected formats: CreativeFormat[] = ['image_1_1', 'image_4_5', 'html5'];
+  protected html5 = true;
+}
+
+@Injectable()
+export class AmazonDspConnector extends BaseAdConnectorStub {
+  readonly platform: AdPlatform = 'amazon_dsp';
+  protected formats: CreativeFormat[] = ['image_1_1', 'video', 'html5'];
+  protected html5 = true;
+}
+
+@Injectable()
+export class LinkedInConnector extends BaseAdConnectorStub {
+  readonly platform: AdPlatform = 'linkedin';
+  protected formats: CreativeFormat[] = ['image_1_1', 'video', 'native_form_schema'];
+  protected nativeLeadForms = true; // LinkedIn Lead Gen Forms
+}
