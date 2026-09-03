@@ -57,4 +57,12 @@ export class PublishingController {
   pause(@Req() req: { orgId: string }, @Param('id') id: string) {
     return this.publish.pause(req.orgId, id);
   }
+
+  // Creative-rejection recovery: clone the rejected variant into a fresh plan,
+  // preserving the rejected plan + remote id + reason as evidence.
+  @Post('publish-plans/:id/resubmit')
+  @Roles('creator')
+  resubmit(@Req() req: { orgId: string }, @Param('id') id: string) {
+    return this.publish.resubmit(req.orgId, id);
+  }
 }

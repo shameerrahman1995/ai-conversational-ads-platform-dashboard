@@ -293,6 +293,7 @@ CREATE TABLE "PublishJob" (
     "accountId" TEXT,
     "remoteId" TEXT,
     "status" "CampaignStatus" NOT NULL DEFAULT 'PUBLISHING',
+    "reviewReason" TEXT,
     "idempotencyKey" TEXT NOT NULL,
     "snapshotId" TEXT,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,

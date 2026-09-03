@@ -168,14 +168,75 @@ export class PublishService {
       .getReviewStatus({ remoteId: plan.remoteId, secretRef: '' });
     const mapped =
       status.state === 'approved' ? 'LIVE' : status.state === 'rejected' ? 'REJECTED' : 'IN_REVIEW';
-    await this.prisma.publishJob.update({ where: { id: planId, orgId }, data: { status: mapped } });
+    await this.prisma.publishJob.update({
+      where: { id: planId, orgId },
+      data: { status: mapped, reviewReason: status.reason ?? null },
+    });
     await this.audit.record({
       orgId,
-      action: 'publish.review_synced',
+      action: mapped === 'REJECTED' ? 'publish.rejected' : 'publish.review_synced',
       target: planId,
-      metadata: { state: status.state },
+      metadata: { state: status.state, reason: status.reason },
     });
-    return { state: status.state, status: mapped };
+    return { state: status.state, status: mapped, reason: status.reason ?? null };
+  }
+
+  /**
+   * Recover from a rejected publish (blueprint §8): clone the variant so it can
+   * be fixed, create a fresh plan for it, and PRESERVE the rejected plan + its
+   * remote-object map + reason as evidence (nothing is deleted).
+   */
+  async resubmit(orgId: string, planId: string) {
+    const rejected = await this.requirePlan(orgId, planId);
+    if (rejected.status !== 'REJECTED') {
+      throw new BadRequestException('Only a rejected plan can be resubmitted');
+    }
+    const original = await this.prisma.creativeVariant.findFirst({
+      where: scopedWhere(orgId, { id: rejected.variantId }),
+    });
+    if (!original) throw new NotFoundException('Original variant not found');
+
+    const clone = await this.prisma.creativeVariant.create({
+      data: {
+        orgId,
+        campaignId: original.campaignId,
+        format: original.format,
+        spec: original.spec as never,
+        status: 'draft',
+      },
+    });
+    await this.audit.record({
+      orgId,
+      action: 'creative.cloned_for_resubmit',
+      target: clone.id,
+      metadata: {
+        from: original.id,
+        rejectedPlanId: planId,
+        rejectedRemoteId: rejected.remoteId,
+        reason: rejected.reviewReason,
+      },
+    });
+
+    const created = await this.createPlan(orgId, {
+      campaignId: original.campaignId,
+      variantId: clone.id,
+      platform: rejected.platform,
+      accountId: rejected.accountId ?? '',
+    });
+    await this.audit.record({
+      orgId,
+      action: 'publish.resubmitted',
+      target: created.plan.id,
+      metadata: { supersedes: planId },
+    });
+
+    return {
+      rejectedPlanId: planId,
+      rejectedRemoteId: rejected.remoteId,
+      reason: rejected.reviewReason,
+      clonedVariantId: clone.id,
+      newPlan: created.plan,
+    };
   }
 
   async pause(orgId: string, planId: string) {
