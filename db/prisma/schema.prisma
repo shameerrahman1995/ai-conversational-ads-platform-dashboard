@@ -122,6 +122,7 @@ model Organization {
   events           Event[]
   auditEvents      AuditEvent[]
   sourceFacts      SourceFact[]
+  spendMetrics     SpendMetric[]
 }
 
 model User {
@@ -494,6 +495,28 @@ model Experiment {
   org      Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
   campaign Campaign     @relation(fields: [campaignId], references: [id], onDelete: Cascade)
 
+  @@index([orgId])
+}
+
+// Provider-sourced spend/performance metrics (blueprint §8/§22). Kept separate
+// from internal funnel events; imported per platform account, idempotent per day.
+model SpendMetric {
+  id          String   @id @default(cuid())
+  orgId       String
+  provider    String
+  accountId   String
+  remoteId    String
+  date        String // yyyy-mm-dd (as returned by the connector)
+  impressions Int      @default(0)
+  clicks      Int      @default(0)
+  spend       Float    @default(0)
+  currency    String   @default("USD")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  org Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@unique([orgId, provider, remoteId, date])
   @@index([orgId])
 }
 
