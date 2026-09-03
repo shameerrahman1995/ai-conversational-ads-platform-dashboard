@@ -344,6 +344,21 @@ CREATE TABLE "Experiment" (
 );
 
 -- CreateTable
+CREATE TABLE "ExperimentArm" (
+    "id" TEXT NOT NULL,
+    "orgId" TEXT NOT NULL,
+    "experimentId" TEXT NOT NULL,
+    "key" TEXT NOT NULL,
+    "kind" TEXT NOT NULL,
+    "refId" TEXT NOT NULL,
+    "weight" INTEGER NOT NULL DEFAULT 1,
+    "exposures" INTEGER NOT NULL DEFAULT 0,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "ExperimentArm_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
 CREATE TABLE "SpendMetric" (
     "id" TEXT NOT NULL,
     "orgId" TEXT NOT NULL,
@@ -495,6 +510,12 @@ CREATE INDEX "Approval_orgId_idx" ON "Approval"("orgId");
 CREATE INDEX "Experiment_orgId_idx" ON "Experiment"("orgId");
 
 -- CreateIndex
+CREATE INDEX "ExperimentArm_orgId_idx" ON "ExperimentArm"("orgId");
+
+-- CreateIndex
+CREATE INDEX "ExperimentArm_experimentId_idx" ON "ExperimentArm"("experimentId");
+
+-- CreateIndex
 CREATE INDEX "SpendMetric_orgId_idx" ON "SpendMetric"("orgId");
 
 -- CreateIndex
@@ -610,6 +631,12 @@ ALTER TABLE "Experiment" ADD CONSTRAINT "Experiment_orgId_fkey" FOREIGN KEY ("or
 
 -- AddForeignKey
 ALTER TABLE "Experiment" ADD CONSTRAINT "Experiment_campaignId_fkey" FOREIGN KEY ("campaignId") REFERENCES "Campaign"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "ExperimentArm" ADD CONSTRAINT "ExperimentArm_orgId_fkey" FOREIGN KEY ("orgId") REFERENCES "Organization"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "ExperimentArm" ADD CONSTRAINT "ExperimentArm_experimentId_fkey" FOREIGN KEY ("experimentId") REFERENCES "Experiment"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "SpendMetric" ADD CONSTRAINT "SpendMetric_orgId_fkey" FOREIGN KEY ("orgId") REFERENCES "Organization"("id") ON DELETE CASCADE ON UPDATE CASCADE;

@@ -123,6 +123,7 @@ model Organization {
   auditEvents      AuditEvent[]
   sourceFacts      SourceFact[]
   spendMetrics     SpendMetric[]
+  experimentArms   ExperimentArm[]
 }
 
 model User {
@@ -492,10 +493,31 @@ model Experiment {
   status     String   @default("draft")
   createdAt  DateTime @default(now())
 
-  org      Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
-  campaign Campaign     @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  org      Organization    @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  campaign Campaign        @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  arms     ExperimentArm[]
 
   @@index([orgId])
+}
+
+// A/B experiment arm (creative variant or agent version) with weighted assignment
+// and exposure counts (blueprint §3 experiments / §6 agent A/B).
+model ExperimentArm {
+  id           String   @id @default(cuid())
+  orgId        String
+  experimentId String
+  key          String
+  kind         String // creative | agent
+  refId        String // creativeVariantId or agentVersion id
+  weight       Int      @default(1)
+  exposures    Int      @default(0)
+  createdAt    DateTime @default(now())
+
+  org        Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  experiment Experiment   @relation(fields: [experimentId], references: [id], onDelete: Cascade)
+
+  @@index([orgId])
+  @@index([experimentId])
 }
 
 // Provider-sourced spend/performance metrics (blueprint §8/§22). Kept separate
