@@ -21,3 +21,17 @@ export class CreateMappingDto {
   @ApiProperty({ required: false, enum: ['none', 'lowercase', 'e164'] })
   transform?: string;
 }
+
+export class StageChangeDto {
+  @ApiProperty({ required: false })
+  leadId?: string;
+
+  @ApiProperty({ required: false, description: 'Remote CRM record id (if leadId unknown)' })
+  crmId?: string;
+
+  @ApiProperty({ example: 'qualified' })
+  stage!: string;
+
+  @ApiProperty({ required: false })
+  revenue?: number;
+}

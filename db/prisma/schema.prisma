@@ -360,6 +360,8 @@ model Lead {
   ownerId            String?
   lifecycleStage     String?
   crmId              String? // remote CRM record id after delivery
+  qualified          Boolean             @default(false) // set from CRM stage feedback
+  revenue            Float? // downstream revenue reported by the CRM
   createdAt          DateTime            @default(now())
   updatedAt          DateTime            @updatedAt
 
