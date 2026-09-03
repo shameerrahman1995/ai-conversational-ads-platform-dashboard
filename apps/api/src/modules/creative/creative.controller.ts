@@ -1,7 +1,8 @@
 import { Body, Controller, Get, Param, Post, Req, UseGuards } from '@nestjs/common';
 import { ApiHeader, ApiTags } from '@nestjs/swagger';
 import { CreativeService } from './creative.service';
-import { CreateVariantDto } from './dto';
+import { Html5CompilerService } from './html5-compiler.service';
+import { CompileHtml5Dto, CreateVariantDto } from './dto';
 import { TenantGuard } from '../../common/tenant/tenant.guard';
 import { RolesGuard } from '../../common/rbac/roles.guard';
 import { Roles } from '../../common/rbac/roles.decorator';
@@ -12,7 +13,22 @@ import { Roles } from '../../common/rbac/roles.decorator';
 @UseGuards(TenantGuard, RolesGuard)
 @Controller('v1')
 export class CreativeController {
-  constructor(private readonly creative: CreativeService) {}
+  constructor(
+    private readonly creative: CreativeService,
+    private readonly html5: Html5CompilerService,
+  ) {}
+
+  @Post('variants/:id/html5/compile')
+  @Roles('creator')
+  compileHtml5(@Req() req: { orgId: string }, @Param('id') id: string, @Body() dto: CompileHtml5Dto) {
+    return this.html5.compile(req.orgId, id, dto);
+  }
+
+  @Get('creative/html5/preview-policy')
+  @Roles('creator')
+  previewPolicy() {
+    return this.html5.previewPolicy();
+  }
 
   @Post('campaigns/:id/variants')
   @Roles('creator')
