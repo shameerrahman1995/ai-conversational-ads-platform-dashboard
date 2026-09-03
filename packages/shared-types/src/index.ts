@@ -64,6 +64,20 @@ export const CONNECTOR_STATUSES = [
 ] as const;
 export type ConnectorStatus = (typeof CONNECTOR_STATUSES)[number];
 
+/** Allowed forward transitions for the connector lifecycle (blueprint §8). */
+export const CONNECTOR_TRANSITIONS: Readonly<Record<ConnectorStatus, readonly ConnectorStatus[]>> = {
+  DISCONNECTED: ['AUTHORIZING'],
+  AUTHORIZING: ['CONNECTED', 'DISCONNECTED'],
+  CONNECTED: ['DEGRADED', 'REAUTH_REQUIRED', 'REVOKED'],
+  DEGRADED: ['CONNECTED', 'REAUTH_REQUIRED', 'REVOKED'],
+  REAUTH_REQUIRED: ['AUTHORIZING', 'CONNECTED', 'REVOKED'],
+  REVOKED: ['AUTHORIZING', 'DISCONNECTED'],
+};
+
+export function canTransitionConnector(from: ConnectorStatus, to: ConnectorStatus): boolean {
+  return CONNECTOR_TRANSITIONS[from].includes(to);
+}
+
 // ---- Approvals & versioning ----
 export type ApprovalStatus = 'pending' | 'approved' | 'rejected';
 
