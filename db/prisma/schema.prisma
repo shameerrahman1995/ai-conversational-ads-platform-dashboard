@@ -124,6 +124,8 @@ model Organization {
   sourceFacts      SourceFact[]
   spendMetrics     SpendMetric[]
   experimentArms   ExperimentArm[]
+  bookings         Booking[]
+  handoffs         Handoff[]
 }
 
 model User {
@@ -571,6 +573,39 @@ model AuditEvent {
 
   @@index([orgId])
   @@index([createdAt])
+}
+
+// Calendar booking (blueprint §15): hold + confirm a slot; external event id stored.
+model Booking {
+  id              String   @id @default(cuid())
+  orgId           String
+  conversationId  String?
+  provider        String // google_calendar | microsoft_365
+  externalEventId String?
+  slotStart       String
+  slotEnd         String
+  timezone        String   @default("UTC")
+  status          String   @default("held") // held | confirmed | canceled
+  createdAt       DateTime @default(now())
+
+  org Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@index([orgId])
+}
+
+// Human handoff (blueprint §6): escalate a conversation to a person with context.
+model Handoff {
+  id             String   @id @default(cuid())
+  orgId          String
+  conversationId String
+  reason         String?
+  status         String   @default("requested") // requested | assigned | resolved
+  assignedTo     String?
+  createdAt      DateTime @default(now())
+
+  org Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@index([orgId])
 }
 
 // Candidate product facts extracted from a source; each requires human approval

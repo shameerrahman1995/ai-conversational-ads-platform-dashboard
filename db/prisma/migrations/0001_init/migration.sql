@@ -403,6 +403,35 @@ CREATE TABLE "AuditEvent" (
 );
 
 -- CreateTable
+CREATE TABLE "Booking" (
+    "id" TEXT NOT NULL,
+    "orgId" TEXT NOT NULL,
+    "conversationId" TEXT,
+    "provider" TEXT NOT NULL,
+    "externalEventId" TEXT,
+    "slotStart" TEXT NOT NULL,
+    "slotEnd" TEXT NOT NULL,
+    "timezone" TEXT NOT NULL DEFAULT 'UTC',
+    "status" TEXT NOT NULL DEFAULT 'held',
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "Booking_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "Handoff" (
+    "id" TEXT NOT NULL,
+    "orgId" TEXT NOT NULL,
+    "conversationId" TEXT NOT NULL,
+    "reason" TEXT,
+    "status" TEXT NOT NULL DEFAULT 'requested',
+    "assignedTo" TEXT,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "Handoff_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
 CREATE TABLE "SourceFact" (
     "id" TEXT NOT NULL,
     "orgId" TEXT NOT NULL,
@@ -536,6 +565,12 @@ CREATE INDEX "AuditEvent_orgId_idx" ON "AuditEvent"("orgId");
 CREATE INDEX "AuditEvent_createdAt_idx" ON "AuditEvent"("createdAt");
 
 -- CreateIndex
+CREATE INDEX "Booking_orgId_idx" ON "Booking"("orgId");
+
+-- CreateIndex
+CREATE INDEX "Handoff_orgId_idx" ON "Handoff"("orgId");
+
+-- CreateIndex
 CREATE INDEX "SourceFact_orgId_idx" ON "SourceFact"("orgId");
 
 -- CreateIndex
@@ -648,6 +683,12 @@ ALTER TABLE "Event" ADD CONSTRAINT "Event_orgId_fkey" FOREIGN KEY ("orgId") REFE
 
 -- AddForeignKey
 ALTER TABLE "AuditEvent" ADD CONSTRAINT "AuditEvent_orgId_fkey" FOREIGN KEY ("orgId") REFERENCES "Organization"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "Booking" ADD CONSTRAINT "Booking_orgId_fkey" FOREIGN KEY ("orgId") REFERENCES "Organization"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "Handoff" ADD CONSTRAINT "Handoff_orgId_fkey" FOREIGN KEY ("orgId") REFERENCES "Organization"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "SourceFact" ADD CONSTRAINT "SourceFact_orgId_fkey" FOREIGN KEY ("orgId") REFERENCES "Organization"("id") ON DELETE CASCADE ON UPDATE CASCADE;

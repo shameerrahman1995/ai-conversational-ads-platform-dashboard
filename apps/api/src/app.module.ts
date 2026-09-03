@@ -16,6 +16,7 @@ import { AdConnectorsModule } from './modules/publishing/connectors.module';
 import { PublishingModule } from './modules/publishing/publishing.module';
 import { ConnectionsModule } from './modules/connections/connections.module';
 import { ExperimentsModule } from './modules/experiments/experiments.module';
+import { EngagementModule } from './modules/engagement/engagement.module';
 import { IntegrationHubModule } from './modules/integration-hub/integration-hub.module';
 import { AnalyticsModule } from './modules/analytics/analytics.module';
 import { PolicyModule } from './modules/policy/policy.module';
@@ -42,6 +43,7 @@ import { HealthModule } from './health/health.module';
     AdConnectorsModule,
     ConnectionsModule,
     ExperimentsModule,
+    EngagementModule,
     HealthModule,
   ],
 })
