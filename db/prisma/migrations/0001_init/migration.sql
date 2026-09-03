@@ -290,6 +290,7 @@ CREATE TABLE "PublishJob" (
     "orgId" TEXT NOT NULL,
     "variantId" TEXT NOT NULL,
     "platform" TEXT NOT NULL,
+    "accountId" TEXT,
     "remoteId" TEXT,
     "status" "CampaignStatus" NOT NULL DEFAULT 'PUBLISHING',
     "idempotencyKey" TEXT NOT NULL,
