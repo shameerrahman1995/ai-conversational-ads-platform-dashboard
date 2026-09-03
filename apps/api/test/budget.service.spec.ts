@@ -36,6 +36,7 @@ describe('BudgetService', () => {
   it('getStatus reports unlimited when no budget set', async () => {
     const d = deps({ budget: null, mtd: 10 });
     const s = await make(d).getStatus('org_1');
+    expect(s.configured).toBe(false);
     expect(s.limit).toBe(0);
     expect(s.remaining).toBeNull();
     expect(s.overBudget).toBe(false);
@@ -45,6 +46,7 @@ describe('BudgetService', () => {
   it('flags alert + economy tier when near the limit', async () => {
     const d = deps({ budget: { monthlyLimitUsd: 100, alertThresholdPct: 80 }, mtd: 95 });
     const s = await make(d).getStatus('org_1');
+    expect(s.configured).toBe(true);
     expect(s.alert).toBe(true);
     expect(s.remaining).toBe(5);
     expect(s.tier).toBe('economy');

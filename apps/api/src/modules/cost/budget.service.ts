@@ -5,9 +5,10 @@ import { scopedWhere } from '../../common/tenant/scoped-where';
 import { selectModelTier, type ModelTier } from './model-tier';
 
 export interface BudgetStatus {
+  configured: boolean; // false = no budget row; callers decide policy (no silent "unlimited")
   monthToDate: number;
   limit: number;
-  remaining: number | null; // null = unlimited
+  remaining: number | null; // null = unlimited (limit 0 or unconfigured)
   remainingPct: number | null;
   overBudget: boolean;
   alert: boolean;
@@ -83,6 +84,7 @@ export class BudgetService {
     const alert = !unlimited && monthToDate >= limit * (thresholdPct / 100);
 
     return {
+      configured: budget !== null,
       monthToDate,
       limit,
       remaining,

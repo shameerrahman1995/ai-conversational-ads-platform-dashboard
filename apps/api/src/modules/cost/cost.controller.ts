@@ -26,8 +26,10 @@ export class CostController {
     return this.budget.getStatus(req.orgId);
   }
 
+  // Usage is normally recorded server-side by the agent runtime via BudgetService.
+  // The manual HTTP path is admin-only to protect budget integrity.
   @Post('usage')
-  @Roles('creator')
+  @Roles('admin')
   record(@Req() req: { orgId: string }, @Body() dto: RecordUsageDto) {
     return this.budget.recordUsage(req.orgId, dto);
   }
