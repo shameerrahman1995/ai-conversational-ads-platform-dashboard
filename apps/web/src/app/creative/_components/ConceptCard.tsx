@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { Icon } from '@/components/Icon';
 import { Button, Chip, StatusChip } from '@/components/ui';
 import type { CreativeVariant } from '@acp/api-client';
+import { AdPreviewModal } from './AdPreviewModal';
 
 /* Human placement names for the common ad ratios. */
 const PLACEMENT: Record<string, string> = {
@@ -76,10 +77,15 @@ function manifestSummary(m: Record<string, unknown> | null | undefined): string 
 export function ConceptCard({
   variant,
   onRender,
+  agentId,
+  agentName,
 }: {
   variant: CreativeVariant;
   onRender?: (variant: CreativeVariant) => void | Promise<void>;
+  agentId?: string;
+  agentName?: string;
 }) {
+  const [previewOpen, setPreviewOpen] = useState(false);
   const { label, ratio, placement } = formatMeta(variant.format);
   const { w, h } = artboardSize(ratio);
   const headline = str(variant.spec.headline, 'Untitled concept');
@@ -217,6 +223,18 @@ export function ConceptCard({
         </div>
       </div>
 
+      {/* Preview & test — see it as the customer + click through to the AI chat */}
+      <div style={{ padding: '0.75rem 1rem 0' }}>
+        <Button
+          variant="primary"
+          icon="play"
+          onClick={() => setPreviewOpen(true)}
+          style={{ width: '100%' }}
+        >
+          Preview &amp; test
+        </Button>
+      </div>
+
       {/* Footer: provenance + optional validation manifest line */}
       <div style={{ padding: '0.85rem 1rem', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
         <div className="spread">
@@ -265,6 +283,14 @@ export function ConceptCard({
           </div>
         ) : null}
       </div>
+
+      <AdPreviewModal
+        open={previewOpen}
+        onClose={() => setPreviewOpen(false)}
+        variant={variant}
+        agentId={agentId}
+        agentName={agentName}
+      />
     </div>
   );
 }

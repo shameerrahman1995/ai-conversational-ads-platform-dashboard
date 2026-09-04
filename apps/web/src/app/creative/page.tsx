@@ -55,6 +55,7 @@ export default function CreativeStudioPage() {
     loading: campLoading,
   } = useAsync(() => client.campaigns.list(), [client]);
 
+  const { data: agents } = useAsync(() => client.agents.list(), [client]);
   const { data: modelData } = useAsync(() => client.agents.models(), [client]);
   const models: ModelOption[] = modelData?.models ?? [];
   const defaultModel = modelData?.defaults.model;
@@ -79,6 +80,9 @@ export default function CreativeStudioPage() {
     [client, activeId, reload],
   );
   const generation = latestGeneration(versions);
+
+  // The hosted agent for this campaign powers the interactive post-click preview.
+  const agent = (agents ?? []).find((a) => a.campaignId === activeId) ?? null;
 
   const list = variants ?? [];
   const total = list.length;
@@ -279,7 +283,13 @@ export default function CreativeStudioPage() {
           >
             <div className={`grid ${gridClass}`}>
               {list.map((v) => (
-                <ConceptCard key={v.id} variant={v} onRender={handleRender} />
+                <ConceptCard
+                  key={v.id}
+                  variant={v}
+                  onRender={handleRender}
+                  agentId={agent?.id}
+                  agentName={agent?.name}
+                />
               ))}
             </div>
           </DataState>
@@ -297,12 +307,13 @@ export default function CreativeStudioPage() {
             <Icon name="shield" size={16} />
           </span>
           <div>
-            <div style={{ fontWeight: 600 }}>Previews render in an isolated sandbox</div>
+            <div style={{ fontWeight: 600 }}>Preview it the way your customer will</div>
             <div className="muted" style={{ fontSize: 13, maxWidth: '80ch' }}>
-              The ad previews above are inert mockups — no scripts run and the in-ad button never
-              submits. Before a variant can publish, every headline claim must link to an approved
-              source or it stays flagged “Needs verification,” and restricted verticals go through
-              human review first.
+              Hit <strong>Preview &amp; test</strong> on any concept to see the ad in a phone frame and
+              click through into the live AI conversation — exactly what a visitor experiences. The
+              chat runs against the campaign&apos;s agent in a sandbox. Before a variant can publish,
+              every headline claim must link to an approved source or it stays flagged “Needs
+              verification,” and restricted verticals go through human review first.
             </div>
           </div>
         </Card>
