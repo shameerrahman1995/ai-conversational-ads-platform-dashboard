@@ -299,6 +299,9 @@ model AgentConfig {
   campaignId String   @unique
   promptVer  String   @default("1")
   kbId       String?
+  name       String?
+  status     String   @default("draft") // draft | live | paused
+  settings   Json? // model/persona/voice/avatar config (blueprint §16)
   createdAt  DateTime @default(now())
 
   campaign      Campaign       @relation(fields: [campaignId], references: [id], onDelete: Cascade)

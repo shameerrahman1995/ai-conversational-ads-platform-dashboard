@@ -755,6 +755,115 @@ table.table {
   }
 }
 
+/* ------------------------------------------------------------------ */
+/* Toasts                                                              */
+/* ------------------------------------------------------------------ */
+.toast-wrap {
+  position: fixed;
+  right: 1.25rem;
+  bottom: 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  z-index: 1000;
+  pointer-events: none;
+}
+.toast {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  padding: 0.7rem 0.9rem;
+  border-radius: var(--radius-control);
+  background: var(--color-ink);
+  color: #fff;
+  font-size: 13.5px;
+  font-weight: 500;
+  box-shadow: var(--shadow-md);
+  max-width: 360px;
+  animation: toast-in 0.16s ease;
+}
+.toast svg {
+  flex: none;
+}
+.toast-success {
+  background: #0b3d2e;
+}
+.toast-success svg {
+  color: #6ee7b7;
+}
+.toast-error {
+  background: #4c1111;
+}
+.toast-error svg {
+  color: #fca5a5;
+}
+.toast-info svg {
+  color: #a5b4fc;
+}
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Modal / dialog                                                      */
+/* ------------------------------------------------------------------ */
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.42);
+  backdrop-filter: blur(2px);
+  display: grid;
+  place-items: center;
+  padding: 1.5rem;
+  z-index: 1001;
+  animation: fade-in 0.12s ease;
+}
+.modal {
+  background: var(--color-surface);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-md);
+  max-width: 100%;
+  max-height: 90vh;
+  overflow: auto;
+  animation: modal-in 0.16s ease;
+}
+.modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1rem 1.25rem;
+  border-bottom: 1px solid var(--color-line);
+}
+.modal-body {
+  padding: 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+}
+.modal-foot {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.6rem;
+  padding: 0.9rem 1.25rem;
+  border-top: 1px solid var(--color-line);
+}
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes modal-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.99);
+  }
+}
+
 /* Meter bar (funnel / progress) */
 .meter {
   height: 8px;

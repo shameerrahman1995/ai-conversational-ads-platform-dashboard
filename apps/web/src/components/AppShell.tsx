@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { Icon, type IconName } from './Icon';
 import { OrgSwitcher } from './OrgSwitcher';
+import { ToastProvider } from './feedback';
 
 interface NavItem {
   href: string;
@@ -52,6 +53,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   const pathname = usePathname() || '/';
 
   return (
+    <ToastProvider>
     <div className="app-shell">
       <aside className="rail">
         <div className="rail-brand">
@@ -125,5 +127,6 @@ export function AppShell({ children }: { children: ReactNode }) {
         </main>
       </div>
     </div>
+    </ToastProvider>
   );
 }

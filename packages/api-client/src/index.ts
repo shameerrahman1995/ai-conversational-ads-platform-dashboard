@@ -154,6 +154,68 @@ export interface BudgetStatus {
   tier: string;
 }
 
+export interface ModelOption {
+  id: string;
+  label: string;
+  provider: string;
+  tier: 'frontier' | 'balanced' | 'fast';
+  description: string;
+  recommendedFor: string[];
+}
+
+export interface AgentVoiceSettings {
+  enabled: boolean;
+  provider?: string;
+  voiceId?: string;
+  recordingConsent: boolean;
+}
+export interface AgentAvatarSettings {
+  enabled: boolean;
+  provider?: string;
+  style?: string;
+}
+export interface AgentSettings {
+  name: string;
+  persona: string;
+  tone: string;
+  model: string;
+  temperature: number;
+  maxTokens: number;
+  systemPrompt: string;
+  openingMessage: string;
+  disclosure: string;
+  voice: AgentVoiceSettings;
+  avatar: AgentAvatarSettings;
+  tools: { booking: boolean; crm: boolean; pricing: boolean };
+}
+
+export interface AgentSummary {
+  id: string;
+  name: string;
+  status: string;
+  campaignId: string;
+  campaignName: string;
+  vertical: string | null;
+  model: string;
+  persona: string;
+  tone: string;
+  voiceEnabled: boolean;
+  avatarEnabled: boolean;
+}
+
+export interface AgentDetail extends AgentSummary {
+  settings: AgentSettings;
+  versions: { version: number; publishedAt: string | null; createdAt: string }[];
+}
+
+export interface AgentPreviewResult {
+  reply: string;
+  model: string;
+  grounded: boolean;
+  citations: string[];
+  fallback: boolean;
+}
+
 export class ApiClientError extends Error {
   constructor(
     public readonly status: number,
@@ -201,49 +263,135 @@ export function createApiClient(opts: ClientOptions) {
         request<AttributionReport>(`/v1/analytics/attribution${qs(params)}`),
     },
 
+    agents: {
+      models: () => request<{ models: ModelOption[]; defaults: AgentSettings }>('/v1/agents/models'),
+      list: () => request<AgentSummary[]>('/v1/agents'),
+      get: (id: string) => request<AgentDetail>(`/v1/agents/${id}`),
+      create: (body: { campaignId: string }) =>
+        request<{ id: string }>('/v1/agents', { method: 'POST', body: JSON.stringify(body) }),
+      updateConfig: (id: string, settings: Partial<AgentSettings>) =>
+        request<{ id: string; settings: AgentSettings }>(`/v1/agents/${id}/config`, {
+          method: 'PUT',
+          body: JSON.stringify({ settings }),
+        }),
+      preview: (id: string, message: string) =>
+        request<AgentPreviewResult>(`/v1/agents/${id}/preview`, {
+          method: 'POST',
+          body: JSON.stringify({ message }),
+        }),
+    },
+
     campaigns: {
       list: () => request<CampaignSummary[]>('/v1/campaigns'),
       versions: (id: string) => request<CampaignVersion[]>(`/v1/campaigns/${id}/versions`),
       create: (body: { objective: string; name?: string; vertical?: string }) =>
         request<CampaignSummary>('/v1/campaigns', { method: 'POST', body: JSON.stringify(body) }),
+      generate: (id: string, body: { model?: string; brandVoice?: string } = {}) =>
+        request<{ version: number; snapshot: unknown }>(`/v1/campaigns/${id}/generate`, {
+          method: 'POST',
+          body: JSON.stringify(body),
+        }),
+      regenerate: (id: string, field: 'headline' | 'offer' | 'cta') =>
+        request<{ version: number; snapshot: unknown }>(`/v1/campaigns/${id}/regenerate`, {
+          method: 'POST',
+          body: JSON.stringify({ field }),
+        }),
     },
 
     creative: {
       variants: (campaignId: string) =>
         request<CreativeVariant[]>(`/v1/campaigns/${campaignId}/variants`),
       variant: (id: string) => request<CreativeVariant>(`/v1/variants/${id}`),
+      createVariant: (campaignId: string, body: { format: string; spec: unknown }) =>
+        request<CreativeVariant>(`/v1/campaigns/${campaignId}/variants`, {
+          method: 'POST',
+          body: JSON.stringify(body),
+        }),
+      render: (id: string) =>
+        request<CreativeVariant>(`/v1/variants/${id}/render`, { method: 'POST' }),
     },
 
     publishing: {
       plans: () => request<PublishPlan[]>('/v1/publish-plans'),
       capabilities: (platform: string, accountId: string) =>
         request<Record<string, unknown>>(`/v1/publish/capabilities${qs({ platform, accountId })}`),
+      createPlan: (body: { campaignId: string; variantId: string; platform: string; accountId: string }) =>
+        request<Record<string, unknown>>('/v1/publish-plans', {
+          method: 'POST',
+          body: JSON.stringify(body),
+        }),
+      approve: (id: string) =>
+        request<PublishPlan>(`/v1/publish-plans/${id}/approve`, { method: 'POST' }),
+      execute: (id: string) =>
+        request<PublishPlan>(`/v1/publish-plans/${id}/execute`, { method: 'POST' }),
+      sync: (id: string) =>
+        request<Record<string, unknown>>(`/v1/publish-plans/${id}/sync`, { method: 'POST' }),
+      pause: (id: string) =>
+        request<PublishPlan>(`/v1/publish-plans/${id}/pause`, { method: 'POST' }),
+      resubmit: (id: string) =>
+        request<Record<string, unknown>>(`/v1/publish-plans/${id}/resubmit`, { method: 'POST' }),
     },
 
     leads: {
       list: () => request<LeadSummary[]>('/v1/leads'),
       get: (id: string) => request<LeadSummary>(`/v1/leads/${id}`),
       deliveries: (id: string) => request<DeliveryAttempt[]>(`/v1/leads/${id}/deliveries`),
+      deliver: (id: string, provider: 'webhook' | 'hubspot' | 'zoho' = 'hubspot') =>
+        request<Record<string, unknown>>(`/v1/leads/${id}/deliver`, {
+          method: 'POST',
+          body: JSON.stringify({ provider }),
+        }),
+      setStatus: (id: string, lifecycleStage: string) =>
+        request<Record<string, unknown>>(`/v1/leads/${id}/status`, {
+          method: 'POST',
+          body: JSON.stringify({ lifecycleStage }),
+        }),
     },
 
     connections: {
       list: () => request<Connection[]>('/v1/connections'),
+      authorizeStart: (provider: string) =>
+        request<Record<string, unknown>>(`/v1/connections/${provider}/authorize/start`, {
+          method: 'POST',
+        }),
+      authorizeComplete: (provider: string, body: Record<string, unknown> = {}) =>
+        request<Connection>(`/v1/connections/${provider}/authorize/complete`, {
+          method: 'POST',
+          body: JSON.stringify(body),
+        }),
+      test: (id: string) =>
+        request<Record<string, unknown>>(`/v1/connections/${id}/test`, { method: 'POST' }),
+      reauth: (id: string) =>
+        request<Connection>(`/v1/connections/${id}/reauth`, { method: 'POST' }),
+      disconnect: (id: string) =>
+        request<Connection>(`/v1/connections/${id}/disconnect`, { method: 'POST' }),
     },
 
     users: {
       list: () => request<OrgUser[]>('/v1/users'),
+      invite: (body: { email: string; role: string }) =>
+        request<OrgUser>('/v1/users', { method: 'POST', body: JSON.stringify(body) }),
     },
 
     experiments: {
       list: () => request<Experiment[]>('/v1/experiments'),
+      create: (body: { campaignId: string; hypothesis: string; arms?: unknown[] }) =>
+        request<Experiment>('/v1/experiments', {
+          method: 'POST',
+          body: JSON.stringify({ arms: [], ...body }),
+        }),
     },
 
     cost: {
       status: () => request<BudgetStatus>('/v1/budget'),
+      setBudget: (body: { monthlyLimitUsd: number; alertThresholdPct?: number }) =>
+        request<BudgetStatus>('/v1/budget', { method: 'POST', body: JSON.stringify(body) }),
     },
 
     sources: {
       list: () => request<SourceSummary[]>('/v1/sources'),
+      create: (body: { type: string; uri: string }) =>
+        request<SourceSummary>('/v1/sources', { method: 'POST', body: JSON.stringify(body) }),
     },
   };
 }

@@ -44,6 +44,18 @@ export class SendMessageDto {
   message!: string;
 }
 
+export class UpdateAgentConfigDto {
+  @ApiProperty({ type: Object, description: 'Partial agent settings to merge (model, persona, voice, avatar, tools, …)' })
+  @Allow()
+  settings!: Record<string, unknown>;
+}
+
+export class PreviewTurnDto {
+  @ApiProperty({ description: 'Visitor message to preview the agent response for' })
+  @IsString()
+  message!: string;
+}
+
 export class VoiceTurnDto {
   @ApiProperty({ description: 'Base64-encoded audio of the visitor turn' })
   @IsString()

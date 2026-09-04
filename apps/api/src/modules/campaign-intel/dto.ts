@@ -22,6 +22,18 @@ export class CreateCampaignDto {
   vertical?: string;
 }
 
+export class GenerateCopyDto {
+  @ApiProperty({ required: false, description: 'Copywriter model id (from GET /v1/agents/models)' })
+  @IsOptional()
+  @IsString()
+  model?: string;
+
+  @ApiProperty({ required: false, description: 'Brand voice / tone for generated copy' })
+  @IsOptional()
+  @IsString()
+  brandVoice?: string;
+}
+
 export class RegenerateFieldDto {
   @ApiProperty({ enum: ['headline', 'offer', 'cta'] })
   @IsIn(['headline', 'offer', 'cta'])

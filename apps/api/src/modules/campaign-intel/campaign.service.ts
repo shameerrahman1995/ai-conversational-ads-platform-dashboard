@@ -17,6 +17,7 @@ export interface ClaimAnnotation {
 export interface CampaignSnapshot {
   copy: CampaignCopy;
   claims: ClaimAnnotation[];
+  generation?: { model: string; brandVoice: string };
 }
 
 const REGENERATABLE: CopyField[] = ['headline', 'offer', 'cta'];
@@ -43,11 +44,24 @@ export class CampaignService {
     return campaign;
   }
 
-  async generate(orgId: string, campaignId: string) {
+  async generate(
+    orgId: string,
+    campaignId: string,
+    opts?: { model?: string; brandVoice?: string },
+  ) {
     await this.requireCampaign(orgId, campaignId);
     const facts = await this.approvedFacts(orgId);
     const snapshot = this.annotate(this.generator.generate(facts), facts);
-    return this.commitVersion(orgId, campaignId, snapshot, 'campaign.generated');
+    if (opts?.model || opts?.brandVoice) {
+      snapshot.generation = {
+        model: opts.model ?? 'claude-sonnet-5',
+        brandVoice: opts.brandVoice ?? 'Default',
+      };
+    }
+    return this.commitVersion(orgId, campaignId, snapshot, 'campaign.generated', {
+      model: opts?.model,
+      brandVoice: opts?.brandVoice,
+    });
   }
 
   async regenerateField(orgId: string, campaignId: string, field: CopyField) {

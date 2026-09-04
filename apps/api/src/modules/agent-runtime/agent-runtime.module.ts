@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { AgentRuntimeService } from './agent-runtime.service';
 import { AgentBuilderService } from './agent-builder.service';
+import { AgentConfigService } from './agent-config.service';
 import { AgentController } from './agent.controller';
 import { AgentSessionController } from './agent-session.controller';
 import { MODEL_GATEWAY } from './model-gateway.port';
@@ -16,6 +17,7 @@ import { StubSpeechToText, StubTextToSpeech } from './voice/stub-speech';
   providers: [
     AgentRuntimeService,
     AgentBuilderService,
+    AgentConfigService,
     VoiceSessionService,
     { provide: MODEL_GATEWAY, useClass: StubModelGateway },
     { provide: SPEECH_TO_TEXT, useClass: StubSpeechToText },
