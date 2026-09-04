@@ -1,6 +1,7 @@
 import { Body, Controller, Delete, Get, Param, Post, Req, UseGuards } from '@nestjs/common';
 import { ApiHeader, ApiTags } from '@nestjs/swagger';
 import { IngestionService } from './ingestion.service';
+import { ParseService } from './parse.service';
 import { RegisterSourceDto } from './dto';
 import { TenantGuard } from '../../common/tenant/tenant.guard';
 import { RolesGuard } from '../../common/rbac/roles.guard';
@@ -12,12 +13,27 @@ import { Roles } from '../../common/rbac/roles.decorator';
 @Controller('v1/sources')
 @UseGuards(TenantGuard, RolesGuard)
 export class SourcesController {
-  constructor(private readonly ingestion: IngestionService) {}
+  constructor(
+    private readonly ingestion: IngestionService,
+    private readonly parseService: ParseService,
+  ) {}
 
   @Post()
   @Roles('creator')
   register(@Req() req: { orgId: string }, @Body() dto: RegisterSourceDto) {
     return this.ingestion.registerSource(req.orgId, dto);
+  }
+
+  /**
+   * Parse a registered source now (crawl/parse → extract candidate facts, stored
+   * UNAPPROVED). Runs synchronously so the reviewer sees facts immediately; the
+   * durable-queue path is used when a real worker is wired.
+   */
+  @Post(':id/parse')
+  @Roles('creator')
+  async parse(@Req() req: { orgId: string }, @Param('id') id: string) {
+    await this.parseService.parseSource(req.orgId, id);
+    return this.ingestion.getStatus(req.orgId, id);
   }
 
   @Get()

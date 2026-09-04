@@ -76,6 +76,15 @@ export interface SourceSummary {
   createdAt: string;
 }
 
+export interface SourceFact {
+  id: string;
+  sourceDocId: string;
+  text: string;
+  approved: boolean;
+  approvedBy?: string | null;
+  createdAt: string;
+}
+
 export interface CreativeVariant {
   id: string;
   campaignId: string;
@@ -391,7 +400,20 @@ export function createApiClient(opts: ClientOptions) {
     sources: {
       list: () => request<SourceSummary[]>('/v1/sources'),
       create: (body: { type: string; uri: string }) =>
-        request<SourceSummary>('/v1/sources', { method: 'POST', body: JSON.stringify(body) }),
+        request<SourceSummary & { sourceId: string }>('/v1/sources', {
+          method: 'POST',
+          body: JSON.stringify(body),
+        }),
+      parse: (id: string) =>
+        request<SourceSummary>(`/v1/sources/${id}/parse`, { method: 'POST' }),
+      facts: (id: string) => request<SourceFact[]>(`/v1/sources/${id}/facts`),
+    },
+
+    facts: {
+      approve: (id: string) =>
+        request<SourceFact>(`/v1/facts/${id}/approve`, { method: 'POST' }),
+      reject: (id: string) =>
+        request<{ ok?: boolean }>(`/v1/facts/${id}/reject`, { method: 'POST' }),
     },
   };
 }
