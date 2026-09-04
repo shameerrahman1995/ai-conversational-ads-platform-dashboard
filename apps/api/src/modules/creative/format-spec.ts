@@ -10,7 +10,9 @@ export const FORMAT_SPECS: Record<string, FormatSpec> = {
   image_1_1: { width: 1080, height: 1080 },
   image_4_5: { width: 1080, height: 1350 },
   image_9_16: { width: 1080, height: 1920 },
+  image_16_9: { width: 1920, height: 1080 },
   video: { maxBytes: 50_000_000 },
+  audio: { maxBytes: 10_000_000 },
   html5: { maxBytes: 600_000 }, // Google display upload bundle limit
 };
 

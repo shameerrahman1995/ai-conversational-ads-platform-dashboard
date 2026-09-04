@@ -9,19 +9,12 @@ import { useToast } from '@/components/feedback';
 import { ApiClientError } from '@acp/api-client';
 import type { CampaignVersion, CreativeVariant, ModelOption } from '@acp/api-client';
 import { ConceptCard } from './_components/ConceptCard';
-import { GenerateModal } from './_components/GenerateModal';
+import { AdaptiveAdModal } from './_components/AdaptiveAdModal';
+import { CreativeEditor } from './_components/CreativeEditor';
 import { NewVariantModal } from './_components/NewVariantModal';
 
 /** Verticals that always require a human in the loop before publishing. */
 const RESTRICTED = new Set(['healthcare', 'finance', 'legal', 'insurance', 'pharma']);
-
-/** Brand voices the copywriter can write Demo Advertiser Co.'s ads in. */
-const BRAND_VOICES = [
-  'Confident & local',
-  'Warm & consultative',
-  'Straightforward',
-  'Urgent — storm season',
-];
 
 const titleCase = (s: string) => s.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
 
@@ -58,7 +51,6 @@ export default function CreativeStudioPage() {
   const { data: agents } = useAsync(() => client.agents.list(), [client]);
   const { data: modelData } = useAsync(() => client.agents.models(), [client]);
   const models: ModelOption[] = modelData?.models ?? [];
-  const defaultModel = modelData?.defaults.model;
   const modelLabel = (id?: string) =>
     (id && models.find((m) => m.id === id)?.label) || id || 'a copywriter model';
 
@@ -95,20 +87,16 @@ export default function CreativeStudioPage() {
       : null;
 
   /* ---- Actions ---------------------------------------------------- */
-  const [genOpen, setGenOpen] = useState(false);
-  const [genBusy, setGenBusy] = useState(false);
-  async function handleGenerate(model: string, brandVoice: string) {
-    if (!activeId) return;
-    setGenBusy(true);
+  const [adaptiveOpen, setAdaptiveOpen] = useState(false);
+  const [editorVariant, setEditorVariant] = useState<CreativeVariant | null>(null);
+
+  async function handleDelete(variant: CreativeVariant) {
     try {
-      await client.campaigns.generate(activeId, { model, brandVoice });
-      toast.success('Generated new campaign copy');
-      setGenOpen(false);
+      await client.creative.deleteVariant(variant.id);
+      toast.success('Variant deleted');
       setReload((n) => n + 1);
     } catch (e) {
-      toast.error(errMessage(e, 'Could not generate copy — try again.'));
-    } finally {
-      setGenBusy(false);
+      toast.error(errMessage(e, 'Could not delete this variant.'));
     }
   }
 
@@ -152,15 +140,15 @@ export default function CreativeStudioPage() {
               onClick={() => setNvOpen(true)}
               disabled={!activeId}
             >
-              New variant
+              Add manually
             </Button>
             <Button
               icon="sparkles"
               variant="primary"
-              onClick={() => setGenOpen(true)}
+              onClick={() => setAdaptiveOpen(true)}
               disabled={!activeId}
             >
-              Generate variants
+              New AI ad
             </Button>
           </>
         }
@@ -287,6 +275,8 @@ export default function CreativeStudioPage() {
                   key={v.id}
                   variant={v}
                   onRender={handleRender}
+                  onEdit={() => setEditorVariant(v)}
+                  onDelete={() => handleDelete(v)}
                   agentId={agent?.id}
                   agentName={agent?.name}
                 />
@@ -319,14 +309,27 @@ export default function CreativeStudioPage() {
         </Card>
       </DataState>
 
-      <GenerateModal
-        open={genOpen}
-        onClose={() => (genBusy ? undefined : setGenOpen(false))}
-        models={models}
-        defaultModel={defaultModel}
-        brandVoices={BRAND_VOICES}
-        busy={genBusy}
-        onGenerate={handleGenerate}
+      {activeId ? (
+        <AdaptiveAdModal
+          open={adaptiveOpen}
+          onClose={() => setAdaptiveOpen(false)}
+          campaignId={activeId}
+          models={models}
+          onCreated={() => {
+            setAdaptiveOpen(false);
+            setReload((n) => n + 1);
+          }}
+        />
+      ) : null}
+
+      <CreativeEditor
+        open={editorVariant !== null}
+        onClose={() => setEditorVariant(null)}
+        variant={editorVariant}
+        onSaved={() => {
+          setEditorVariant(null);
+          setReload((n) => n + 1);
+        }}
       />
 
       <NewVariantModal

@@ -6,10 +6,10 @@ import { useApiClient } from '@/lib/api';
 import { Modal } from '@/components/feedback';
 import { Button, Chip } from '@/components/ui';
 import { Icon } from '@/components/Icon';
+import { readSpec } from './spec';
 
-function str(v: unknown, fallback: string): string {
-  return typeof v === 'string' && v.trim() ? v : fallback;
-}
+/* Faux waveform heights (0–1) for the audio panel. */
+const WAVE = [0.4, 0.75, 0.5, 1, 0.6, 0.85, 0.45, 0.9, 0.55, 0.7, 0.35, 0.8];
 
 interface ChatMsg {
   role: 'user' | 'ai';
@@ -64,8 +64,25 @@ export function AdPreviewModal({
   }, [messages, pending, stage]);
 
   if (!variant) return null;
-  const headline = str(variant.spec.headline, 'Untitled concept');
-  const cta = str(variant.spec.cta, 'Learn more');
+  const s = readSpec(variant.spec);
+  const headline = s.headline;
+  const cta = s.cta;
+
+  // Media / colour resolution — mirrors the concept card artboard.
+  const coverImage = s.mediaType === 'image' && !!s.imageUrl;
+  const coverVideo = s.mediaType === 'video' && !!s.videoUrl;
+  const videoPanel = s.mediaType === 'video' && !s.videoUrl;
+  const audioPanel = s.mediaType === 'audio';
+  const imagePlaceholder = s.mediaType === 'image' && !s.imageUrl;
+  const onDark = coverImage || coverVideo || videoPanel;
+  const copyColor = onDark ? '#ffffff' : s.textColor;
+  const textShadow = onDark ? '0 1px 8px rgba(0,0,0,0.45)' : 'none';
+  const creativeBg = onDark
+    ? '#0f1729'
+    : imagePlaceholder
+      ? 'linear-gradient(158deg, #eef0fe 0%, #ffffff 52%, #f3f4f7 100%)'
+      : s.bgColor;
+
   const name = agentName ?? 'Ava';
   const opening = `Hi! You're chatting with an AI assistant from ${advertiser}. You clicked "${headline}" — how can I help?`;
 
@@ -145,44 +162,174 @@ export function AdPreviewModal({
               </span>
             </div>
 
-            {/* Creative */}
+            {/* Creative — real media + spec colours */}
             <div
               style={{
                 borderRadius: 12,
                 overflow: 'hidden',
                 border: '1px solid var(--color-line)',
-                background: 'linear-gradient(158deg, #eef0fe 0%, #ffffff 52%, #f3f4f7 100%)',
+                background: creativeBg,
                 minHeight: 200,
                 display: 'flex',
                 flexDirection: 'column',
                 justifyContent: 'flex-end',
                 padding: '1rem',
                 position: 'relative',
+                gap: 6,
               }}
             >
-              <Icon
-                name="creative"
-                size={150}
-                style={{ position: 'absolute', right: -20, top: -20, color: 'var(--color-brand)', opacity: 0.08 }}
-              />
-              <div
-                style={{
-                  position: 'relative',
-                  fontFamily: 'var(--font-display)',
-                  fontWeight: 600,
-                  fontSize: 22,
-                  lineHeight: 1.12,
-                  letterSpacing: '-0.01em',
-                }}
-              >
-                {headline}
+              {/* Backdrop media */}
+              {coverImage ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={s.imageUrl}
+                  alt=""
+                  style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }}
+                />
+              ) : null}
+              {coverVideo ? (
+                <video
+                  src={s.videoUrl}
+                  muted
+                  playsInline
+                  preload="metadata"
+                  style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }}
+                />
+              ) : null}
+              {coverImage || coverVideo ? (
+                <div
+                  style={{
+                    position: 'absolute',
+                    inset: 0,
+                    background:
+                      'linear-gradient(to top, rgba(0,0,0,0.62) 0%, rgba(0,0,0,0.15) 45%, rgba(0,0,0,0) 78%)',
+                  }}
+                />
+              ) : null}
+              {imagePlaceholder ? (
+                <Icon
+                  name="creative"
+                  size={150}
+                  style={{ position: 'absolute', right: -20, top: -20, color: 'var(--color-brand)', opacity: 0.08 }}
+                />
+              ) : null}
+
+              {/* Centered media glyph (audio / video) */}
+              {audioPanel ? (
+                <div style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', paddingBottom: 48 }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10 }}>
+                    <span
+                      style={{
+                        width: 46,
+                        height: 46,
+                        borderRadius: 9999,
+                        display: 'grid',
+                        placeItems: 'center',
+                        color: '#fff',
+                        background: s.accentColor,
+                        boxShadow: '0 2px 8px rgba(0,0,0,0.18)',
+                      }}
+                    >
+                      <Icon name="bell" size={20} />
+                    </span>
+                    <div style={{ display: 'flex', alignItems: 'flex-end', gap: 3, height: 30 }}>
+                      {WAVE.map((b, i) => (
+                        <span
+                          key={i}
+                          style={{
+                            width: 3,
+                            height: Math.max(4, Math.round(b * 30)),
+                            borderRadius: 2,
+                            background: s.accentColor,
+                            opacity: 0.9,
+                          }}
+                        />
+                      ))}
+                    </div>
+                    <span style={{ fontSize: 12, fontWeight: 600, color: s.textColor, opacity: 0.75 }}>Audio ad</span>
+                  </div>
+                </div>
+              ) : null}
+              {videoPanel ? (
+                <div
+                  style={{
+                    position: 'absolute',
+                    inset: 0,
+                    display: 'grid',
+                    placeItems: 'center',
+                    paddingBottom: 48,
+                    color: 'rgba(255,255,255,0.85)',
+                  }}
+                >
+                  <div style={{ display: 'grid', gap: 8, justifyItems: 'center' }}>
+                    <Icon name="play" size={44} />
+                    <span style={{ fontSize: 12, fontWeight: 600, letterSpacing: '0.02em' }}>Video</span>
+                  </div>
+                </div>
+              ) : null}
+              {coverVideo ? (
+                <div style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', zIndex: 1, paddingBottom: 48 }}>
+                  <span
+                    style={{
+                      width: 56,
+                      height: 56,
+                      borderRadius: 9999,
+                      display: 'grid',
+                      placeItems: 'center',
+                      color: '#0f1729',
+                      background: 'rgba(255,255,255,0.9)',
+                      boxShadow: 'var(--shadow-md)',
+                      paddingLeft: 3,
+                    }}
+                  >
+                    <Icon name="play" size={24} />
+                  </span>
+                </div>
+              ) : null}
+
+              {/* Copy */}
+              <div style={{ position: 'relative', zIndex: 2 }}>
+                <div
+                  style={{
+                    fontFamily: 'var(--font-display)',
+                    fontWeight: 600,
+                    fontSize: 22,
+                    lineHeight: 1.12,
+                    letterSpacing: '-0.01em',
+                    color: copyColor,
+                    textShadow,
+                  }}
+                >
+                  {headline}
+                </div>
+                {s.subhead ? (
+                  <div
+                    style={{
+                      marginTop: 4,
+                      fontSize: 13,
+                      lineHeight: 1.35,
+                      color: copyColor,
+                      opacity: onDark ? 0.92 : 0.72,
+                      textShadow,
+                    }}
+                  >
+                    {s.subhead}
+                  </div>
+                ) : null}
               </div>
             </div>
 
-            {/* Live CTA */}
-            <button className="btn btn-primary" style={{ width: '100%', marginTop: '0.7rem' }} onClick={clickAd}>
+            {/* Live CTA — styled with the spec accent, still opens the chat */}
+            <button
+              className="btn btn-primary"
+              style={{ width: '100%', marginTop: '0.7rem', background: s.accentColor, borderColor: s.accentColor }}
+              onClick={clickAd}
+            >
               {cta}
             </button>
+            {audioPanel && s.audioUrl ? (
+              <audio controls src={s.audioUrl} style={{ width: '100%', marginTop: '0.6rem' }} />
+            ) : null}
             <div className="muted" style={{ fontSize: 11, textAlign: 'center', marginTop: '0.5rem' }}>
               Tap the button to experience the post-click conversation
             </div>

@@ -5,6 +5,14 @@ import { scopedWhere } from '../../common/tenant/scoped-where';
 import { RENDERER, type RenderPort } from './render.port';
 import { validateOutputs } from './format-spec';
 
+/** On-brand palettes the adaptive generator rotates through. */
+const PALETTES = [
+  { bg: '#0f1729', text: '#ffffff', accent: '#4f46e5' },
+  { bg: '#eef0fe', text: '#0f172a', accent: '#4f46e5' },
+  { bg: '#052e2b', text: '#ecfdf5', accent: '#059669' },
+  { bg: '#1e1b4b', text: '#ede9fe', accent: '#7c3aed' },
+];
+
 /**
  * Creative rendering (blueprint §10): compile a variant into the multi-format
  * output set, validate against format specs, and store an artifact manifest.
@@ -28,6 +36,100 @@ export class CreativeService {
     });
     await this.audit.record({ orgId, action: 'variant.created', target: variant.id });
     return variant;
+  }
+
+  /**
+   * Create an AI "adaptive" ad set: one creative variant per requested format,
+   * sharing grounded copy (from the campaign's latest generated version when
+   * available, else the brief) plus a media placeholder + palette. Each variant
+   * is fully customizable afterward via updateVariant.
+   */
+  async generateAdaptive(
+    orgId: string,
+    campaignId: string,
+    opts: {
+      brief?: string;
+      formats: string[];
+      mediaType?: 'image' | 'video' | 'audio' | 'none';
+      brandVoice?: string;
+      model?: string;
+    },
+  ) {
+    const campaign = await this.prisma.campaign.findFirst({
+      where: scopedWhere(orgId, { id: campaignId }),
+    });
+    if (!campaign) throw new NotFoundException('Campaign not found');
+
+    const latest = await this.prisma.campaignVersion.findFirst({
+      where: { campaignId },
+      orderBy: { version: 'desc' },
+    });
+    const copy = (latest?.snapshot as { copy?: { headline?: string; offer?: string; cta?: string } } | null)
+      ?.copy;
+    const brief = (opts.brief ?? '').trim();
+    const headline = copy?.headline ?? (brief ? brief.slice(0, 60) : 'Your offer, made clear');
+    const subhead = copy?.offer ?? (brief ? brief : 'On-brand, source-grounded creative.');
+    const cta = copy?.cta ?? 'Get a free quote';
+    const palette = PALETTES[Math.floor(Math.random() * PALETTES.length)];
+    const mediaType = opts.mediaType ?? 'image';
+
+    const formats = opts.formats.length ? opts.formats : ['image_1_1', 'image_9_16'];
+    const created = [];
+    for (const format of formats) {
+      const spec = {
+        headline,
+        subhead,
+        cta,
+        mediaType,
+        imageUrl: '',
+        videoUrl: '',
+        audioUrl: '',
+        bgColor: palette.bg,
+        textColor: palette.text,
+        accentColor: palette.accent,
+        adaptive: true,
+        brandVoice: opts.brandVoice ?? null,
+        model: opts.model ?? null,
+      };
+      created.push(await this.createVariant(orgId, campaignId, format, spec));
+    }
+    await this.audit.record({
+      orgId,
+      action: 'creative.adaptive_generated',
+      target: campaignId,
+      metadata: { formats, mediaType, count: created.length },
+    });
+    return { created };
+  }
+
+  async updateVariant(
+    orgId: string,
+    variantId: string,
+    patch: { spec?: Record<string, unknown>; status?: string },
+  ) {
+    const variant = await this.prisma.creativeVariant.findFirst({
+      where: scopedWhere(orgId, { id: variantId }),
+    });
+    if (!variant) throw new NotFoundException('Variant not found');
+    const mergedSpec = patch.spec
+      ? { ...(variant.spec as Record<string, unknown>), ...patch.spec }
+      : (variant.spec as Record<string, unknown>);
+    const updated = await this.prisma.creativeVariant.update({
+      where: { id: variantId, orgId },
+      data: { spec: mergedSpec as never, ...(patch.status ? { status: patch.status } : {}) },
+    });
+    await this.audit.record({ orgId, action: 'variant.updated', target: variantId });
+    return updated;
+  }
+
+  async deleteVariant(orgId: string, variantId: string) {
+    const variant = await this.prisma.creativeVariant.findFirst({
+      where: scopedWhere(orgId, { id: variantId }),
+    });
+    if (!variant) throw new NotFoundException('Variant not found');
+    await this.prisma.creativeVariant.delete({ where: { id: variantId, orgId } });
+    await this.audit.record({ orgId, action: 'variant.deleted', target: variantId });
+    return { ok: true };
   }
 
   async render(orgId: string, variantId: string) {

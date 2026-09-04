@@ -1,5 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { Allow, IsIn, IsString } from 'class-validator';
+import { Allow, IsArray, IsIn, IsOptional, IsString } from 'class-validator';
 
 export class CreateVariantDto {
   @ApiProperty({ example: 'image_1_1' })
@@ -9,6 +9,44 @@ export class CreateVariantDto {
   @ApiProperty({ type: Object, description: 'Creative spec (copy, assets, layout)' })
   @Allow()
   spec!: unknown;
+}
+
+export class GenerateAdaptiveDto {
+  @ApiProperty({ required: false, description: 'Short brief describing the ad' })
+  @IsOptional()
+  @IsString()
+  brief?: string;
+
+  @ApiProperty({ type: [String], description: 'Formats to produce (e.g. image_1_1, image_9_16)' })
+  @IsArray()
+  formats!: string[];
+
+  @ApiProperty({ required: false, enum: ['image', 'video', 'audio', 'none'] })
+  @IsOptional()
+  @IsIn(['image', 'video', 'audio', 'none'])
+  mediaType?: 'image' | 'video' | 'audio' | 'none';
+
+  @ApiProperty({ required: false })
+  @IsOptional()
+  @IsString()
+  brandVoice?: string;
+
+  @ApiProperty({ required: false })
+  @IsOptional()
+  @IsString()
+  model?: string;
+}
+
+export class UpdateVariantDto {
+  @ApiProperty({ required: false, type: Object, description: 'Spec fields to merge' })
+  @IsOptional()
+  @Allow()
+  spec?: Record<string, unknown>;
+
+  @ApiProperty({ required: false })
+  @IsOptional()
+  @IsString()
+  status?: string;
 }
 
 export class CompileHtml5Dto {

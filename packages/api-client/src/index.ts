@@ -320,6 +320,24 @@ export function createApiClient(opts: ClientOptions) {
           method: 'POST',
           body: JSON.stringify(body),
         }),
+      generateAdaptive: (
+        campaignId: string,
+        body: {
+          brief?: string;
+          formats: string[];
+          mediaType?: 'image' | 'video' | 'audio' | 'none';
+          brandVoice?: string;
+          model?: string;
+        },
+      ) =>
+        request<{ created: CreativeVariant[] }>(`/v1/campaigns/${campaignId}/creative/generate`, {
+          method: 'POST',
+          body: JSON.stringify(body),
+        }),
+      updateVariant: (id: string, body: { spec?: Record<string, unknown>; status?: string }) =>
+        request<CreativeVariant>(`/v1/variants/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
+      deleteVariant: (id: string) =>
+        request<{ ok: boolean }>(`/v1/variants/${id}`, { method: 'DELETE' }),
       render: (id: string) =>
         request<CreativeVariant>(`/v1/variants/${id}/render`, { method: 'POST' }),
     },
