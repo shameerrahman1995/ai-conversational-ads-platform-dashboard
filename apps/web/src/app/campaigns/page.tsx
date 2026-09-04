@@ -137,7 +137,7 @@ export default function CampaignsPage() {
         title="Campaigns"
         subtitle="Generate cross-platform ad campaigns, review every AI-written claim, and publish only what's been approved — for Demo Advertiser Co."
         actions={
-          <Button icon="plus" variant="primary" onClick={() => setOpen(true)}>
+          <Button icon="plus" variant="primary" onClick={() => router.push('/campaigns/new')}>
             New campaign
           </Button>
         }

@@ -1,5 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsIn, IsOptional, IsString } from 'class-validator';
+import { Allow, IsIn, IsOptional, IsString } from 'class-validator';
 import { RESTRICTED_VERTICALS } from '@acp/policy';
 
 export class CreateCampaignDto {
@@ -20,6 +20,15 @@ export class CreateCampaignDto {
   @IsOptional()
   @IsIn(RESTRICTED_VERTICALS as unknown as string[])
   vertical?: string;
+
+  @ApiProperty({
+    required: false,
+    type: Object,
+    description: 'Setup wizard config: platforms, audience, budget, schedule',
+  })
+  @IsOptional()
+  @Allow()
+  settings?: Record<string, unknown>;
 }
 
 export class GenerateCopyDto {

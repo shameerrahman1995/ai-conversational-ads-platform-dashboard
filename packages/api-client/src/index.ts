@@ -293,8 +293,12 @@ export function createApiClient(opts: ClientOptions) {
     campaigns: {
       list: () => request<CampaignSummary[]>('/v1/campaigns'),
       versions: (id: string) => request<CampaignVersion[]>(`/v1/campaigns/${id}/versions`),
-      create: (body: { objective: string; name?: string; vertical?: string }) =>
-        request<CampaignSummary>('/v1/campaigns', { method: 'POST', body: JSON.stringify(body) }),
+      create: (body: {
+        objective: string;
+        name?: string;
+        vertical?: string;
+        settings?: Record<string, unknown>;
+      }) => request<CampaignSummary>('/v1/campaigns', { method: 'POST', body: JSON.stringify(body) }),
       generate: (id: string, body: { model?: string; brandVoice?: string } = {}) =>
         request<{ version: number; snapshot: unknown }>(`/v1/campaigns/${id}/generate`, {
           method: 'POST',

@@ -36,9 +36,23 @@ export class CampaignService {
     @Inject(COPY_GENERATOR) private readonly generator: CopyGeneratorPort,
   ) {}
 
-  async createDraft(orgId: string, objective: string, name?: string, vertical?: string) {
+  async createDraft(
+    orgId: string,
+    objective: string,
+    name?: string,
+    vertical?: string,
+    settings?: Record<string, unknown>,
+  ) {
     const campaign = await this.prisma.campaign.create({
-      data: { orgId, objective, name, vertical, status: 'DRAFT', version: 1 },
+      data: {
+        orgId,
+        objective,
+        name,
+        vertical,
+        settings: (settings ?? undefined) as never,
+        status: 'DRAFT',
+        version: 1,
+      },
     });
     await this.audit.record({ orgId, action: 'campaign.created', target: campaign.id });
     return campaign;
