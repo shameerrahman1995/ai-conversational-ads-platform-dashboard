@@ -133,8 +133,35 @@ export function ConceptCard({
           padding: '1.35rem 1rem',
           display: 'grid',
           placeItems: 'center',
+          position: 'relative',
         }}
       >
+        {/* Small play button → interactive customer preview */}
+        <button
+          type="button"
+          onClick={() => setPreviewOpen(true)}
+          aria-label="Preview & test this ad"
+          title="Preview & test"
+          style={{
+            position: 'absolute',
+            top: '0.6rem',
+            right: '0.6rem',
+            zIndex: 1,
+            width: 34,
+            height: 34,
+            borderRadius: 9999,
+            border: 'none',
+            cursor: 'pointer',
+            display: 'grid',
+            placeItems: 'center',
+            color: '#fff',
+            background: 'var(--color-brand)',
+            boxShadow: 'var(--shadow-md)',
+            paddingLeft: 2,
+          }}
+        >
+          <Icon name="play" size={16} />
+        </button>
         <div
           aria-hidden="true"
           style={{
@@ -221,18 +248,6 @@ export function ConceptCard({
             {cta}
           </span>
         </div>
-      </div>
-
-      {/* Preview & test — see it as the customer + click through to the AI chat */}
-      <div style={{ padding: '0.75rem 1rem 0' }}>
-        <Button
-          variant="primary"
-          icon="play"
-          onClick={() => setPreviewOpen(true)}
-          style={{ width: '100%' }}
-        >
-          Preview &amp; test
-        </Button>
       </div>
 
       {/* Footer: provenance + optional validation manifest line */}

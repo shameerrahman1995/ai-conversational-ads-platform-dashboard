@@ -309,7 +309,7 @@ export default function CreativeStudioPage() {
           <div>
             <div style={{ fontWeight: 600 }}>Preview it the way your customer will</div>
             <div className="muted" style={{ fontSize: 13, maxWidth: '80ch' }}>
-              Hit <strong>Preview &amp; test</strong> on any concept to see the ad in a phone frame and
+              Hit the <strong>▶ play button</strong> on any concept to see the ad in a phone frame and
               click through into the live AI conversation — exactly what a visitor experiences. The
               chat runs against the campaign&apos;s agent in a sandbox. Before a variant can publish,
               every headline claim must link to an approved source or it stays flagged “Needs
