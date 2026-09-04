@@ -1,168 +1,246 @@
 'use client';
 
+import { useEffect, useRef, useState } from 'react';
+import { ApiClientError } from '@acp/api-client';
+import { useApiClient } from '@/lib/api';
 import { Card, Chip } from '@/components/ui';
 import { Icon } from '@/components/Icon';
-import { IconTile } from './primitives';
-import type { Agent } from './types';
 
-type Turn =
-  | { kind: 'system'; text: string }
-  | { kind: 'visitor'; text: string }
-  | { kind: 'ai'; text: string; cite?: string; needsVerification?: boolean }
-  | { kind: 'action'; text: string; sub: string };
+interface AiMsg {
+  role: 'ai';
+  text: string;
+  model: string;
+  grounded: boolean;
+  citations: string[];
+  fallback: boolean;
+}
+type Msg = { role: 'user'; text: string } | AiMsg;
 
-const SCRIPT: Turn[] = [
-  { kind: 'system', text: "You're chatting with an AI assistant from Demo Advertiser Co." },
-  {
-    kind: 'ai',
-    text: 'Hi! I can help with roof repair and book a free inspection. What’s going on with your roof?',
-  },
-  { kind: 'visitor', text: 'We had a big storm last night and there are shingles in the yard.' },
-  {
-    kind: 'ai',
-    text: 'Sorry to hear that — storm damage is our specialty. Is the roof actively leaking anywhere right now?',
-  },
-  { kind: 'visitor', text: 'A little, in the upstairs bedroom.' },
-  {
-    kind: 'ai',
-    text: 'Got it. For an asphalt shingle roof, storm repairs typically run $450–$1,800 depending on the area affected.',
-    cite: 'roof-repair page',
-  },
-  { kind: 'visitor', text: 'Does that include filing the insurance claim for me?' },
-  {
-    kind: 'ai',
-    text: 'That depends on your policy, so I can’t confirm the details here — a project manager will walk you through the claim on the inspection.',
-    needsVerification: true,
-  },
-  {
-    kind: 'ai',
-    text: 'Want me to book a free inspection? I have Thursday 9:00 AM or Friday 2:00 PM open.',
-  },
-  { kind: 'visitor', text: 'Thursday works.' },
-  {
-    kind: 'action',
-    text: 'Inspection booked — Thu, Sep 11, 9:00 AM',
-    sub: 'Confirmation sent · lead pushed to CRM as “Qualified”',
-  },
-];
+export function SimulatorTab({
+  agentId,
+  agentName,
+  disclosure,
+  openingMessage,
+}: {
+  agentId: string;
+  agentName: string;
+  disclosure: string;
+  openingMessage: string;
+}) {
+  const client = useApiClient();
+  const [messages, setMessages] = useState<Msg[]>([]);
+  const [input, setInput] = useState('');
+  const [pending, setPending] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
 
-export function SimulatorTab({ agent }: { agent: Agent }) {
+  // Focus the composer when the simulator opens (also serves "Test agent").
+  useEffect(() => {
+    inputRef.current?.focus();
+  }, []);
+
+  // Keep the newest turn in view.
+  useEffect(() => {
+    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
+  }, [messages, pending]);
+
+  async function send() {
+    const text = input.trim();
+    if (!text || pending) return;
+    setErr(null);
+    setInput('');
+    setMessages((m) => [...m, { role: 'user', text }]);
+    setPending(true);
+    try {
+      const res = await client.agents.preview(agentId, text);
+      setMessages((m) => [
+        ...m,
+        {
+          role: 'ai',
+          text: res.reply,
+          model: res.model,
+          grounded: res.grounded,
+          citations: res.citations,
+          fallback: res.fallback,
+        },
+      ]);
+    } catch (e) {
+      setErr(e instanceof ApiClientError ? e.body.message : 'Preview failed — is the API running on :4000?');
+    } finally {
+      setPending(false);
+      inputRef.current?.focus();
+    }
+  }
+
   return (
     <Card style={{ overflow: 'hidden' }}>
       <div className="panel-head">
         <div className="row" style={{ gap: '0.6rem' }}>
           <span className="panel-title">Simulator</span>
-          <span className="panel-note">sample roofing conversation</span>
+          <span className="panel-note">live preview against your current config</span>
         </div>
-        <Chip tone="info" icon="alert">
-          Preview
+        <Chip tone="brand" icon="sparkles">
+          {agentName}
         </Chip>
       </div>
 
       <div
+        ref={scrollRef}
         className="stack"
-        style={{ gap: '0.85rem', padding: '1.25rem', background: 'var(--color-surface-2)' }}
+        style={{
+          gap: '0.85rem',
+          padding: '1.25rem',
+          background: 'var(--color-surface-2)',
+          maxHeight: 460,
+          minHeight: 260,
+          overflowY: 'auto',
+        }}
       >
-        {SCRIPT.map((turn, i) => {
-          if (turn.kind === 'system') {
-            return (
-              <div key={i} style={{ display: 'flex', justifyContent: 'center' }}>
-                <Chip tone="brand" icon="sparkles">
-                  {turn.text}
-                </Chip>
-              </div>
-            );
-          }
-          if (turn.kind === 'action') {
-            return (
-              <div key={i} style={{ display: 'flex', justifyContent: 'flex-start', paddingLeft: 40 }}>
-                <div
-                  className="row"
-                  style={{
-                    gap: '0.6rem',
-                    padding: '0.7rem 0.85rem',
-                    borderRadius: 'var(--radius-card)',
-                    background: 'var(--color-success-soft)',
-                    border: '1px solid #c7ecdb',
-                    maxWidth: '82%',
-                  }}
-                >
-                  <IconTile icon="check-circle" tone="success" size={30} />
-                  <div>
-                    <div style={{ fontWeight: 600, fontSize: 13.5, color: 'var(--color-success-ink)' }}>
-                      {turn.text}
-                    </div>
-                    <div style={{ fontSize: 12, color: 'var(--color-success-ink)' }}>{turn.sub}</div>
-                  </div>
-                </div>
-              </div>
-            );
-          }
-          const isVisitor = turn.kind === 'visitor';
-          return (
-            <div
+        <div style={{ display: 'flex', justifyContent: 'center' }}>
+          <Chip tone="brand" icon="shield">
+            {disclosure}
+          </Chip>
+        </div>
+
+        {/* Seeded opening line so the transcript starts in character. */}
+        <Bubble
+          who="ai"
+          name={agentName}
+          text={openingMessage || 'Hi! How can I help?'}
+        />
+
+        {messages.map((m, i) =>
+          m.role === 'user' ? (
+            <Bubble key={i} who="user" name={agentName} text={m.text} />
+          ) : (
+            <Bubble
               key={i}
-              style={{
-                display: 'flex',
-                gap: '0.5rem',
-                justifyContent: isVisitor ? 'flex-end' : 'flex-start',
-                alignItems: 'flex-end',
-              }}
-            >
-              {!isVisitor ? <Avatar name={agent.name} /> : null}
-              <div style={{ maxWidth: '76%' }}>
-                <div
-                  style={{
-                    padding: '0.6rem 0.8rem',
-                    borderRadius: 14,
-                    fontSize: 13.5,
-                    lineHeight: 1.5,
-                    background: isVisitor ? 'var(--color-brand)' : 'var(--color-surface)',
-                    color: isVisitor ? '#fff' : 'var(--color-ink)',
-                    border: isVisitor ? 'none' : '1px solid var(--color-line)',
-                    borderBottomRightRadius: isVisitor ? 4 : 14,
-                    borderBottomLeftRadius: isVisitor ? 14 : 4,
-                    boxShadow: 'var(--shadow-xs)',
-                  }}
-                >
-                  {turn.text}
+              who="ai"
+              name={agentName}
+              text={m.text}
+              foot={
+                <div className="row" style={{ gap: '0.4rem', flexWrap: 'wrap' }}>
+                  {m.grounded ? (
+                    <Chip tone="success" icon="check-circle">
+                      Grounded{m.citations.length ? ` · ${m.citations.join(', ')}` : ''}
+                    </Chip>
+                  ) : (
+                    <Chip tone="warning" icon="alert">
+                      Needs verification
+                    </Chip>
+                  )}
+                  <Chip tone="neutral" icon="sparkles">
+                    {m.model}
+                  </Chip>
+                  {m.fallback ? (
+                    <Chip tone="info" icon="refresh">
+                      Fallback
+                    </Chip>
+                  ) : null}
                 </div>
-                {!isVisitor && (turn.cite || turn.needsVerification) ? (
-                  <div style={{ marginTop: '0.35rem' }}>
-                    {turn.needsVerification ? (
-                      <Chip tone="warning" icon="alert">
-                        Needs verification
-                      </Chip>
-                    ) : (
-                      <Chip tone="success" icon="check-circle">
-                        Grounded · {turn.cite}
-                      </Chip>
-                    )}
-                  </div>
-                ) : null}
-              </div>
-            </div>
-          );
-        })}
+              }
+            />
+          ),
+        )}
+
+        {pending ? (
+          <div className="row" style={{ gap: '0.5rem', alignItems: 'center' }}>
+            <Avatar name={agentName} />
+            <span className="spin" aria-hidden="true" />
+            <span className="muted" style={{ fontSize: 12.5 }}>
+              {agentName} is thinking…
+            </span>
+          </div>
+        ) : null}
+
+        {err ? (
+          <div
+            className="row"
+            style={{ gap: '0.5rem', color: 'var(--color-danger-ink)', fontSize: 12.5 }}
+          >
+            <Icon name="alert" size={14} />
+            {err}
+          </div>
+        ) : null}
       </div>
 
-      {/* Disabled input — clearly a preview */}
       <div
         className="row"
         style={{ gap: '0.6rem', padding: '0.85rem 1.25rem', borderTop: '1px solid var(--color-line)' }}
       >
         <input
+          ref={inputRef}
           className="input"
-          disabled
-          placeholder="Testing is disabled in this preview — launch a sandbox to chat live"
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+              e.preventDefault();
+              void send();
+            }
+          }}
+          placeholder="Ask what a visitor might ask — e.g. “How much to repair storm damage?”"
           style={{ flex: 1 }}
+          disabled={pending}
         />
-        <button className="btn btn-primary" disabled aria-label="Send (disabled in preview)">
+        <button
+          className="btn btn-primary"
+          onClick={() => void send()}
+          disabled={pending || !input.trim()}
+          aria-label="Send message"
+        >
           <Icon name="play" size={16} />
           Send
         </button>
       </div>
     </Card>
+  );
+}
+
+function Bubble({
+  who,
+  name,
+  text,
+  foot,
+}: {
+  who: 'user' | 'ai';
+  name: string;
+  text: string;
+  foot?: React.ReactNode;
+}) {
+  const isUser = who === 'user';
+  return (
+    <div
+      style={{
+        display: 'flex',
+        gap: '0.5rem',
+        justifyContent: isUser ? 'flex-end' : 'flex-start',
+        alignItems: 'flex-end',
+      }}
+    >
+      {!isUser ? <Avatar name={name} /> : null}
+      <div style={{ maxWidth: '76%' }}>
+        <div
+          style={{
+            padding: '0.6rem 0.8rem',
+            borderRadius: 14,
+            fontSize: 13.5,
+            lineHeight: 1.5,
+            background: isUser ? 'var(--color-brand)' : 'var(--color-surface)',
+            color: isUser ? '#fff' : 'var(--color-ink)',
+            border: isUser ? 'none' : '1px solid var(--color-line)',
+            borderBottomRightRadius: isUser ? 4 : 14,
+            borderBottomLeftRadius: isUser ? 14 : 4,
+            boxShadow: 'var(--shadow-xs)',
+            whiteSpace: 'pre-wrap',
+          }}
+        >
+          {text}
+        </div>
+        {foot ? <div style={{ marginTop: '0.35rem' }}>{foot}</div> : null}
+      </div>
+    </div>
   );
 }
 

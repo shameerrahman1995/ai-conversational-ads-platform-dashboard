@@ -5,22 +5,61 @@ import { useApiClient } from '@/lib/api';
 import { useAsync } from '@/lib/useAsync';
 import { Icon } from '@/components/Icon';
 import { PageHeader, Button, Card, Chip, StatusChip, DataState, Meter } from '@/components/ui';
-import type { CreativeVariant } from '@acp/api-client';
+import { useToast } from '@/components/feedback';
+import { ApiClientError } from '@acp/api-client';
+import type { CampaignVersion, CreativeVariant, ModelOption } from '@acp/api-client';
 import { ConceptCard } from './_components/ConceptCard';
+import { GenerateModal } from './_components/GenerateModal';
+import { NewVariantModal } from './_components/NewVariantModal';
 
 /** Verticals that always require a human in the loop before publishing. */
 const RESTRICTED = new Set(['healthcare', 'finance', 'legal', 'insurance', 'pharma']);
 
+/** Brand voices the copywriter can write Demo Advertiser Co.'s ads in. */
+const BRAND_VOICES = [
+  'Confident & local',
+  'Warm & consultative',
+  'Straightforward',
+  'Urgent — storm season',
+];
+
 const titleCase = (s: string) => s.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+
+const errMessage = (e: unknown, fallback: string) =>
+  e instanceof ApiClientError ? e.body.message : fallback;
+
+/** Pull the most recent generation record (model + brand voice) off the versions list. */
+function latestGeneration(
+  versions: CampaignVersion[] | null,
+): { model?: string; brandVoice?: string } | null {
+  if (!versions || versions.length === 0) return null;
+  const latest = [...versions].sort((a, b) => b.version - a.version)[0];
+  const snap = latest?.snapshot;
+  if (!snap || typeof snap !== 'object') return null;
+  const gen = (snap as Record<string, unknown>).generation;
+  if (!gen || typeof gen !== 'object') return null;
+  const g = gen as Record<string, unknown>;
+  const model = typeof g.model === 'string' ? g.model : undefined;
+  const brandVoice = typeof g.brandVoice === 'string' ? g.brandVoice : undefined;
+  return model || brandVoice ? { model, brandVoice } : null;
+}
 
 export default function CreativeStudioPage() {
   const client = useApiClient();
+  const toast = useToast();
+  const [reload, setReload] = useState(0);
 
   const {
     data: campaigns,
     error: campErr,
     loading: campLoading,
   } = useAsync(() => client.campaigns.list(), [client]);
+
+  const { data: modelData } = useAsync(() => client.agents.models(), [client]);
+  const models: ModelOption[] = modelData?.models ?? [];
+  const defaultModel = modelData?.defaults.model;
+  const modelLabel = (id?: string) =>
+    (id && models.find((m) => m.id === id)?.label) || id || 'a copywriter model';
 
   const [picked, setPicked] = useState<string>('');
   const activeId = picked || campaigns?.[0]?.id || '';
@@ -32,8 +71,14 @@ export default function CreativeStudioPage() {
     loading: varLoading,
   } = useAsync(
     () => (activeId ? client.creative.variants(activeId) : Promise.resolve([] as CreativeVariant[])),
-    [client, activeId],
+    [client, activeId, reload],
   );
+
+  const { data: versions } = useAsync(
+    () => (activeId ? client.campaigns.versions(activeId) : Promise.resolve([] as CampaignVersion[])),
+    [client, activeId, reload],
+  );
+  const generation = latestGeneration(versions);
 
   const list = variants ?? [];
   const total = list.length;
@@ -45,15 +90,75 @@ export default function CreativeStudioPage() {
       ? titleCase(campaign.vertical)
       : null;
 
+  /* ---- Actions ---------------------------------------------------- */
+  const [genOpen, setGenOpen] = useState(false);
+  const [genBusy, setGenBusy] = useState(false);
+  async function handleGenerate(model: string, brandVoice: string) {
+    if (!activeId) return;
+    setGenBusy(true);
+    try {
+      await client.campaigns.generate(activeId, { model, brandVoice });
+      toast.success('Generated new campaign copy');
+      setGenOpen(false);
+      setReload((n) => n + 1);
+    } catch (e) {
+      toast.error(errMessage(e, 'Could not generate copy — try again.'));
+    } finally {
+      setGenBusy(false);
+    }
+  }
+
+  const [nvOpen, setNvOpen] = useState(false);
+  const [nvBusy, setNvBusy] = useState(false);
+  async function handleCreateVariant(format: string, headline: string, cta: string) {
+    if (!activeId) return;
+    setNvBusy(true);
+    try {
+      await client.creative.createVariant(activeId, { format, spec: { headline, cta } });
+      toast.success('New variant added');
+      setNvOpen(false);
+      setReload((n) => n + 1);
+    } catch (e) {
+      toast.error(errMessage(e, 'Could not add this variant.'));
+    } finally {
+      setNvBusy(false);
+    }
+  }
+
+  async function handleRender(variant: CreativeVariant) {
+    try {
+      await client.creative.render(variant.id);
+      toast.success('Variant rendered');
+      setReload((n) => n + 1);
+    } catch (e) {
+      toast.error(errMessage(e, 'Could not render this variant.'));
+    }
+  }
+
   return (
     <div>
       <PageHeader
         title="Creative Studio"
         subtitle="Generate on-brand ad variants for every placement — each headline grounded in an approved source, so nothing ships on a claim you can't back up."
         actions={
-          <Button icon="sparkles" variant="primary">
-            Generate variants
-          </Button>
+          <>
+            <Button
+              icon="plus"
+              variant="ghost"
+              onClick={() => setNvOpen(true)}
+              disabled={!activeId}
+            >
+              New variant
+            </Button>
+            <Button
+              icon="sparkles"
+              variant="primary"
+              onClick={() => setGenOpen(true)}
+              disabled={!activeId}
+            >
+              Generate variants
+            </Button>
+          </>
         }
       />
 
@@ -107,6 +212,16 @@ export default function CreativeStudioPage() {
                     {restrictedLabel ? (
                       <Chip tone="warning" icon="shield">
                         {restrictedLabel} — human review required
+                      </Chip>
+                    ) : null}
+                    {generation ? (
+                      <Chip tone="brand" icon="sparkles">
+                        Copy by {modelLabel(generation.model)}
+                      </Chip>
+                    ) : null}
+                    {generation?.brandVoice ? (
+                      <Chip tone="neutral" icon="creative">
+                        {generation.brandVoice}
                       </Chip>
                     ) : null}
                   </div>
@@ -164,7 +279,7 @@ export default function CreativeStudioPage() {
           >
             <div className={`grid ${gridClass}`}>
               {list.map((v) => (
-                <ConceptCard key={v.id} variant={v} />
+                <ConceptCard key={v.id} variant={v} onRender={handleRender} />
               ))}
             </div>
           </DataState>
@@ -184,13 +299,31 @@ export default function CreativeStudioPage() {
           <div>
             <div style={{ fontWeight: 600 }}>Previews render in an isolated sandbox</div>
             <div className="muted" style={{ fontSize: 13, maxWidth: '80ch' }}>
-              These are inert mockups — no scripts run and no button here submits. Before a variant
-              can publish, every headline claim must link to an approved source or it stays flagged
-              “Needs verification,” and restricted verticals go through human review first.
+              The ad previews above are inert mockups — no scripts run and the in-ad button never
+              submits. Before a variant can publish, every headline claim must link to an approved
+              source or it stays flagged “Needs verification,” and restricted verticals go through
+              human review first.
             </div>
           </div>
         </Card>
       </DataState>
+
+      <GenerateModal
+        open={genOpen}
+        onClose={() => (genBusy ? undefined : setGenOpen(false))}
+        models={models}
+        defaultModel={defaultModel}
+        brandVoices={BRAND_VOICES}
+        busy={genBusy}
+        onGenerate={handleGenerate}
+      />
+
+      <NewVariantModal
+        open={nvOpen}
+        onClose={() => (nvBusy ? undefined : setNvOpen(false))}
+        busy={nvBusy}
+        onCreate={handleCreateVariant}
+      />
     </div>
   );
 }

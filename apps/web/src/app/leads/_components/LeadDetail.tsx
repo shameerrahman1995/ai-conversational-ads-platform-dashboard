@@ -1,9 +1,13 @@
 'use client';
 
-import { useState } from 'react';
-import type { LeadSummary } from '@acp/api-client';
+import { useEffect, useState } from 'react';
+import type { DeliveryAttempt, LeadSummary } from '@acp/api-client';
+import { ApiClientError } from '@acp/api-client';
 import { Icon } from '@/components/Icon';
 import { Button, Chip, type Tone } from '@/components/ui';
+import { useApiClient } from '@/lib/api';
+import { useAsync } from '@/lib/useAsync';
+import { useToast } from '@/components/feedback';
 
 const usd = (n: number) => `$${n.toLocaleString('en-US', { maximumFractionDigits: 0 })}`;
 
@@ -25,6 +29,28 @@ const levelColor: Record<Level, string> = {
   medium: 'var(--color-warning)',
   low: 'var(--color-ink-2)',
 };
+
+/** Pipeline stages the reviewer can move a lead through. */
+const STAGES: { key: string; label: string }[] = [
+  { key: 'new', label: 'New' },
+  { key: 'qualified', label: 'Qualified' },
+  { key: 'won', label: 'Won' },
+  { key: 'lost', label: 'Lost' },
+];
+
+/** Map a raw delivery-attempt status to a chip tone + label. */
+const DELIVERY_TONE: Record<string, Tone> = {
+  accepted: 'success',
+  queued: 'info',
+  pending: 'info',
+  failed: 'danger',
+  rejected: 'danger',
+};
+function deliveryLabel(status: string): string {
+  return status.charAt(0).toUpperCase() + status.slice(1);
+}
+const PROVIDER_LABEL: Record<string, string> = { hubspot: 'HubSpot', webhook: 'Webhook', zoho: 'Zoho' };
+const providerName = (p: string) => PROVIDER_LABEL[p] ?? p.charAt(0).toUpperCase() + p.slice(1);
 
 /** Representative transcripts, grounded in this roofing/HVAC advertiser. */
 type Turn = { who: 'agent' | 'visitor'; text: string };
@@ -65,14 +91,70 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
   );
 }
 
-export function LeadDetail({ lead }: { lead: LeadSummary }) {
+export function LeadDetail({ lead, onChanged }: { lead: LeadSummary; onChanged: () => void }) {
+  const client = useApiClient();
+  const toast = useToast();
+
   const level = (lead.qualificationLevel ?? 'low') as Level;
   const score = lead.score ?? 0;
-  const [queued, setQueued] = useState(false);
-  const [booked, setBooked] = useState(false);
-
-  const synced = Boolean(lead.crmId);
   const turns = TRANSCRIPTS[level] ?? TRANSCRIPTS.low;
+
+  // ---- Live CRM delivery state -------------------------------------------
+  const [deliveriesReload, setDeliveriesReload] = useState(0);
+  const { data: deliveriesData, loading: deliveriesLoading } = useAsync(
+    () => client.leads.deliveries(lead.id),
+    [client, lead.id, deliveriesReload],
+  );
+  const deliveries: DeliveryAttempt[] = deliveriesData ?? [];
+  const sortedDeliveries = [...deliveries].sort(
+    (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+  );
+  const accepted = deliveries.some((d) => d.status === 'accepted');
+  const failedOnly = deliveries.length > 0 && !accepted && deliveries.every((d) => d.status === 'failed');
+  const synced = accepted || Boolean(lead.crmId);
+
+  const [delivering, setDelivering] = useState(false);
+  async function sendToCrm() {
+    setDelivering(true);
+    try {
+      await client.leads.deliver(lead.id, 'hubspot');
+      toast.success('Lead sent to HubSpot');
+      setDeliveriesReload((n) => n + 1); // refetch CRM-delivery state
+      onChanged(); // refetch the inbox list (crmId → Synced, KPI counts)
+    } catch (e) {
+      toast.error(
+        e instanceof ApiClientError ? e.body.message : 'Could not send this lead to HubSpot',
+      );
+    } finally {
+      setDelivering(false);
+    }
+  }
+
+  // ---- Pipeline stage control --------------------------------------------
+  const [pendingStage, setPendingStage] = useState<string | null>(null);
+  const [stageBusy, setStageBusy] = useState(false);
+  const activeStage = pendingStage ?? lead.lifecycleStage ?? 'new';
+  useEffect(() => {
+    // Once the parent refetch reflects the change, drop the optimistic value.
+    if (pendingStage && lead.lifecycleStage === pendingStage) setPendingStage(null);
+  }, [lead.lifecycleStage, pendingStage]);
+
+  async function changeStage(stage: string, label: string) {
+    if (stage === activeStage || stageBusy) return;
+    setStageBusy(true);
+    try {
+      await client.leads.setStatus(lead.id, stage);
+      setPendingStage(stage);
+      toast.success(`Lead moved to ${label}`);
+      onChanged();
+    } catch (e) {
+      toast.error(
+        e instanceof ApiClientError ? e.body.message : 'Could not update the lead stage',
+      );
+    } finally {
+      setStageBusy(false);
+    }
+  }
 
   return (
     <div className="card" style={{ overflow: 'hidden' }}>
@@ -129,6 +211,41 @@ export function LeadDetail({ lead }: { lead: LeadSummary }) {
 
       <hr className="divider" />
 
+      {/* Pipeline stage */}
+      <div className="card-pad stack" style={{ gap: '0.6rem' }}>
+        <SectionLabel>Pipeline stage</SectionLabel>
+        <div className="row" style={{ flexWrap: 'wrap', gap: '0.4rem' }}>
+          {STAGES.map((s) => {
+            const isActive = s.key === activeStage;
+            return (
+              <button
+                key={s.key}
+                type="button"
+                onClick={() => changeStage(s.key, s.label)}
+                disabled={stageBusy || isActive}
+                aria-pressed={isActive}
+                className="chip"
+                style={{
+                  cursor: isActive || stageBusy ? 'default' : 'pointer',
+                  border: `1px solid ${isActive ? 'var(--color-brand)' : 'var(--color-line)'}`,
+                  background: isActive ? 'var(--color-brand)' : 'var(--color-surface)',
+                  color: isActive ? '#fff' : 'var(--color-ink-2)',
+                  fontWeight: isActive ? 600 : 500,
+                  opacity: stageBusy && !isActive ? 0.55 : 1,
+                }}
+              >
+                {s.label}
+              </button>
+            );
+          })}
+        </div>
+        <div className="muted" style={{ fontSize: 12.5 }}>
+          Stage syncs back to reporting and, once connected, to your CRM pipeline.
+        </div>
+      </div>
+
+      <hr className="divider" />
+
       {/* Consent */}
       <div className="card-pad stack" style={{ gap: '0.6rem' }}>
         <SectionLabel>Consent on file</SectionLabel>
@@ -159,9 +276,13 @@ export function LeadDetail({ lead }: { lead: LeadSummary }) {
             <Chip tone="success" dot>
               Synced
             </Chip>
-          ) : queued ? (
+          ) : delivering ? (
             <Chip tone="info" dot>
-              Queued for delivery
+              Sending…
+            </Chip>
+          ) : failedOnly ? (
+            <Chip tone="danger" dot>
+              Delivery failed
             </Chip>
           ) : lead.qualified ? (
             <Chip tone="warning" dot>
@@ -175,12 +296,49 @@ export function LeadDetail({ lead }: { lead: LeadSummary }) {
         </div>
         <div className="muted" style={{ fontSize: 12.5 }}>
           {synced
-            ? `Contact ${lead.crmId} is mapped to your HubSpot pipeline.`
-            : queued
-              ? 'Delivery queued — the contact and transcript will post to HubSpot on the next sync.'
+            ? lead.crmId
+              ? `Contact ${lead.crmId} is mapped to your HubSpot pipeline.`
+              : 'This contact and transcript were accepted by HubSpot.'
+            : failedOnly
+              ? 'The last delivery to HubSpot failed — retry to push this contact again.'
               : lead.qualified
                 ? `Qualified lead${lead.revenue ? ` worth ${usd(lead.revenue)}` : ''} — not yet pushed to your CRM.`
-                : 'Held for review. Low-intent leads are not routed to sales automatically.'}
+                : 'Low-intent leads are held for review and not routed to sales automatically.'}
+        </div>
+
+        {/* Delivery log — live attempts */}
+        <div className="stack" style={{ gap: '0.35rem', marginTop: '0.15rem' }}>
+          {deliveriesLoading && deliveries.length === 0 ? (
+            <div className="muted" style={{ fontSize: 12 }}>
+              Loading delivery history…
+            </div>
+          ) : sortedDeliveries.length > 0 ? (
+            sortedDeliveries.map((d) => (
+              <div
+                key={d.id}
+                className="spread"
+                style={{
+                  fontSize: 12.5,
+                  padding: '0.4rem 0.55rem',
+                  borderRadius: 8,
+                  background: 'var(--color-inset)',
+                  border: '1px solid var(--color-line)',
+                }}
+              >
+                <span className="row" style={{ gap: '0.4rem' }}>
+                  <Chip tone={DELIVERY_TONE[d.status] ?? 'neutral'} dot>
+                    {deliveryLabel(d.status)}
+                  </Chip>
+                  <span>{providerName(d.provider)}</span>
+                </span>
+                <span className="muted tnum">{timeAgo(d.createdAt)}</span>
+              </div>
+            ))
+          ) : (
+            <div className="muted" style={{ fontSize: 12 }}>
+              No delivery attempts yet.
+            </div>
+          )}
         </div>
       </div>
 
@@ -243,19 +401,18 @@ export function LeadDetail({ lead }: { lead: LeadSummary }) {
       <div className="card-pad row" style={{ gap: '0.6rem' }}>
         <Button
           variant="primary"
-          icon={queued ? 'check' : 'up-right'}
-          onClick={() => setQueued(true)}
-          disabled={queued || synced}
+          icon={synced ? 'check' : 'up-right'}
+          onClick={sendToCrm}
+          disabled={delivering || synced}
         >
-          {synced ? 'In CRM' : queued ? 'Queued to CRM' : 'Send to CRM'}
+          {synced ? 'In HubSpot' : delivering ? 'Sending…' : failedOnly ? 'Retry sync' : 'Send to CRM'}
         </Button>
         <Button
           variant="ghost"
-          icon={booked ? 'check' : 'clock'}
-          onClick={() => setBooked(true)}
-          disabled={booked}
+          icon="clock"
+          onClick={() => toast.toast('Meeting booking opens the calendar connector', 'info')}
         >
-          {booked ? 'Meeting requested' : 'Book meeting'}
+          Book meeting
         </Button>
       </div>
     </div>

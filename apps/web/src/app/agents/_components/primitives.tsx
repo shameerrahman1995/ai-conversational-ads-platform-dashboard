@@ -2,6 +2,7 @@
 
 import type { ReactNode } from 'react';
 import { Icon, type IconName } from '@/components/Icon';
+import { Button } from '@/components/ui';
 import type { TabKey } from './types';
 
 /* ---- Tab bar (local to the Agents builder) ------------------------- */
@@ -181,5 +182,104 @@ export function IconTile({
     >
       <Icon name={icon} size={Math.round(size * 0.46)} />
     </span>
+  );
+}
+
+/* ---- Save footer (dirty-aware) ------------------------------------- */
+export function SaveBar({
+  dirty,
+  busy,
+  onSave,
+  label = 'Save changes',
+}: {
+  dirty: boolean;
+  busy: boolean;
+  onSave: () => void;
+  label?: string;
+}) {
+  return (
+    <div
+      className="spread"
+      style={{
+        gap: '0.75rem',
+        paddingTop: '0.9rem',
+        marginTop: '0.15rem',
+        borderTop: '1px solid var(--color-line)',
+        flexWrap: 'wrap',
+      }}
+    >
+      <span className="muted" style={{ fontSize: 12.5 }}>
+        {dirty ? (
+          <span className="row" style={{ gap: '0.4rem', color: 'var(--color-warning-ink)' }}>
+            <span
+              style={{ width: 7, height: 7, borderRadius: 9999, background: 'var(--color-warning)' }}
+            />
+            Unsaved changes
+          </span>
+        ) : (
+          <span className="row" style={{ gap: '0.4rem' }}>
+            <Icon name="check-circle" size={13} />
+            All changes saved
+          </span>
+        )}
+      </span>
+      <Button
+        variant="primary"
+        icon="check"
+        onClick={onSave}
+        disabled={busy || !dirty}
+      >
+        {busy ? 'Saving…' : label}
+      </Button>
+    </div>
+  );
+}
+
+/* ---- Mandatory AI-disclosure note --------------------------------- */
+export function DisclosureNote({ children }: { children: ReactNode }) {
+  return (
+    <div
+      className="row"
+      style={{
+        gap: '0.6rem',
+        alignItems: 'flex-start',
+        padding: '0.75rem 0.85rem',
+        borderRadius: 'var(--radius-control)',
+        background: 'var(--color-brand-soft)',
+        border: '1px solid #dcdcfb',
+      }}
+    >
+      <IconTile icon="shield" tone="brand" size={28} />
+      <div style={{ fontSize: 12.5, color: 'var(--color-brand-ink)', lineHeight: 1.5 }}>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+/* ---- Amber "restricted vertical" review banner -------------------- */
+export function RestrictedBanner() {
+  return (
+    <div
+      className="card-pad row"
+      style={{
+        gap: '0.6rem',
+        alignItems: 'flex-start',
+        background: 'var(--color-warning-soft)',
+        border: '1px solid #f6e0bd',
+        borderRadius: 'var(--radius-card)',
+      }}
+    >
+      <IconTile icon="shield" tone="warning" size={30} />
+      <div>
+        <div style={{ fontWeight: 600, color: 'var(--color-warning-ink)' }}>
+          Restricted vertical — human review required
+        </div>
+        <div style={{ fontSize: 13, color: 'var(--color-warning-ink)' }}>
+          Healthcare agents can&apos;t go live until a reviewer approves the persona, disclosure, and
+          guardrails. Changes save to draft and stay unpublished until then.
+        </div>
+      </div>
+    </div>
   );
 }

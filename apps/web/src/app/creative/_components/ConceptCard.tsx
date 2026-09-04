@@ -1,5 +1,8 @@
+'use client';
+
+import { useState } from 'react';
 import { Icon } from '@/components/Icon';
-import { Chip, StatusChip } from '@/components/ui';
+import { Button, Chip, StatusChip } from '@/components/ui';
 import type { CreativeVariant } from '@acp/api-client';
 
 /* Human placement names for the common ad ratios. */
@@ -70,7 +73,13 @@ function manifestSummary(m: Record<string, unknown> | null | undefined): string 
  * One creative "concept": a format badge, an inert faux ad preview rendered on a
  * sandbox canvas, its lifecycle status, and a source-provenance row.
  */
-export function ConceptCard({ variant }: { variant: CreativeVariant }) {
+export function ConceptCard({
+  variant,
+  onRender,
+}: {
+  variant: CreativeVariant;
+  onRender?: (variant: CreativeVariant) => void | Promise<void>;
+}) {
   const { label, ratio, placement } = formatMeta(variant.format);
   const { w, h } = artboardSize(ratio);
   const headline = str(variant.spec.headline, 'Untitled concept');
@@ -78,6 +87,18 @@ export function ConceptCard({ variant }: { variant: CreativeVariant }) {
   const sourceLinked = variant.status.toLowerCase() === 'approved';
   const validation = manifestSummary(variant.manifest);
   const headlineSize = Math.max(13, Math.min(22, Math.round(w / 9)));
+  const rendered = !!variant.manifest || variant.status.toLowerCase() === 'rendered';
+
+  const [rendering, setRendering] = useState(false);
+  async function handleRender() {
+    if (!onRender || rendering) return;
+    setRendering(true);
+    try {
+      await onRender(variant);
+    } finally {
+      setRendering(false);
+    }
+  }
 
   return (
     <div className="card" style={{ display: 'flex', flexDirection: 'column' }}>
@@ -221,6 +242,26 @@ export function ConceptCard({ variant }: { variant: CreativeVariant }) {
           <div className="row" style={{ gap: '0.4rem', fontSize: 12, color: 'var(--color-ink-3)' }}>
             <Icon name="doc" size={13} />
             <span>{validation}</span>
+          </div>
+        ) : null}
+
+        {onRender ? (
+          <div
+            className="spread"
+            style={{ marginTop: '0.15rem', paddingTop: '0.6rem', borderTop: '1px solid var(--color-line)' }}
+          >
+            <span className="muted" style={{ fontSize: 12 }}>
+              {rendered ? 'Placement assets built' : 'Not yet rendered'}
+            </span>
+            <Button
+              variant="ghost"
+              size="sm"
+              icon={rendering ? 'refresh' : 'bolt'}
+              onClick={handleRender}
+              disabled={rendering}
+            >
+              {rendering ? 'Rendering…' : rendered ? 'Re-render' : 'Render'}
+            </Button>
           </div>
         ) : null}
       </div>

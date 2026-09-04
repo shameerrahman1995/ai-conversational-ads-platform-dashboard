@@ -1,10 +1,12 @@
 'use client';
 
 import type { IconName } from '@/components/Icon';
+import type { AgentSettings } from '@acp/api-client';
 import { Card, Chip } from '@/components/ui';
-import { IconTile, Toggle } from './primitives';
+import { IconTile, Toggle, SaveBar } from './primitives';
 
-export type ToolKey = 'meeting' | 'crm' | 'pricing';
+export type ToolKey = 'booking' | 'crm' | 'pricing';
+type Tools = AgentSettings['tools'];
 
 interface ToolDef {
   key: ToolKey;
@@ -17,7 +19,7 @@ interface ToolDef {
 
 const TOOLS: ToolDef[] = [
   {
-    key: 'meeting',
+    key: 'booking',
     icon: 'clock',
     name: 'Book a meeting',
     desc: 'Offers open slots and books a free roof inspection straight onto the calendar.',
@@ -44,11 +46,20 @@ const TOOLS: ToolDef[] = [
 
 export function ToolsTab({
   tools,
-  setTool,
+  saved,
+  busy,
+  onChange,
+  onSave,
 }: {
-  tools: Record<ToolKey, boolean>;
-  setTool: (key: ToolKey, on: boolean) => void;
+  tools: Tools;
+  saved: Tools;
+  busy: boolean;
+  onChange: (patch: Partial<AgentSettings>) => void;
+  onSave: () => void;
 }) {
+  const dirty = JSON.stringify(tools) !== JSON.stringify(saved);
+  const setTool = (key: ToolKey, on: boolean) => onChange({ tools: { ...tools, [key]: on } });
+
   return (
     <div className="stack" style={{ gap: '1rem' }}>
       <div className="grid grid-3">
@@ -96,6 +107,8 @@ export function ToolsTab({
           log with the source turn that triggered it.
         </div>
       </div>
+
+      <SaveBar dirty={dirty} busy={busy} onSave={onSave} label="Save tool access" />
     </div>
   );
 }

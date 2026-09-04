@@ -1,9 +1,11 @@
 'use client';
 
+import { useState } from 'react';
 import { useApiClient } from '@/lib/api';
 import { useAsync } from '@/lib/useAsync';
 import { Icon, type IconName } from '@/components/Icon';
 import { PageHeader, Button, StatCard, Card, Chip, DataState } from '@/components/ui';
+import { useToast, Modal } from '@/components/feedback';
 import { ConnectorCard } from './_components/ConnectorCard';
 
 interface Provider {
@@ -104,6 +106,34 @@ const CATALOG: Category[] = [
       },
     ],
   },
+  {
+    key: 'ai_media',
+    label: 'AI voice & video',
+    note: 'What gives the sales agent a voice and a face',
+    icon: 'sparkles',
+    providers: [
+      {
+        key: 'elevenlabs',
+        name: 'ElevenLabs',
+        blurb: 'Natural text-to-speech so the agent can answer homeowners out loud.',
+      },
+      {
+        key: 'deepgram',
+        name: 'Deepgram',
+        blurb: 'Real-time speech-to-text that transcribes callers as they speak.',
+      },
+      {
+        key: 'heygen',
+        name: 'HeyGen',
+        blurb: 'Render a talking avatar that walks homeowners through an estimate.',
+      },
+      {
+        key: 'd_id',
+        name: 'D-ID',
+        blurb: 'Photoreal avatar streaming for a face-to-face chat experience.',
+      },
+    ],
+  },
 ];
 
 const WEBHOOK: Provider = {
@@ -112,9 +142,16 @@ const WEBHOOK: Provider = {
   blurb: 'Post lead and status events to your own endpoint with signed payloads.',
 };
 
+const CATEGORY_COUNT = CATALOG.length + 1; // catalog groups + webhooks
+
 export default function ConnectionsPage() {
   const client = useApiClient();
-  const { data, error, loading } = useAsync(() => client.connections.list(), [client]);
+  const toast = useToast();
+  const [reload, setReload] = useState(0);
+  const [docsOpen, setDocsOpen] = useState(false);
+  const { data, error, loading } = useAsync(() => client.connections.list(), [client, reload]);
+
+  const refetch = () => setReload((n) => n + 1);
 
   const connections = data ?? [];
   const byProvider = new Map(connections.map((c) => [c.provider, c]));
@@ -129,10 +166,14 @@ export default function ConnectionsPage() {
   const linkedProviders = new Set(connections.map((c) => c.provider));
   const availableCount = totalCount - linkedProviders.size;
 
-  const totalCategories = 4; // ad networks, CRM, calendar, webhooks
   const coveredCategories =
     CATALOG.filter((cat) => cat.providers.some((p) => linkedProviders.has(p.key))).length +
     (webhookConn ? 1 : 0);
+
+  function refresh() {
+    refetch();
+    toast.success('Connection status refreshed');
+  }
 
   const codeStyle = {
     fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
@@ -147,16 +188,11 @@ export default function ConnectionsPage() {
     <div>
       <PageHeader
         title="Connections"
-        subtitle="Connect the ad networks, CRM, and calendar that power your campaigns and lead routing. Tokens are stored server-side and never exposed to the browser."
+        subtitle="Connect the ad networks, CRM, calendar, and AI voice & video providers that power your campaigns, lead routing, and the sales agent. Tokens are stored server-side and never exposed to the browser."
         actions={
-          <>
-            <Button icon="refresh" variant="ghost">
-              Refresh status
-            </Button>
-            <Button icon="plus" variant="primary">
-              Add connection
-            </Button>
-          </>
+          <Button icon="refresh" variant="ghost" onClick={refresh} disabled={loading}>
+            Refresh status
+          </Button>
         }
       />
 
@@ -179,13 +215,13 @@ export default function ConnectionsPage() {
             label="Available to connect"
             value={availableCount}
             icon="plus"
-            footNote="Across ads, CRM & calendar"
+            footNote="Across ads, CRM, calendar & AI"
           />
           <StatCard
             label="Categories covered"
-            value={`${coveredCategories} / ${totalCategories}`}
+            value={`${coveredCategories} / ${CATEGORY_COUNT}`}
             icon="overview"
-            footNote="Networks, CRM, calendar, webhooks"
+            footNote="Networks, CRM, calendar, AI, webhooks"
           />
         </div>
 
@@ -222,10 +258,30 @@ export default function ConnectionsPage() {
                     name={p.name}
                     blurb={p.blurb}
                     icon={cat.icon}
+                    provider={p.key}
                     connection={byProvider.get(p.key)}
+                    onChanged={refetch}
                   />
                 ))}
               </div>
+              {cat.key === 'ai_media' ? (
+                <div
+                  className="row"
+                  style={{
+                    gap: '0.55rem',
+                    alignItems: 'center',
+                    marginTop: '0.8rem',
+                    color: 'var(--color-ink-2)',
+                    fontSize: 12.5,
+                  }}
+                >
+                  <Icon name="agents" size={14} />
+                  <span>
+                    Once a provider is connected, turn on voice or an avatar for a specific agent on
+                    the Agents page.
+                  </span>
+                </div>
+              ) : null}
             </section>
           );
         })}
@@ -257,17 +313,14 @@ export default function ConnectionsPage() {
                 <div>
                   <div style={{ fontWeight: 600, fontSize: 14.5 }}>{WEBHOOK.name}</div>
                   <div className="muted" style={{ fontSize: 13, marginTop: 2, maxWidth: '62ch' }}>
-                    {WEBHOOK.blurb} Every request is signed with HMAC-SHA256 and failed
-                    deliveries retry with exponential backoff.
+                    {WEBHOOK.blurb} Every request is signed with HMAC-SHA256 and failed deliveries
+                    retry with exponential backoff.
                   </div>
                 </div>
               </div>
               <div className="row" style={{ gap: '0.4rem', flex: 'none' }}>
-                <Button variant="ghost" size="sm" icon="doc">
-                  View docs
-                </Button>
-                <Button variant="primary" size="sm" icon="plus">
-                  Add endpoint
+                <Button variant="ghost" size="sm" icon="doc" onClick={() => setDocsOpen(true)}>
+                  How webhooks work
                 </Button>
               </div>
             </div>
@@ -288,14 +341,64 @@ export default function ConnectionsPage() {
           <div>
             <div style={{ fontWeight: 600 }}>Your tokens never touch the browser</div>
             <div className="muted" style={{ fontSize: 13, maxWidth: '82ch' }}>
-              OAuth access and refresh tokens are held in the secrets manager and referenced only
-              by <code style={codeStyle}>secretRef</code> — never written to app rows, logs, or the
-              client. Each connection carries only the scopes its provider needs, and revoking
-              access takes effect immediately with one click.
+              OAuth access and refresh tokens are held in the secrets manager and referenced only by{' '}
+              <code style={codeStyle}>secretRef</code> — never written to app rows, logs, or the
+              client. Each connection carries only the scopes its provider needs, and revoking access
+              takes effect immediately with one click.
             </div>
           </div>
         </Card>
       </DataState>
+
+      <Modal
+        open={docsOpen}
+        onClose={() => setDocsOpen(false)}
+        title="How webhooks work"
+        width={540}
+        footer={
+          <Button variant="primary" onClick={() => setDocsOpen(false)}>
+            Got it
+          </Button>
+        }
+      >
+        <div className="stack" style={{ gap: '0.9rem', fontSize: 13 }}>
+          <p style={{ margin: 0 }} className="muted">
+            ConvoAds posts an event to your endpoint whenever a lead is qualified, delivered, or
+            changes lifecycle stage — so your own systems stay in sync without polling.
+          </p>
+          <div>
+            <div style={{ fontWeight: 600, marginBottom: '0.35rem' }}>Delivery guarantees</div>
+            <ul className="muted" style={{ margin: 0, paddingLeft: '1.1rem', lineHeight: 1.7 }}>
+              <li>
+                Each request carries an{' '}
+                <code style={codeStyle}>X-ConvoAds-Signature</code> HMAC-SHA256 header you verify
+                with your signing secret.
+              </li>
+              <li>Non-2xx responses retry with exponential backoff for up to 24 hours.</li>
+              <li>
+                Payloads are versioned and idempotent — dedupe on the{' '}
+                <code style={codeStyle}>event.id</code>.
+              </li>
+            </ul>
+          </div>
+          <div
+            className="row"
+            style={{
+              gap: '0.55rem',
+              alignItems: 'flex-start',
+              background: 'var(--color-inset)',
+              borderRadius: 8,
+              padding: '0.7rem 0.8rem',
+            }}
+          >
+            <Icon name="shield" size={14} />
+            <span className="muted" style={{ fontSize: 12.5 }}>
+              Signing secrets live in the secrets manager, never in the dashboard. Rotate them from
+              the API with zero downtime.
+            </span>
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 }

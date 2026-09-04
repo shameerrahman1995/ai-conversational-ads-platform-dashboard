@@ -1,9 +1,12 @@
 'use client';
 
+import { useState } from 'react';
 import { useApiClient } from '@/lib/api';
 import { useAsync } from '@/lib/useAsync';
 import { useOrg } from '@/lib/org-context';
 import { Icon, type IconName } from '@/components/Icon';
+import { useToast, Modal } from '@/components/feedback';
+import { ApiClientError, type OrgUser, type BudgetStatus } from '@acp/api-client';
 import {
   PageHeader,
   Button,
@@ -18,6 +21,10 @@ import {
   type Tone,
 } from '@/components/ui';
 import { Tabs, type TabItem } from './_components/Tabs';
+
+/* Roles that can be assigned when inviting a member (mirrors the API's set). */
+const INVITE_ROLES = ['creator', 'reviewer', 'publisher', 'analyst', 'admin'] as const;
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 /* Current signed-in operator (dev auth stub sends role=admin for this user). */
 const CURRENT_EMAIL = 'srahman@hodos360.ai';
@@ -57,6 +64,11 @@ const ROLES: { key: string; blurb: string }[] = [
     blurb: 'Read-only access to analytics, attribution and spend reporting.',
   },
 ];
+
+/* Short permission blurb per role, keyed for reuse in the invite/manage modals. */
+const ROLE_HINT: Record<string, string> = Object.fromEntries(
+  ROLES.map((r) => [r.key, r.blurb]),
+);
 
 /* ---- Representative audit trail (no audit GET endpoint yet) --------- */
 type AuditRow = {
@@ -119,10 +131,16 @@ const AUDIT: AuditRow[] = [
 export default function AdminPage() {
   const client = useApiClient();
   const { orgId } = useOrg();
+  const [reload, setReload] = useState(0);
+  const refetch = () => setReload((n) => n + 1);
   const { data, error, loading } = useAsync(
     () => Promise.all([client.users.list(), client.cost.status()]),
-    [client],
+    [client, reload],
   );
+
+  const [inviteOpen, setInviteOpen] = useState(false);
+  const [budgetOpen, setBudgetOpen] = useState(false);
+  const [manageMember, setManageMember] = useState<OrgUser | null>(null);
 
   const [users, budget] = data ?? [];
   const members = users ?? [];
@@ -132,7 +150,7 @@ export default function AdminPage() {
   const roleCount = (role: string) => members.filter((m) => m.role === role).length;
 
   const inviteBtn = (
-    <Button icon="plus" variant="primary">
+    <Button icon="plus" variant="primary" onClick={() => setInviteOpen(true)}>
       Invite member
     </Button>
   );
@@ -309,7 +327,7 @@ export default function AdminPage() {
                       <StatusChip status={m.status} />
                     </td>
                     <td style={{ textAlign: 'right' }}>
-                      <Button variant="ghost" size="sm">
+                      <Button variant="ghost" size="sm" onClick={() => setManageMember(m)}>
                         Manage
                       </Button>
                     </td>
@@ -387,7 +405,18 @@ export default function AdminPage() {
       <Panel
         title="Billing & AI budget"
         note="AI model usage this billing period"
-        actions={<Chip tone="brand">Growth plan</Chip>}
+        actions={
+          <span className="row" style={{ gap: '0.6rem' }}>
+            <Chip tone="brand">Growth plan</Chip>
+            <Button
+              size="sm"
+              icon="settings"
+              onClick={() => setBudgetOpen(true)}
+            >
+              {configured && limit > 0 ? 'Edit budget' : 'Set monthly cap'}
+            </Button>
+          </span>
+        }
       >
         <div className="card-pad stack" style={{ gap: '1.25rem' }}>
           <div className="grid grid-3">
@@ -460,7 +489,7 @@ export default function AdminPage() {
                   you exceed it.
                 </div>
                 <div style={{ marginTop: '0.7rem' }}>
-                  <Button size="sm" icon="settings">
+                  <Button size="sm" icon="settings" onClick={() => setBudgetOpen(true)}>
                     Set monthly cap
                   </Button>
                 </div>
@@ -623,7 +652,363 @@ export default function AdminPage() {
       <DataState loading={loading} error={error} loadingLabel="Loading workspace settings…">
         <Tabs items={tabs} />
       </DataState>
+
+      {inviteOpen ? (
+        <InviteMemberModal
+          onClose={() => setInviteOpen(false)}
+          onInvited={refetch}
+        />
+      ) : null}
+
+      {budgetOpen ? (
+        <BudgetModal
+          budget={budget}
+          onClose={() => setBudgetOpen(false)}
+          onSaved={refetch}
+        />
+      ) : null}
+
+      {manageMember ? (
+        <ManageMemberModal member={manageMember} onClose={() => setManageMember(null)} />
+      ) : null}
     </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Invite member                                                       */
+/* ------------------------------------------------------------------ */
+
+function InviteMemberModal({
+  onClose,
+  onInvited,
+}: {
+  onClose: () => void;
+  onInvited: () => void;
+}) {
+  const client = useApiClient();
+  const toast = useToast();
+  const [email, setEmail] = useState('');
+  const [role, setRole] = useState<string>('creator');
+  const [busy, setBusy] = useState(false);
+  const [touched, setTouched] = useState(false);
+
+  const trimmed = email.trim();
+  const emailValid = EMAIL_RE.test(trimmed);
+  const canSubmit = emailValid && !busy;
+
+  async function submit() {
+    if (!canSubmit) {
+      setTouched(true);
+      return;
+    }
+    setBusy(true);
+    try {
+      await client.users.invite({ email: trimmed, role });
+      toast.success('Invitation sent');
+      onInvited();
+      onClose();
+    } catch (e) {
+      toast.error(e instanceof ApiClientError ? e.body.message : 'Could not send the invitation');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title="Invite member"
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose} disabled={busy}>
+            Cancel
+          </Button>
+          <Button variant="primary" icon="plus" onClick={submit} disabled={!canSubmit}>
+            {busy ? 'Sending…' : 'Send invitation'}
+          </Button>
+        </>
+      }
+    >
+      <p className="muted" style={{ margin: 0, fontSize: 13 }}>
+        They&apos;ll receive an email invitation to join {`Demo Advertiser Co.`} and appear as
+        “Invited” until they sign in for the first time.
+      </p>
+
+      <form
+        className="stack"
+        style={{ gap: '0.9rem' }}
+        onSubmit={(e) => {
+          e.preventDefault();
+          submit();
+        }}
+      >
+        <div className="field">
+          <label className="field-label" htmlFor="invite-email">
+            Work email
+          </label>
+          <input
+            id="invite-email"
+            className="input"
+            type="email"
+            autoFocus
+            placeholder="teammate@demo.co"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            onBlur={() => setTouched(true)}
+            aria-invalid={touched && !emailValid}
+          />
+          {touched && !emailValid ? (
+            <span style={{ fontSize: 12, color: 'var(--color-danger)' }}>
+              Enter a valid email address.
+            </span>
+          ) : null}
+        </div>
+
+        <div className="field">
+          <label className="field-label" htmlFor="invite-role">
+            Role
+          </label>
+          <select
+            id="invite-role"
+            className="select"
+            value={role}
+            onChange={(e) => setRole(e.target.value)}
+          >
+            {INVITE_ROLES.map((r) => (
+              <option key={r} value={r}>
+                {cap(r)}
+              </option>
+            ))}
+          </select>
+          <span className="muted" style={{ fontSize: 12 }}>
+            {ROLE_HINT[role] ?? 'Determines what this member can do in the workspace.'}
+          </span>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Set / edit AI budget                                                */
+/* ------------------------------------------------------------------ */
+
+function BudgetModal({
+  budget,
+  onClose,
+  onSaved,
+}: {
+  budget?: BudgetStatus;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const client = useApiClient();
+  const toast = useToast();
+  const configured = !!budget?.configured && (budget?.limit ?? 0) > 0;
+  const [limit, setLimit] = useState(configured ? String(budget?.limit ?? '') : '');
+  const [threshold, setThreshold] = useState('80');
+  const [busy, setBusy] = useState(false);
+  const [touched, setTouched] = useState(false);
+
+  const limitNum = limit.trim() === '' ? NaN : Number(limit);
+  const limitValid = Number.isFinite(limitNum) && limitNum >= 0;
+  const thresholdTrimmed = threshold.trim();
+  const thresholdNum = thresholdTrimmed === '' ? undefined : Number(thresholdTrimmed);
+  const thresholdValid =
+    thresholdNum === undefined ||
+    (Number.isFinite(thresholdNum) && thresholdNum >= 1 && thresholdNum <= 100);
+  const canSubmit = limitValid && thresholdValid && !busy;
+
+  async function submit() {
+    if (!canSubmit) {
+      setTouched(true);
+      return;
+    }
+    setBusy(true);
+    try {
+      await client.cost.setBudget({
+        monthlyLimitUsd: limitNum,
+        ...(thresholdNum !== undefined ? { alertThresholdPct: thresholdNum } : {}),
+      });
+      toast.success('Budget updated');
+      onSaved();
+      onClose();
+    } catch (e) {
+      toast.error(e instanceof ApiClientError ? e.body.message : 'Could not update the budget');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title={configured ? 'Edit AI budget' : 'Set monthly cap'}
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose} disabled={busy}>
+            Cancel
+          </Button>
+          <Button variant="primary" icon="check" onClick={submit} disabled={!canSubmit}>
+            {busy ? 'Saving…' : 'Save budget'}
+          </Button>
+        </>
+      }
+    >
+      <p className="muted" style={{ margin: 0, fontSize: 13 }}>
+        Caps AI model spend for this workspace each billing period. Ad spend billed by connected
+        platforms is tracked separately.
+      </p>
+
+      <form
+        className="stack"
+        style={{ gap: '0.9rem' }}
+        onSubmit={(e) => {
+          e.preventDefault();
+          submit();
+        }}
+      >
+        <div className="field">
+          <label className="field-label" htmlFor="budget-limit">
+            Monthly cap (USD)
+          </label>
+          <input
+            id="budget-limit"
+            className="input"
+            type="number"
+            min={0}
+            step={50}
+            inputMode="numeric"
+            autoFocus
+            placeholder="2500"
+            value={limit}
+            onChange={(e) => setLimit(e.target.value)}
+            onBlur={() => setTouched(true)}
+            aria-invalid={touched && !limitValid}
+          />
+          <span className="muted" style={{ fontSize: 12 }}>
+            Enter <strong>0</strong> for no ceiling (unlimited spend).
+          </span>
+          {touched && !limitValid ? (
+            <span style={{ fontSize: 12, color: 'var(--color-danger)' }}>
+              Enter a whole dollar amount of 0 or more.
+            </span>
+          ) : null}
+        </div>
+
+        <div className="field">
+          <label className="field-label" htmlFor="budget-threshold">
+            Alert threshold (%) <span className="muted" style={{ fontWeight: 400 }}>— optional</span>
+          </label>
+          <input
+            id="budget-threshold"
+            className="input"
+            type="number"
+            min={1}
+            max={100}
+            step={5}
+            inputMode="numeric"
+            placeholder="80"
+            value={threshold}
+            onChange={(e) => setThreshold(e.target.value)}
+            onBlur={() => setTouched(true)}
+            aria-invalid={touched && !thresholdValid}
+            disabled={limitValid && limitNum === 0}
+          />
+          <span className="muted" style={{ fontSize: 12 }}>
+            {limitValid && limitNum === 0
+              ? 'Alerts are off while spend is unlimited.'
+              : 'Warn the workspace once spend reaches this share of the cap.'}
+          </span>
+          {touched && !thresholdValid ? (
+            <span style={{ fontSize: 12, color: 'var(--color-danger)' }}>
+              Use a percentage between 1 and 100, or leave it blank.
+            </span>
+          ) : null}
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Manage member (details; role changes have no endpoint yet)          */
+/* ------------------------------------------------------------------ */
+
+function ManageMemberModal({ member, onClose }: { member: OrgUser; onClose: () => void }) {
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title="Member details"
+      footer={
+        <Button variant="primary" onClick={onClose}>
+          Done
+        </Button>
+      }
+    >
+      <div className="row" style={{ gap: '0.75rem', alignItems: 'center' }}>
+        <span
+          aria-hidden="true"
+          style={{
+            width: 40,
+            height: 40,
+            borderRadius: 9999,
+            background: 'var(--color-brand-soft)',
+            color: 'var(--color-brand-ink)',
+            display: 'grid',
+            placeItems: 'center',
+            fontSize: 14,
+            fontWeight: 600,
+            flex: 'none',
+          }}
+        >
+          {initials(member.name ?? member.email)}
+        </span>
+        <div style={{ minWidth: 0 }}>
+          <div style={{ fontWeight: 600 }}>{member.name ?? member.email}</div>
+          <div className="cell-muted" style={{ fontSize: 12.5 }}>
+            {member.email}
+          </div>
+        </div>
+      </div>
+
+      <dl
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))',
+          gap: '0.9rem 1.5rem',
+          margin: 0,
+        }}
+      >
+        <Fact label="Role" value={<Chip tone={member.role === 'admin' ? 'brand' : 'neutral'}>{cap(member.role)}</Chip>} />
+        <Fact label="Status" value={<StatusChip status={member.status} />} />
+        <Fact label="Permissions" value={<span style={{ fontSize: 13 }}>{ROLE_HINT[member.role] ?? '—'}</span>} />
+      </dl>
+
+      <div
+        className="row"
+        style={{
+          gap: '0.7rem',
+          alignItems: 'flex-start',
+          padding: '0.8rem 1rem',
+          background: 'var(--color-info-soft)',
+          border: '1px solid #cfe0fb',
+          borderRadius: 'var(--radius-control)',
+        }}
+      >
+        <span style={{ color: 'var(--color-info)', flex: 'none', marginTop: 1 }}>
+          <Icon name="clock" size={16} />
+        </span>
+        <div style={{ fontSize: 12.5 }}>
+          Changing a member&apos;s role or removing access from here is coming soon. For now, manage
+          roles through your workspace administrator.
+        </div>
+      </div>
+    </Modal>
   );
 }
 

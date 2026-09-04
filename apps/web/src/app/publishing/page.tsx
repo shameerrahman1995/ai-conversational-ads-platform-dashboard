@@ -1,7 +1,9 @@
 'use client';
 
+import { useState } from 'react';
 import { useApiClient } from '@/lib/api';
 import { useAsync } from '@/lib/useAsync';
+import { useToast, Modal } from '@/components/feedback';
 import { Icon } from '@/components/Icon';
 import {
   PageHeader,
@@ -13,7 +15,7 @@ import {
   StatusChip,
   DataState,
 } from '@/components/ui';
-import type { PublishPlan } from '@acp/api-client';
+import { ApiClientError, type PublishPlan, type CreativeVariant } from '@acp/api-client';
 
 /* Platform display metadata — order fixes the account-map layout. */
 const PLATFORM_ORDER = ['google_ads', 'meta', 'tiktok'];
@@ -21,7 +23,22 @@ const PLATFORM_LABEL: Record<string, string> = {
   google_ads: 'Google Ads',
   meta: 'Meta',
   tiktok: 'TikTok',
+  microsoft: 'Microsoft Ads',
+  amazon_dsp: 'Amazon DSP',
+  linkedin: 'LinkedIn',
+  generic_export: 'Generic export',
 };
+/* Platforms offered when creating a new publish plan. */
+const PUBLISH_PLATFORMS = [
+  'google_ads',
+  'meta',
+  'tiktok',
+  'microsoft',
+  'amazon_dsp',
+  'linkedin',
+  'generic_export',
+] as const;
+
 const platformLabel = (p: string) =>
   PLATFORM_LABEL[p] ?? p.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
 
@@ -32,9 +49,21 @@ const fmtDate = (iso: string) =>
 const fmtTime = (iso: string) =>
   new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
 
+const errMsg = (e: unknown, fallback = 'Something went wrong') =>
+  e instanceof ApiClientError ? e.body.message : fallback;
+
 export default function PublishingPage() {
   const client = useApiClient();
-  const { data, error, loading } = useAsync(() => client.publishing.plans(), [client]);
+  const toast = useToast();
+  const [reload, setReload] = useState(0);
+  const { data, error, loading } = useAsync(() => client.publishing.plans(), [client, reload]);
+
+  // Which plan id (or 'create') currently has an action in flight.
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [pauseTarget, setPauseTarget] = useState<PublishPlan | null>(null);
+  const [newPlanOpen, setNewPlanOpen] = useState(false);
+
+  const refetch = () => setReload((n) => n + 1);
 
   const plans = data ?? [];
   const live = plans.filter((p) => p.status === 'LIVE').length;
@@ -46,13 +75,79 @@ export default function PublishingPage() {
     Array.from(new Set(plans.map((p) => p.platform))).filter((p) => !PLATFORM_ORDER.includes(p)),
   );
 
+  /* READY_FOR_REVIEW → approve (enqueue) then execute (push draft). */
+  async function approveAndPublish(id: string) {
+    setBusyId(id);
+    try {
+      await client.publishing.approve(id);
+    } catch (e) {
+      toast.error(errMsg(e, "Couldn't approve this plan"));
+      setBusyId(null);
+      return;
+    }
+    // Approve succeeded — surface that even if the platform push errors.
+    try {
+      await client.publishing.execute(id);
+    } catch {
+      /* execute is best-effort here; the plan is approved and queued. */
+    }
+    toast.success('Approved & publishing');
+    refetch();
+    setBusyId(null);
+  }
+
+  /* IN_REVIEW → pull the latest status back from the platform. */
+  async function syncStatus(id: string) {
+    setBusyId(id);
+    try {
+      await client.publishing.sync(id);
+      toast.success('Publish status synced');
+      refetch();
+    } catch (e) {
+      toast.error(errMsg(e, "Couldn't sync this plan"));
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  /* LIVE → pause (confirmed via modal). */
+  async function confirmPause() {
+    if (!pauseTarget) return;
+    const id = pauseTarget.id;
+    setBusyId(id);
+    try {
+      await client.publishing.pause(id);
+      toast.success('Plan paused');
+      setPauseTarget(null);
+      refetch();
+    } catch (e) {
+      toast.error(errMsg(e, "Couldn't pause this plan"));
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  /* REJECTED → resubmit for another review pass. */
+  async function resubmit(id: string) {
+    setBusyId(id);
+    try {
+      await client.publishing.resubmit(id);
+      toast.success('Resubmitted for review');
+      refetch();
+    } catch (e) {
+      toast.error(errMsg(e, "Couldn't resubmit this plan"));
+    } finally {
+      setBusyId(null);
+    }
+  }
+
   return (
     <div>
       <PageHeader
         title="Publishing"
         subtitle="Push approved creative snapshots to your connected ad platforms — every launch goes through explicit human review before it can serve."
         actions={
-          <Button icon="publishing" variant="primary">
+          <Button icon="publishing" variant="primary" onClick={() => setNewPlanOpen(true)}>
             New publish plan
           </Button>
         }
@@ -210,7 +305,14 @@ export default function PublishingPage() {
                     </td>
                     <td style={{ textAlign: 'right' }}>
                       <div style={{ display: 'inline-flex', justifyContent: 'flex-end' }}>
-                        <PlanAction status={plan.status} />
+                        <PlanAction
+                          plan={plan}
+                          busy={busyId === plan.id}
+                          onApprove={approveAndPublish}
+                          onSync={syncStatus}
+                          onPause={setPauseTarget}
+                          onResubmit={resubmit}
+                        />
                       </div>
                     </td>
                   </tr>
@@ -243,31 +345,263 @@ export default function PublishingPage() {
         </Card>
         </div>
       </DataState>
+
+      {/* Pause confirmation */}
+      <Modal
+        open={pauseTarget != null}
+        onClose={() => (busyId ? null : setPauseTarget(null))}
+        title="Pause this publish plan?"
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setPauseTarget(null)} disabled={!!busyId}>
+              Keep it live
+            </Button>
+            <Button variant="danger" icon="pause" onClick={confirmPause} disabled={!!busyId}>
+              {busyId ? 'Pausing…' : 'Pause plan'}
+            </Button>
+          </>
+        }
+      >
+        {pauseTarget ? (
+          <div className="stack" style={{ gap: '0.6rem' }}>
+            <p style={{ margin: 0 }}>
+              Pausing stops <strong>Plan #{shortId(pauseTarget.id)}</strong> on{' '}
+              <strong>{platformLabel(pauseTarget.platform)}</strong> from serving. The remote ad
+              record stays intact — nothing is deleted, and you can resume it later.
+            </p>
+            {pauseTarget.remoteId ? (
+              <div className="chip chip-neutral" style={{ alignSelf: 'flex-start' }}>
+                <Icon name="globe" size={12} /> Remote {pauseTarget.remoteId}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+      </Modal>
+
+      {/* New publish plan */}
+      {newPlanOpen ? (
+        <NewPlanModal
+          onClose={() => setNewPlanOpen(false)}
+          onCreated={() => {
+            setNewPlanOpen(false);
+            refetch();
+          }}
+        />
+      ) : null}
     </div>
   );
 }
 
-function PlanAction({ status }: { status: PublishPlan['status'] }) {
-  if (status === 'READY_FOR_REVIEW') {
+function PlanAction({
+  plan,
+  busy,
+  onApprove,
+  onSync,
+  onPause,
+  onResubmit,
+}: {
+  plan: PublishPlan;
+  busy: boolean;
+  onApprove: (id: string) => void;
+  onSync: (id: string) => void;
+  onPause: (plan: PublishPlan) => void;
+  onResubmit: (id: string) => void;
+}) {
+  if (plan.status === 'READY_FOR_REVIEW') {
     return (
-      <Button size="sm" variant="primary" icon="check">
-        Approve &amp; publish
+      <Button size="sm" variant="primary" icon="check" disabled={busy} onClick={() => onApprove(plan.id)}>
+        {busy ? 'Publishing…' : 'Approve & publish'}
       </Button>
     );
   }
-  if (status === 'IN_REVIEW') {
+  if (plan.status === 'IN_REVIEW') {
     return (
-      <Button size="sm" variant="ghost" icon="refresh">
-        Sync status
+      <Button size="sm" variant="ghost" icon="refresh" disabled={busy} onClick={() => onSync(plan.id)}>
+        {busy ? 'Syncing…' : 'Sync status'}
       </Button>
     );
   }
-  if (status === 'LIVE') {
+  if (plan.status === 'LIVE') {
     return (
-      <Button size="sm" variant="ghost" icon="pause">
+      <Button size="sm" variant="ghost" icon="pause" disabled={busy} onClick={() => onPause(plan)}>
         Pause
       </Button>
     );
   }
+  if (plan.status === 'REJECTED') {
+    return (
+      <Button size="sm" variant="ghost" icon="refresh" disabled={busy} onClick={() => onResubmit(plan.id)}>
+        {busy ? 'Resubmitting…' : 'Resubmit'}
+      </Button>
+    );
+  }
   return <span className="cell-muted">—</span>;
+}
+
+/* ------------------------------------------------------------------ */
+/* New publish plan modal                                              */
+/* ------------------------------------------------------------------ */
+function variantLabel(v: CreativeVariant): string {
+  const headline =
+    v.spec && typeof v.spec.headline === 'string' ? (v.spec.headline as string) : null;
+  const fmt = v.format.replace(/_/g, ' ');
+  return headline ? `${fmt} — "${headline}"` : `${fmt} · ${shortId(v.id)}`;
+}
+
+function NewPlanModal({
+  onClose,
+  onCreated,
+}: {
+  onClose: () => void;
+  onCreated: () => void;
+}) {
+  const client = useApiClient();
+  const toast = useToast();
+
+  const [campaignId, setCampaignId] = useState('');
+  const [variantId, setVariantId] = useState('');
+  const [platform, setPlatform] = useState('');
+  const [accountId, setAccountId] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+
+  const campaignsState = useAsync(() => client.campaigns.list(), [client]);
+  const campaigns = campaignsState.data ?? [];
+
+  // Variants reload whenever the chosen campaign changes.
+  const variantsState = useAsync(
+    () => (campaignId ? client.creative.variants(campaignId) : Promise.resolve([])),
+    [client, campaignId],
+  );
+  const variants = variantsState.data ?? [];
+
+  const valid =
+    campaignId !== '' && variantId !== '' && platform !== '' && accountId.trim() !== '';
+
+  async function submit() {
+    if (!valid) return;
+    setSubmitting(true);
+    try {
+      await client.publishing.createPlan({
+        campaignId,
+        variantId,
+        platform,
+        accountId: accountId.trim(),
+      });
+      toast.success('Publish plan created');
+      onCreated();
+    } catch (e) {
+      toast.error(errMsg(e, "Couldn't create this publish plan"));
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <Modal
+      open
+      onClose={() => (submitting ? null : onClose())}
+      title="New publish plan"
+      width={520}
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose} disabled={submitting}>
+            Cancel
+          </Button>
+          <Button variant="primary" icon="publishing" onClick={submit} disabled={!valid || submitting}>
+            {submitting ? 'Creating…' : 'Create publish plan'}
+          </Button>
+        </>
+      }
+    >
+      <div className="stack" style={{ gap: '0.9rem' }}>
+        <div className="field">
+          <label className="field-label" htmlFor="np-campaign">
+            Campaign
+          </label>
+          <select
+            id="np-campaign"
+            className="select"
+            value={campaignId}
+            onChange={(e) => {
+              setCampaignId(e.target.value);
+              setVariantId(''); // reset — variants are campaign-scoped
+            }}
+          >
+            <option value="">
+              {campaignsState.loading ? 'Loading campaigns…' : 'Select a campaign'}
+            </option>
+            {campaigns.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name ?? c.objective.replace(/_/g, ' ')}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div className="field">
+          <label className="field-label" htmlFor="np-variant">
+            Creative variant
+          </label>
+          <select
+            id="np-variant"
+            className="select"
+            value={variantId}
+            onChange={(e) => setVariantId(e.target.value)}
+            disabled={!campaignId || variantsState.loading}
+          >
+            <option value="">
+              {!campaignId
+                ? 'Pick a campaign first'
+                : variantsState.loading
+                  ? 'Loading variants…'
+                  : variants.length === 0
+                    ? 'No variants on this campaign'
+                    : 'Select a variant'}
+            </option>
+            {variants.map((v) => (
+              <option key={v.id} value={v.id}>
+                {variantLabel(v)}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div className="field">
+          <label className="field-label" htmlFor="np-platform">
+            Platform
+          </label>
+          <select
+            id="np-platform"
+            className="select"
+            value={platform}
+            onChange={(e) => setPlatform(e.target.value)}
+          >
+            <option value="">Select a platform</option>
+            {PUBLISH_PLATFORMS.map((p) => (
+              <option key={p} value={p}>
+                {platformLabel(p)}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div className="field">
+          <label className="field-label" htmlFor="np-account">
+            Ad account ID
+          </label>
+          <input
+            id="np-account"
+            className="input"
+            placeholder="e.g. acct_g1"
+            value={accountId}
+            onChange={(e) => setAccountId(e.target.value)}
+          />
+        </div>
+
+        <div className="chip chip-info" style={{ alignSelf: 'flex-start' }}>
+          <Icon name="shield" size={12} /> Plans start in review — nothing serves until you approve it
+        </div>
+      </div>
+    </Modal>
+  );
 }
