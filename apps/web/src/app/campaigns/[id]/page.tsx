@@ -65,11 +65,12 @@ export default function CampaignDetailPage() {
         client.campaigns.list(),
         client.campaigns.versions(id),
         client.creative.variants(id),
+        client.publishing.plans(),
       ]),
     [client, id, reload],
   );
 
-  const [campaigns, versions, variants] = data ?? [];
+  const [campaigns, versions, variants, allPlans] = data ?? [];
   const campaign = useMemo(
     () => (campaigns ?? []).find((c) => c.id === id),
     [campaigns, id],
@@ -85,6 +86,50 @@ export default function CampaignDetailPage() {
   const copy = snap?.copy;
   const claims = snap?.claims ?? [];
   const supported = claims.filter((c) => c.supported).length;
+
+  // Publish plans belonging to this campaign's variants = the launch surface.
+  const variantIds = useMemo(() => new Set((variants ?? []).map((v) => v.id)), [variants]);
+  const plans = useMemo(
+    () => (allPlans ?? []).filter((p) => variantIds.has(p.variantId)),
+    [allPlans, variantIds],
+  );
+  const liveCount = plans.filter((p) => p.status === 'LIVE').length;
+  const readyCount = plans.filter((p) => p.status === 'READY_FOR_REVIEW').length;
+
+  async function approveAndPublish(planId: string) {
+    setBusy(true);
+    try {
+      await client.publishing.approve(planId);
+      await client.publishing.execute(planId);
+      await client.publishing.sync(planId);
+      toast.success('Approved & published — live');
+      setReload((n) => n + 1);
+    } catch (e) {
+      toast.error(e instanceof ApiClientError ? e.body.message : "Couldn't publish this plan");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function launchAll() {
+    const ready = plans.filter((p) => p.status === 'READY_FOR_REVIEW');
+    if (ready.length === 0) return;
+    setBusy(true);
+    let ok = 0;
+    for (const p of ready) {
+      try {
+        await client.publishing.approve(p.id);
+        await client.publishing.execute(p.id);
+        await client.publishing.sync(p.id);
+        ok++;
+      } catch {
+        /* keep going; a failed channel stays in review */
+      }
+    }
+    toast.success(ok > 0 ? `Launched ${ok} channel${ok === 1 ? '' : 's'}` : 'Nothing could be launched');
+    setBusy(false);
+    setReload((n) => n + 1);
+  }
 
   async function generate() {
     setBusy(true);
@@ -238,15 +283,96 @@ export default function CampaignDetailPage() {
                 footNote={`${(variants ?? []).filter((v) => v.status === 'approved').length} approved`}
               />
               <StatCard
-                label="Verified claims"
-                value={claims.length ? `${supported}/${claims.length}` : '—'}
-                icon="check-circle"
+                label="Channels live"
+                value={plans.length ? `${liveCount}/${plans.length}` : '—'}
+                icon="globe"
                 footNote={
-                  claims.length
-                    ? 'Linked to an approved source'
-                    : 'Generate copy to check claims'
+                  plans.length ? `${readyCount} awaiting approval` : 'No publish plans yet'
                 }
               />
+            </div>
+
+            {/* Launch cockpit — approve each channel to go live */}
+            <div style={{ marginTop: '1rem' }}>
+              <Panel
+                title="Launch"
+                note="approve a channel to push it live"
+                actions={
+                  readyCount > 0 ? (
+                    <Button variant="primary" icon="publishing" onClick={launchAll} disabled={busy}>
+                      {busy ? 'Launching…' : `Approve & launch all (${readyCount})`}
+                    </Button>
+                  ) : plans.length === 0 ? (
+                    <Link href="/campaigns/new" className="btn btn-ghost">
+                      <Icon name="plus" size={16} /> Set up channels
+                    </Link>
+                  ) : undefined
+                }
+              >
+                {plans.length ? (
+                  <div className="table-wrap">
+                    <table className="table">
+                      <thead>
+                        <tr>
+                          <th>Channel</th>
+                          <th>Account</th>
+                          <th>Status</th>
+                          <th style={{ textAlign: 'right' }}>Action</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {plans.map((p) => (
+                          <tr key={p.id}>
+                            <td>
+                              <Chip tone="brand" icon="globe">
+                                {p.platform.replace(/_/g, ' ')}
+                              </Chip>
+                            </td>
+                            <td className="cell-muted">{p.accountId ?? '—'}</td>
+                            <td>
+                              <StatusChip status={p.status} />
+                            </td>
+                            <td style={{ textAlign: 'right' }}>
+                              {p.status === 'READY_FOR_REVIEW' ? (
+                                <Button
+                                  size="sm"
+                                  variant="primary"
+                                  icon="check"
+                                  onClick={() => approveAndPublish(p.id)}
+                                  disabled={busy}
+                                >
+                                  Approve &amp; publish
+                                </Button>
+                              ) : p.status === 'IN_REVIEW' ? (
+                                <span className="muted" style={{ fontSize: 12.5 }}>
+                                  Awaiting platform review
+                                </span>
+                              ) : p.status === 'LIVE' ? (
+                                <Chip tone="success" dot>
+                                  Live
+                                </Chip>
+                              ) : (
+                                <span className="cell-muted">—</span>
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : (
+                  <EmptyState
+                    icon="publishing"
+                    title="No channels set up yet"
+                    hint="Create the campaign through the setup wizard to draft a publish plan per platform, or add one in Publishing."
+                    action={
+                      <Link href="/publishing" className="btn btn-primary">
+                        <Icon name="publishing" size={16} /> Go to Publishing
+                      </Link>
+                    }
+                  />
+                )}
+              </Panel>
             </div>
 
             {/* Copy + creative */}

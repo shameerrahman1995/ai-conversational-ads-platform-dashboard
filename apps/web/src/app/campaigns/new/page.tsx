@@ -95,7 +95,7 @@ export default function NewCampaignWizard() {
         settings,
       });
 
-      // Best-effort follow-ups so the campaign lands ready to work on.
+      // Best-effort follow-ups so the campaign lands set up to launch.
       if (state.sourceUri.trim()) {
         try {
           const s = await client.sources.create({ type: 'url', uri: state.sourceUri.trim() });
@@ -113,7 +113,57 @@ export default function NewCampaignWizard() {
         }
       }
 
-      toast.success('Campaign created');
+      // Generate starter copy, then a creative variant per format, then a draft
+      // publish plan per selected platform — so the campaign lands ready to review.
+      let copy = { headline: state.name, cta: 'Get a free quote' };
+      try {
+        await client.campaigns.generate(created.id, {
+          model: state.agentModel,
+          brandVoice: state.brandVoice,
+        });
+        const versions = await client.campaigns.versions(created.id);
+        const snap = versions.sort((a, b) => b.version - a.version)[0]?.snapshot as
+          | { copy?: { headline?: string; offer?: string; cta?: string } }
+          | undefined;
+        if (snap?.copy?.headline) copy = { headline: snap.copy.headline, cta: snap.copy.cta ?? copy.cta };
+      } catch {
+        /* generation is best-effort; fall back to the campaign name as the headline */
+      }
+
+      let variantId: string | null = null;
+      let variantCount = 0;
+      for (const format of state.formats) {
+        try {
+          const v = await client.creative.createVariant(created.id, { format, spec: copy });
+          variantId = variantId ?? v.id;
+          variantCount++;
+        } catch {
+          /* skip a format that fails validation */
+        }
+      }
+
+      let planCount = 0;
+      if (variantId) {
+        for (const platform of state.platforms) {
+          try {
+            await client.publishing.createPlan({
+              campaignId: created.id,
+              variantId,
+              platform,
+              accountId: `${platform}-primary`,
+            });
+            planCount++;
+          } catch {
+            /* skip a platform we can't draft a plan for yet */
+          }
+        }
+      }
+
+      toast.success(
+        planCount > 0
+          ? `Campaign created — ${variantCount} variant${variantCount === 1 ? '' : 's'} and ${planCount} publish plan${planCount === 1 ? '' : 's'} ready to review`
+          : 'Campaign created',
+      );
       router.push(`/campaigns/${created.id}`);
     } catch (e) {
       toast.error(e instanceof ApiClientError ? e.body.message : 'Could not create the campaign.');

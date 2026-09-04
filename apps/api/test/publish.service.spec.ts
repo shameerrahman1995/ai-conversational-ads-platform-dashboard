@@ -33,7 +33,11 @@ function stubConnector() {
 
 function deps(opts: { plan?: any; connector?: any } = {}) {
   const prisma = {
-    campaign: { findFirst: vi.fn().mockResolvedValue({ id: 'c1' }) },
+    campaign: {
+      findFirst: vi.fn().mockResolvedValue({ id: 'c1' }),
+      update: vi.fn().mockResolvedValue({ id: 'c1' }),
+      updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+    },
     creativeVariant: {
       findFirst: vi.fn().mockResolvedValue({ id: 'v1', campaignId: 'c1', format: 'image_1_1', spec: {} }),
       create: vi
