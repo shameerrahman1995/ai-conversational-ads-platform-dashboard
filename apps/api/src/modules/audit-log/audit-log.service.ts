@@ -45,10 +45,16 @@ function clampLimit(limit?: number): number {
   return Math.min(Math.floor(limit), MAX_LIMIT);
 }
 
-/** RFC-4180 CSV escaping: quote when the cell contains a comma, quote, or newline. */
+/**
+ * RFC-4180 CSV escaping + formula-injection neutralization. A leading
+ * =, +, -, @, tab, or CR makes spreadsheet apps execute the cell as a formula,
+ * so prefix those with an apostrophe before quoting.
+ */
 function csvCell(value: string): string {
-  if (/[",\n\r]/.test(value)) {
-    return `"${value.replace(/"/g, '""')}"`;
+  let v = value;
+  if (/^[=+\-@\t\r]/.test(v)) v = `'${v}`;
+  if (/[",\n\r]/.test(v)) {
+    return `"${v.replace(/"/g, '""')}"`;
   }
-  return value;
+  return v;
 }
