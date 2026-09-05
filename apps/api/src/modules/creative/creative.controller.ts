@@ -2,7 +2,13 @@ import { Body, Controller, Delete, Get, Param, Patch, Post, Req, UseGuards } fro
 import { ApiHeader, ApiTags } from '@nestjs/swagger';
 import { CreativeService } from './creative.service';
 import { Html5CompilerService } from './html5-compiler.service';
-import { CompileHtml5Dto, CreateVariantDto, GenerateAdaptiveDto, UpdateVariantDto } from './dto';
+import {
+  CompileHtml5Dto,
+  CreateVariantDto,
+  GenerateAdaptiveDto,
+  GenerateImageDto,
+  UpdateVariantDto,
+} from './dto';
 import { TenantGuard } from '../../common/tenant/tenant.guard';
 import { RolesGuard } from '../../common/rbac/roles.guard';
 import { Roles } from '../../common/rbac/roles.decorator';
@@ -28,6 +34,12 @@ export class CreativeController {
   @Roles('creator')
   previewPolicy() {
     return this.html5.previewPolicy();
+  }
+
+  @Post('creative/generate-image')
+  @Roles('creator')
+  generateImage(@Req() req: { orgId: string }, @Body() dto: GenerateImageDto) {
+    return this.creative.generateImage(req.orgId, dto);
   }
 
   @Post('campaigns/:id/variants')

@@ -3,7 +3,8 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { AuditService } from '../../common/audit/audit.service';
 import { scopedWhere } from '../../common/tenant/scoped-where';
 import { RENDERER, type RenderPort } from './render.port';
-import { validateOutputs } from './format-spec';
+import { IMAGE_GENERATOR, type ImageGeneratorPort, type ImagePalette } from './image-gen.port';
+import { validateOutputs, FORMAT_SPECS } from './format-spec';
 
 /** On-brand palettes the adaptive generator rotates through. */
 const PALETTES = [
@@ -24,7 +25,36 @@ export class CreativeService {
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
     @Inject(RENDERER) private readonly renderer: RenderPort,
+    @Inject(IMAGE_GENERATOR) private readonly imageGen: ImageGeneratorPort,
   ) {}
+
+  /** Pixel dimensions for a creative format (square fallback). */
+  private dimsFor(format: string): { width: number; height: number } {
+    const spec = FORMAT_SPECS[format];
+    if (spec?.width && spec?.height) return { width: spec.width, height: spec.height };
+    return { width: 1080, height: 1080 };
+  }
+
+  /** Generate an image from a prompt for a given format + palette. */
+  async generateImage(
+    orgId: string,
+    input: { prompt: string; format?: string; palette?: ImagePalette; subhead?: string },
+  ) {
+    const { width, height } = this.dimsFor(input.format ?? 'image_1_1');
+    const result = await this.imageGen.generate(input.prompt || 'Your ad', {
+      width,
+      height,
+      palette: input.palette,
+      subhead: input.subhead,
+    });
+    await this.audit.record({
+      orgId,
+      action: 'creative.image_generated',
+      target: input.format ?? 'image_1_1',
+      metadata: { provider: result.provider },
+    });
+    return result;
+  }
 
   async createVariant(orgId: string, campaignId: string, format: string, spec: unknown) {
     const campaign = await this.prisma.campaign.findFirst({
@@ -76,12 +106,24 @@ export class CreativeService {
     const formats = opts.formats.length ? opts.formats : ['image_1_1', 'image_9_16'];
     const created = [];
     for (const format of formats) {
+      // For image ads, generate an on-brand image per placement up front.
+      let imageUrl = '';
+      if (mediaType === 'image') {
+        const { width, height } = this.dimsFor(format);
+        try {
+          imageUrl = (
+            await this.imageGen.generate(headline, { width, height, palette, subhead })
+          ).url;
+        } catch {
+          /* non-fatal — leave the placeholder, the editor can generate/upload later */
+        }
+      }
       const spec = {
         headline,
         subhead,
         cta,
         mediaType,
-        imageUrl: '',
+        imageUrl,
         videoUrl: '',
         audioUrl: '',
         bgColor: palette.bg,

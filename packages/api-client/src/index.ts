@@ -336,6 +336,16 @@ export function createApiClient(opts: ClientOptions) {
         }),
       updateVariant: (id: string, body: { spec?: Record<string, unknown>; status?: string }) =>
         request<CreativeVariant>(`/v1/variants/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
+      generateImage: (body: {
+        prompt: string;
+        format?: string;
+        subhead?: string;
+        palette?: { bg: string; accent: string; text: string };
+      }) =>
+        request<{ url: string; provider: string }>('/v1/creative/generate-image', {
+          method: 'POST',
+          body: JSON.stringify(body),
+        }),
       deleteVariant: (id: string) =>
         request<{ ok: boolean }>(`/v1/variants/${id}`, { method: 'DELETE' }),
       render: (id: string) =>

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Icon, type IconName } from '@/components/Icon';
 import { Button } from '@/components/ui';
 import { Modal, useToast } from '@/components/feedback';
@@ -15,6 +15,51 @@ import { readSpec, ratioFor, MEDIA_TYPES, type CreativeSpec } from './spec';
 const HEX6 = /^#[0-9a-fA-F]{6}$/;
 /** A value the native <input type="color"> will accept (needs #rrggbb). */
 const safeColor = (v: string) => (HEX6.test(v.trim()) ? v.trim() : '#000000');
+
+type MediaKind = 'image' | 'video' | 'audio';
+
+/** Per-media-type config for the upload / paste-URL controls (upload size caps
+ *  in MB: images stay small, video/audio get more room). */
+const MEDIA_META: Record<
+  MediaKind,
+  {
+    field: 'imageUrl' | 'videoUrl' | 'audioUrl';
+    noun: string;
+    accept: string;
+    capMb: number;
+    capHint: string;
+    urlLabel: string;
+    urlPlaceholder: string;
+  }
+> = {
+  image: {
+    field: 'imageUrl',
+    noun: 'image',
+    accept: 'image/*',
+    capMb: 3,
+    capHint: 'PNG, JPG, GIF or WebP up to 3 MB.',
+    urlLabel: 'Image URL',
+    urlPlaceholder: 'https://…/image.jpg',
+  },
+  video: {
+    field: 'videoUrl',
+    noun: 'video',
+    accept: 'video/*',
+    capMb: 8,
+    capHint: 'MP4 or WebM up to 8 MB.',
+    urlLabel: 'Video URL',
+    urlPlaceholder: 'https://…/video.mp4',
+  },
+  audio: {
+    field: 'audioUrl',
+    noun: 'audio',
+    accept: 'audio/*',
+    capMb: 8,
+    capHint: 'MP3, WAV or OGG up to 8 MB.',
+    urlLabel: 'Audio URL',
+    urlPlaceholder: 'https://…/audio.mp3',
+  },
+};
 
 /** Fit an artboard of the given ratio inside the preview stage (longest side capped). */
 function fitArtboard(ratio: [number, number]): { w: number; h: number } {
@@ -115,11 +160,18 @@ export function CreativeEditor({
   const toast = useToast();
   const [spec, setSpec] = useState<CreativeSpec>(() => readSpec(variant?.spec));
   const [busy, setBusy] = useState(false);
+  const [generating, setGenerating] = useState(false);
+  const [aiPrompt, setAiPrompt] = useState('');
+  const [fileName, setFileName] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Re-seed the form from the source spec whenever the variant changes or the
   // dialog is (re)opened, so it never shows stale edits.
   useEffect(() => {
-    setSpec(readSpec(variant?.spec));
+    const seeded = readSpec(variant?.spec);
+    setSpec(seeded);
+    setAiPrompt(seeded.headline); // prefill the AI prompt from the headline
+    setFileName(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [variant?.id, open]);
 
@@ -145,6 +197,68 @@ export function CreativeEditor({
     }
   }
 
+  /** Read a picked device file into a data: URI and set the matching media field
+   *  so the live preview updates immediately. Persists only on Save. */
+  function handleFilePick(e: React.ChangeEvent<HTMLInputElement>) {
+    const input = e.target;
+    const file = input.files?.[0];
+    input.value = ''; // allow re-picking the same file
+    if (!file) return;
+    const mt = spec.mediaType;
+    if (mt === 'none') return;
+    const meta = MEDIA_META[mt];
+
+    if (!file.type.startsWith(`${mt}/`)) {
+      toast.error(`That doesn't look like ${meta.noun === 'audio' ? 'an' : 'a'} ${meta.noun} file.`);
+      return;
+    }
+    if (file.size > meta.capMb * 1024 * 1024) {
+      toast.error(`That ${meta.noun} is too large — keep it under ${meta.capMb} MB.`);
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = typeof reader.result === 'string' ? reader.result : '';
+      if (!result) {
+        toast.error('Could not read that file.');
+        return;
+      }
+      update(meta.field, result);
+      setFileName(file.name);
+    };
+    reader.onerror = () => toast.error('Could not read that file.');
+    reader.readAsDataURL(file);
+  }
+
+  /** Generate a background image from the current copy + palette (image only). */
+  async function handleGenerateImage() {
+    if (!variant || generating) return;
+    const prompt = (aiPrompt.trim() || spec.headline.trim());
+    if (!prompt) {
+      toast.error('Add a headline or prompt to generate an image.');
+      return;
+    }
+    setGenerating(true);
+    try {
+      const { url } = await client.creative.generateImage({
+        prompt,
+        format: variant.format,
+        subhead: spec.subhead.trim() || undefined,
+        palette: { bg: spec.bgColor, accent: spec.accentColor, text: spec.textColor },
+      });
+      update('imageUrl', url);
+      setFileName(null);
+      toast.success('Image generated');
+    } catch (err) {
+      toast.error(
+        err instanceof ApiClientError ? err.message : 'Could not generate an image.',
+      );
+    } finally {
+      setGenerating(false);
+    }
+  }
+
   /* ---- Preview geometry ---- */
   const [rw, rh] = ratioFor(variant.format);
   const { w, h } = fitArtboard([rw, rh]);
@@ -159,6 +273,7 @@ export function CreativeEditor({
   const isImage = spec.mediaType === 'image';
   const isVideo = spec.mediaType === 'video';
   const isAudio = spec.mediaType === 'audio';
+  const media = spec.mediaType === 'none' ? null : MEDIA_META[spec.mediaType];
   const imageBg = isImage && spec.imageUrl.trim().length > 0;
   const hasMediaBg = imageBg || isVideo;
 
@@ -248,7 +363,10 @@ export function CreativeEditor({
                   <button
                     key={m.key}
                     type="button"
-                    onClick={() => update('mediaType', m.key)}
+                    onClick={() => {
+                      update('mediaType', m.key);
+                      setFileName(null);
+                    }}
                     aria-pressed={selected}
                     disabled={busy}
                     style={{
@@ -273,54 +391,126 @@ export function CreativeEditor({
             </div>
           </div>
 
-          {isImage ? (
-            <label className="field">
-              <span className="field-label">Image URL</span>
+          {media ? (
+            <>
+              {/* Hidden picker driven by the Upload button below */}
               <input
-                className="input"
-                value={spec.imageUrl}
-                onChange={(e) => update('imageUrl', e.target.value)}
-                placeholder="https://…/image.jpg"
-                disabled={busy}
+                ref={fileInputRef}
+                type="file"
+                accept={media.accept}
+                onChange={handleFilePick}
+                style={{ display: 'none' }}
+                aria-hidden="true"
+                tabIndex={-1}
               />
-            </label>
-          ) : null}
 
-          {isVideo ? (
-            <label className="field">
-              <span className="field-label">Video URL</span>
-              <input
-                className="input"
-                value={spec.videoUrl}
-                onChange={(e) => update('videoUrl', e.target.value)}
-                placeholder="https://…/video.mp4"
-                disabled={busy}
-              />
-            </label>
-          ) : null}
+              {/* ---- Upload from device ---- */}
+              <div className="field">
+                <span className="field-label">Upload from device</span>
+                <div className="row" style={{ gap: '0.5rem', flexWrap: 'wrap', minWidth: 0 }}>
+                  <Button
+                    variant="default"
+                    size="sm"
+                    icon="download"
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={busy || generating}
+                  >
+                    Choose {media.noun}…
+                  </Button>
+                  {fileName ? (
+                    <span
+                      className="row"
+                      style={{
+                        gap: '0.3rem',
+                        minWidth: 0,
+                        fontSize: 12,
+                        color: 'var(--color-ink-3)',
+                      }}
+                    >
+                      <Icon name="check-circle" size={12} />
+                      <span
+                        style={{
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap',
+                        }}
+                      >
+                        {fileName}
+                      </span>
+                    </span>
+                  ) : null}
+                </div>
+                <span className="muted" style={{ fontSize: 11 }}>
+                  {media.capHint}
+                </span>
+              </div>
 
-          {isAudio ? (
-            <label className="field">
-              <span className="field-label">Audio URL</span>
-              <input
-                className="input"
-                value={spec.audioUrl}
-                onChange={(e) => update('audioUrl', e.target.value)}
-                placeholder="https://…/audio.mp3"
-                disabled={busy}
-              />
-            </label>
-          ) : null}
+              {/* ---- Generate with AI (image only) ---- */}
+              {isImage ? (
+                <div className="field">
+                  <span className="field-label">Generate with AI</span>
+                  <div className="row" style={{ gap: '0.5rem', alignItems: 'stretch' }}>
+                    <input
+                      className="input"
+                      value={aiPrompt}
+                      onChange={(e) => setAiPrompt(e.target.value)}
+                      placeholder={spec.headline.trim() || 'Describe the image…'}
+                      disabled={busy || generating}
+                      style={{ minWidth: 0 }}
+                    />
+                    <Button
+                      variant="primary"
+                      size="sm"
+                      icon="sparkles"
+                      type="button"
+                      onClick={handleGenerateImage}
+                      disabled={busy || generating}
+                      style={{ flex: 'none', whiteSpace: 'nowrap' }}
+                    >
+                      {generating ? 'Generating…' : 'Generate image'}
+                    </Button>
+                  </div>
+                  <span className="muted" style={{ fontSize: 11 }}>
+                    Uses your headline, subhead and colors to render a background.
+                  </span>
+                </div>
+              ) : null}
 
-          <span
-            className="row"
-            style={{ gap: '0.35rem', fontSize: 12, color: 'var(--color-ink-3)', lineHeight: 1.4 }}
-          >
-            <Icon name="link" size={12} />
-            {spec.mediaType === 'none'
-              ? 'Text-only creative — copy and colors only.'
-              : 'Paste a link to a hosted asset. Direct upload is coming soon.'}
-          </span>
+              {/* ---- Paste a URL ---- */}
+              <label className="field">
+                <span className="field-label">{media.urlLabel}</span>
+                <input
+                  className="input"
+                  value={spec[media.field]}
+                  onChange={(e) => update(media.field, e.target.value)}
+                  placeholder={media.urlPlaceholder}
+                  disabled={busy}
+                />
+              </label>
+
+              <span
+                className="row"
+                style={{
+                  gap: '0.35rem',
+                  fontSize: 12,
+                  color: 'var(--color-ink-3)',
+                  lineHeight: 1.4,
+                }}
+              >
+                <Icon name="link" size={12} />
+                Upload a file, generate one, or paste a link — whichever you set wins in the preview.
+              </span>
+            </>
+          ) : (
+            <span
+              className="row"
+              style={{ gap: '0.35rem', fontSize: 12, color: 'var(--color-ink-3)', lineHeight: 1.4 }}
+            >
+              <Icon name="doc" size={12} />
+              Text-only creative — copy and colors only.
+            </span>
+          )}
 
           <SectionLabel>Colors</SectionLabel>
           <ColorField

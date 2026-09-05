@@ -1,5 +1,22 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { Allow, IsArray, IsIn, IsOptional, IsString } from 'class-validator';
+import { Allow, IsArray, IsIn, IsOptional, IsString, Matches, ValidateNested } from 'class-validator';
+import { Type } from 'class-transformer';
+
+const HEX = /^#[0-9a-fA-F]{3,8}$/;
+
+export class PaletteDto {
+  @ApiProperty({ example: '#0f1729' })
+  @Matches(HEX)
+  bg!: string;
+
+  @ApiProperty({ example: '#4f46e5' })
+  @Matches(HEX)
+  accent!: string;
+
+  @ApiProperty({ example: '#ffffff' })
+  @Matches(HEX)
+  text!: string;
+}
 
 export class CreateVariantDto {
   @ApiProperty({ example: 'image_1_1' })
@@ -35,6 +52,28 @@ export class GenerateAdaptiveDto {
   @IsOptional()
   @IsString()
   model?: string;
+}
+
+export class GenerateImageDto {
+  @ApiProperty({ description: 'Prompt describing the image to generate' })
+  @IsString()
+  prompt!: string;
+
+  @ApiProperty({ required: false, example: 'image_1_1' })
+  @IsOptional()
+  @IsString()
+  format?: string;
+
+  @ApiProperty({ required: false, description: 'Sub-line rendered under the headline' })
+  @IsOptional()
+  @IsString()
+  subhead?: string;
+
+  @ApiProperty({ required: false, type: PaletteDto, description: 'Palette { bg, accent, text } (hex)' })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => PaletteDto)
+  palette?: PaletteDto;
 }
 
 export class UpdateVariantDto {
