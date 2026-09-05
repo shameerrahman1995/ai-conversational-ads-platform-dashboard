@@ -4,9 +4,9 @@ import { useState } from 'react';
 import { useApiClient } from '@/lib/api';
 import { useAsync } from '@/lib/useAsync';
 import { useOrg } from '@/lib/org-context';
-import { Icon, type IconName } from '@/components/Icon';
+import { Icon } from '@/components/Icon';
 import { useToast, Modal } from '@/components/feedback';
-import { ApiClientError, type OrgUser, type BudgetStatus } from '@acp/api-client';
+import { ApiClientError, type OrgUser, type BudgetStatus, type AuditEvent } from '@acp/api-client';
 import {
   PageHeader,
   Button,
@@ -18,7 +18,6 @@ import {
   DataState,
   EmptyState,
   Meter,
-  type Tone,
 } from '@/components/ui';
 import { Tabs, type TabItem } from './_components/Tabs';
 
@@ -69,64 +68,6 @@ const ROLES: { key: string; blurb: string }[] = [
 const ROLE_HINT: Record<string, string> = Object.fromEntries(
   ROLES.map((r) => [r.key, r.blurb]),
 );
-
-/* ---- Representative audit trail (no audit GET endpoint yet) --------- */
-type AuditRow = {
-  action: string;
-  icon: IconName;
-  tone: Tone;
-  detail: string;
-  actor: string;
-  role: string;
-  when: string;
-};
-const AUDIT: AuditRow[] = [
-  {
-    action: 'campaign.approved',
-    icon: 'check-circle',
-    tone: 'success',
-    detail: 'Approved creative for “Fall roof inspection — free estimate” (v4)',
-    actor: 'Riley Reviewer',
-    role: 'reviewer',
-    when: 'Today, 09:14',
-  },
-  {
-    action: 'publish.executed',
-    icon: 'publishing',
-    tone: 'brand',
-    detail: 'Published “AC tune-up — $89 special” to Meta and Google Ads',
-    actor: 'S. Rahman',
-    role: 'admin',
-    when: 'Today, 08:02',
-  },
-  {
-    action: 'connection.created',
-    icon: 'link',
-    tone: 'info',
-    detail: 'Authorized HubSpot CRM connection (scope: leads.write)',
-    actor: 'S. Rahman',
-    role: 'admin',
-    when: 'Yesterday, 16:41',
-  },
-  {
-    action: 'member.invited',
-    icon: 'users',
-    tone: 'warning',
-    detail: 'Invited reviewer@demo.co to the workspace as Reviewer',
-    actor: 'S. Rahman',
-    role: 'admin',
-    when: 'Yesterday, 15:58',
-  },
-  {
-    action: 'campaign.paused',
-    icon: 'pause',
-    tone: 'neutral',
-    detail: 'Paused “Emergency roof repair — 24/7” pending claim verification',
-    actor: 'Riley Reviewer',
-    role: 'reviewer',
-    when: 'Sep 2, 11:20',
-  },
-];
 
 export default function AdminPage() {
   const client = useApiClient();
@@ -517,117 +458,6 @@ export default function AdminPage() {
     </div>
   );
 
-  /* ---- Tab: Security & audit --------------------------------------- */
-  const securityTab = (
-    <div className="stack">
-      <Panel
-        title="Audit trail"
-        note="privileged actions across the workspace"
-        actions={
-          <Chip tone="success" icon="shield">
-            100% of privileged actions recorded
-          </Chip>
-        }
-      >
-        <div className="table-wrap">
-          <table className="table">
-            <thead>
-              <tr>
-                <th>Event</th>
-                <th>Actor</th>
-                <th style={{ textAlign: 'right' }}>When</th>
-              </tr>
-            </thead>
-            <tbody>
-              {AUDIT.map((row, i) => (
-                <tr key={i}>
-                  <td>
-                    <div className="row" style={{ gap: '0.6rem', alignItems: 'flex-start' }}>
-                      <span
-                        style={{
-                          color: toneColor(row.tone),
-                          flex: 'none',
-                          marginTop: 1,
-                        }}
-                      >
-                        <Icon name={row.icon} size={16} />
-                      </span>
-                      <div style={{ minWidth: 0 }}>
-                        <div
-                          className="tnum"
-                          style={{
-                            fontFamily: 'ui-monospace, monospace',
-                            fontSize: 12,
-                            color: 'var(--color-ink-3)',
-                          }}
-                        >
-                          {row.action}
-                        </div>
-                        <div className="cell-strong" style={{ fontWeight: 500, marginTop: '0.1rem' }}>
-                          {row.detail}
-                        </div>
-                      </div>
-                    </div>
-                  </td>
-                  <td>
-                    <div className="cell-strong" style={{ fontWeight: 500 }}>
-                      {row.actor}
-                    </div>
-                    <div className="cell-muted" style={{ fontSize: 12 }}>
-                      {cap(row.role)}
-                    </div>
-                  </td>
-                  <td className="cell-num muted" style={{ whiteSpace: 'nowrap' }}>
-                    {row.when}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </Panel>
-
-      <div className="grid grid-2">
-        <Card className="card-pad stack" style={{ gap: '0.85rem' }}>
-          <div className="row" style={{ gap: '0.6rem' }}>
-            <span
-              className="stat-ic"
-              style={{ background: 'var(--color-success-soft)', color: 'var(--color-success)' }}
-            >
-              <Icon name="shield" size={16} />
-            </span>
-            <span style={{ fontFamily: 'var(--font-display)', fontWeight: 600, fontSize: 15 }}>
-              Security posture
-            </span>
-          </div>
-          <PostureRow label="Human review for restricted verticals" state="on" />
-          <PostureRow label="Explicit consent captured before chat" state="on" />
-          <PostureRow label="Immutable, exportable audit log" state="on" />
-          <PostureRow label="Single sign-on (SSO / SAML)" state="available" />
-        </Card>
-
-        <Card className="card-pad stack" style={{ gap: '0.6rem' }}>
-          <div style={{ fontFamily: 'var(--font-display)', fontWeight: 600, fontSize: 15 }}>
-            Data & retention
-          </div>
-          <p className="muted" style={{ margin: 0, fontSize: 13 }}>
-            Conversation transcripts and lead records are retained for 24 months, then purged.
-            Every AI-written claim links to an approved source or is flagged “Needs verification”
-            before it can publish — the same provenance chain shown in the audit trail above.
-          </p>
-          <div className="row" style={{ gap: '0.5rem', flexWrap: 'wrap', marginTop: '0.2rem' }}>
-            <Chip tone="info" icon="doc">
-              24-month retention
-            </Chip>
-            <Chip tone="success" icon="check-circle">
-              Consent logged
-            </Chip>
-          </div>
-        </Card>
-      </div>
-    </div>
-  );
-
   const tabs: TabItem[] = [
     { id: 'organization', label: 'Organization', icon: 'settings', content: organizationTab },
     {
@@ -638,7 +468,7 @@ export default function AdminPage() {
       content: membersTab,
     },
     { id: 'billing', label: 'Billing', icon: 'billing', content: billingTab },
-    { id: 'security', label: 'Security & audit', icon: 'shield', content: securityTab },
+    { id: 'security', label: 'Security & audit', icon: 'shield', content: <SecurityTab /> },
   ];
 
   return (
@@ -1013,6 +843,186 @@ function ManageMemberModal({ member, onClose }: { member: OrgUser; onClose: () =
 }
 
 /* ------------------------------------------------------------------ */
+/* Security & audit (live audit log)                                   */
+/* ------------------------------------------------------------------ */
+
+function SecurityTab() {
+  const client = useApiClient();
+  const { data, error, loading } = useAsync(() => client.audit.list(100), [client]);
+
+  // Newest first — don't assume the API's ordering.
+  const events = [...(data ?? [])].sort(
+    (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+  );
+
+  return (
+    <div className="stack">
+      <Panel
+        title="Audit trail"
+        note="privileged actions across the workspace"
+        actions={
+          <span className="row" style={{ gap: '0.5rem' }}>
+            <Chip tone="success" icon="shield">
+              100% of privileged actions recorded
+            </Chip>
+            <AuditExportButton />
+          </span>
+        }
+      >
+        <DataState
+          loading={loading}
+          error={error}
+          isEmpty={events.length === 0}
+          loadingLabel="Loading audit trail…"
+          emptyTitle="No audit events yet"
+          emptyHint="Privileged actions — invites, approvals, publishes and connection changes — are recorded here as your team works."
+        >
+          <div className="table-wrap">
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Action</th>
+                  <th>Actor</th>
+                  <th>Target</th>
+                  <th style={{ textAlign: 'right' }}>Time</th>
+                </tr>
+              </thead>
+              <tbody>
+                {events.map((e) => (
+                  <tr key={e.id}>
+                    <td>
+                      <span
+                        className="tnum"
+                        style={{
+                          fontFamily: 'ui-monospace, monospace',
+                          fontSize: 12.5,
+                          color: 'var(--color-ink)',
+                        }}
+                      >
+                        {e.action}
+                      </span>
+                    </td>
+                    <td>
+                      {e.actorId ? (
+                        <span className="cell-strong" style={{ fontWeight: 500 }}>
+                          {e.actorId}
+                        </span>
+                      ) : (
+                        <Chip tone="neutral" dot>
+                          system
+                        </Chip>
+                      )}
+                    </td>
+                    <td>
+                      {e.target ? (
+                        <span
+                          className="cell-muted"
+                          style={{ fontFamily: 'ui-monospace, monospace', fontSize: 12 }}
+                        >
+                          {e.target}
+                        </span>
+                      ) : (
+                        <span className="cell-muted">—</span>
+                      )}
+                    </td>
+                    <td
+                      className="cell-num muted"
+                      style={{ whiteSpace: 'nowrap' }}
+                      title={new Date(e.createdAt).toLocaleString()}
+                    >
+                      {timeAgo(e.createdAt)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </DataState>
+      </Panel>
+
+      <div className="grid grid-2">
+        <Card className="card-pad stack" style={{ gap: '0.85rem' }}>
+          <div className="row" style={{ gap: '0.6rem' }}>
+            <span
+              className="stat-ic"
+              style={{ background: 'var(--color-success-soft)', color: 'var(--color-success)' }}
+            >
+              <Icon name="shield" size={16} />
+            </span>
+            <span style={{ fontFamily: 'var(--font-display)', fontWeight: 600, fontSize: 15 }}>
+              Security posture
+            </span>
+          </div>
+          <PostureRow label="Human review for restricted verticals" state="on" />
+          <PostureRow label="Explicit consent captured before chat" state="on" />
+          <PostureRow label="Exportable audit log (CSV)" state="on" />
+          <PostureRow label="Single sign-on (SSO / SAML)" state="available" />
+        </Card>
+
+        <Card className="card-pad stack" style={{ gap: '0.6rem' }}>
+          <div style={{ fontFamily: 'var(--font-display)', fontWeight: 600, fontSize: 15 }}>
+            Data & retention
+          </div>
+          <p className="muted" style={{ margin: 0, fontSize: 13 }}>
+            Conversation transcripts and lead records are retained for 24 months, then purged.
+            Every AI-written claim links to an approved source or is flagged “Needs verification”
+            before it can publish — the same provenance chain shown in the audit trail above.
+          </p>
+          <div className="row" style={{ gap: '0.5rem', flexWrap: 'wrap', marginTop: '0.2rem' }}>
+            <Chip tone="info" icon="doc">
+              24-month retention
+            </Chip>
+            <Chip tone="success" icon="check-circle">
+              Consent logged
+            </Chip>
+          </div>
+        </Card>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Downloads the full audit log as CSV from `GET /v1/audit/export`, forwarding the
+ * same tenant/role/bearer headers the API client uses (the export is not a public URL).
+ */
+function AuditExportButton() {
+  const { orgId, role, token } = useOrg();
+  const toast = useToast();
+  const [busy, setBusy] = useState(false);
+
+  async function download() {
+    setBusy(true);
+    try {
+      const base = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:4000';
+      const headers: Record<string, string> = { 'x-org-id': orgId, 'x-user-role': role };
+      if (token) headers['authorization'] = `Bearer ${token}`;
+      const res = await fetch(`${base}/v1/audit/export`, { headers });
+      if (!res.ok) throw new Error(`Export failed (${res.status})`);
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `convoads-audit-${new Date().toISOString().slice(0, 10)}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not export the audit log');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Button size="sm" variant="ghost" icon="download" onClick={download} disabled={busy}>
+      {busy ? 'Exporting…' : 'Export CSV'}
+    </Button>
+  );
+}
+
+/* ------------------------------------------------------------------ */
 /* Local presentational helpers                                        */
 /* ------------------------------------------------------------------ */
 
@@ -1084,19 +1094,13 @@ function initials(nameOrEmail: string): string {
   return (letters || base.slice(0, 2)).toUpperCase();
 }
 
-function toneColor(tone: Tone): string {
-  switch (tone) {
-    case 'success':
-      return 'var(--color-success)';
-    case 'brand':
-      return 'var(--color-brand)';
-    case 'info':
-      return 'var(--color-info)';
-    case 'warning':
-      return 'var(--color-warning)';
-    case 'danger':
-      return 'var(--color-danger)';
-    default:
-      return 'var(--color-ink-3)';
-  }
+/** Compact "3m ago / 5h ago / 2d ago" relative time; falls back to '' on bad input. */
+function timeAgo(iso: string): string {
+  const then = new Date(iso).getTime();
+  if (Number.isNaN(then)) return '';
+  const mins = Math.max(1, Math.round((Date.now() - then) / 60000));
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.round(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  return `${Math.round(hrs / 24)}d ago`;
 }

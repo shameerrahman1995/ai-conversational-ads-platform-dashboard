@@ -3,6 +3,7 @@ import { Redis } from 'ioredis';
 import { createQueue, QUEUES } from '@acp/jobs';
 import { loadEnv } from '@acp/config';
 import { JobsProducer } from './jobs.producer';
+import { JobsAdminService } from './jobs-admin.service';
 import {
   JOBS_REDIS,
   QUEUE_CRM_SYNC,
@@ -33,7 +34,8 @@ const queueProvider = (token: symbol, name: (typeof QUEUES)[keyof typeof QUEUES]
     queueProvider(QUEUE_CRM_SYNC, QUEUES.crmSync),
     queueProvider(QUEUE_PUBLISH, QUEUES.publish),
     JobsProducer,
+    JobsAdminService,
   ],
-  exports: [JobsProducer],
+  exports: [JobsProducer, JobsAdminService],
 })
 export class JobsModule {}

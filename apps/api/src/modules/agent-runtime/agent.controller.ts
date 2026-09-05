@@ -60,6 +60,12 @@ export class AgentController {
     return this.config.preview(req.orgId, id, dto.message);
   }
 
+  @Post(':id/publish')
+  @Roles('publisher')
+  publishAgent(@Req() req: { orgId: string }, @Param('id') id: string) {
+    return this.config.publish(req.orgId, id);
+  }
+
   @Post(':id/evaluate')
   @Roles('creator')
   evaluate(@Req() req: { orgId: string }, @Param('id') id: string, @Body() dto: EvaluateAgentDto) {

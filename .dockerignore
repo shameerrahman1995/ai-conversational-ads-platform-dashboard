@@ -1,0 +1,47 @@
+# Keep the Docker build context small and reproducible.
+# Everything the images need is installed/built INSIDE the container.
+
+# deps (containers run their own `pnpm install`)
+**/node_modules
+.pnpm-store/
+
+# build output (regenerated in the build stage)
+**/dist
+**/.next
+**/out
+**/build
+**/generated
+**/.turbo
+**/*.tsbuildinfo
+
+# env & secrets — never bake these into an image
+**/.env
+**/.env.*
+!**/.env.example
+
+# vcs / ci / infra / docs
+.git
+.github
+.gitignore
+infra
+docs
+**/*.md
+
+# docker
+Dockerfile
+**/Dockerfile
+.dockerignore
+
+# claude code session history
+.remember/
+
+# test / coverage
+**/coverage
+.nyc_output
+
+# os / editor
+.DS_Store
+Thumbs.db
+.idea/
+*.swp
+*.log

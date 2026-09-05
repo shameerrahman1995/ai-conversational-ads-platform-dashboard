@@ -33,6 +33,8 @@ function stubConnector() {
 
 function deps(opts: { plan?: any; connector?: any } = {}) {
   const prisma = {
+    // Interactive-transaction callbacks run against the same mock.
+    $transaction: (fn: any) => fn(prisma),
     campaign: {
       findFirst: vi.fn().mockResolvedValue({ id: 'c1' }),
       update: vi.fn().mockResolvedValue({ id: 'c1' }),

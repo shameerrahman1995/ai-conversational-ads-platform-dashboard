@@ -118,13 +118,25 @@ export default function AgentsPage() {
 
   const restricted = selected ? isRestricted(selected.vertical) : false;
 
-  function publish() {
+  async function publish() {
     if (!selected) return;
     if (restricted) {
       toast.toast(`${selected.name} sent for human review — required before a healthcare agent goes live`, 'info');
       return;
     }
-    toast.success('Agent published');
+    setBusy(true);
+    try {
+      const res = await client.agents.publish(selected.id);
+      // Flip the status chip in the rail + summary header (no reload API on useAsync).
+      setAgents((prev) =>
+        prev?.map((a) => (a.id === selected.id ? { ...a, status: res.status } : a)) ?? prev,
+      );
+      toast.success(`${selected.name} is live`);
+    } catch (e) {
+      toast.error(e instanceof ApiClientError ? e.body.message : 'Something went wrong');
+    } finally {
+      setBusy(false);
+    }
   }
 
   return (
@@ -134,7 +146,12 @@ export default function AgentsPage() {
         subtitle="Configure the post-click AI sales agent that greets every visitor, answers from approved facts, and books qualified leads."
         actions={
           <>
-            <Button variant="ghost" icon="publishing" onClick={publish} disabled={!selected}>
+            <Button
+              variant="ghost"
+              icon="publishing"
+              onClick={publish}
+              disabled={!selected || busy}
+            >
               Publish agent
             </Button>
             <Button
@@ -158,10 +175,7 @@ export default function AgentsPage() {
         emptyHint="Every campaign hosts its own AI sales agent. Launch a campaign to build your first one."
       >
         {selected ? (
-          <div
-            className="grid"
-            style={{ gridTemplateColumns: 'minmax(0, 288px) minmax(0, 1fr)', gap: '1rem' }}
-          >
+          <div className="grid grid-rail-l" style={{ gap: '1rem' }}>
             <AgentRail agents={list} selectedId={selected.id} onSelect={selectAgent} />
 
             <div className="stack" style={{ gap: '1rem' }}>

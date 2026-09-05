@@ -47,10 +47,7 @@ export function VoiceTab({
         {voice.enabled ? (
           <>
             <hr className="divider" />
-            <div
-              className="grid"
-              style={{ gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)', gap: '1rem' }}
-            >
+            <div className="grid grid-split" style={{ gap: '1rem' }}>
               <div className="field">
                 <label className="field-label" htmlFor="voice-provider">
                   Voice provider

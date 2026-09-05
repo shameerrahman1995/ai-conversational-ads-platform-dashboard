@@ -1,8 +1,11 @@
 import { describe, it, expect, vi } from 'vitest';
 import { LeadService } from '../src/modules/lead/lead.service';
+import { decryptField, encryptField } from '../src/common/crypto/field-crypto';
 
 function deps(opts: { lead?: any; dup?: any } = {}) {
   const prisma = {
+    // Interactive-transaction callbacks run against the same mock.
+    $transaction: (fn: any) => fn(prisma),
     lead: {
       create: vi.fn().mockResolvedValue({ id: 'l1' }),
       findFirst: vi.fn().mockResolvedValue('lead' in opts ? opts.lead : { id: 'l1', orgId: 'org_1' }),
@@ -45,11 +48,11 @@ describe('LeadService', () => {
       }),
     );
     const fieldArg = d.prisma.leadFieldValue.createMany.mock.calls[0][0].data;
-    expect(fieldArg).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ field: 'email', value: 'a@b.com', source: 'platform_form' }),
-      ]),
-    );
+    const emailRow = fieldArg.find((r: any) => r.field === 'email');
+    expect(emailRow.source).toBe('platform_form');
+    // PII is encrypted at rest, and decrypts back to the normalized value.
+    expect(emailRow.value.startsWith('enc:v1:')).toBe(true);
+    expect(decryptField(emailRow.value)).toBe('a@b.com');
     expect(d.prisma.consentRecord.createMany).toHaveBeenCalled();
   });
 
@@ -61,6 +64,19 @@ describe('LeadService', () => {
     expect(d.prisma.leadFieldValue.findFirst).toHaveBeenCalledWith({
       where: { OR: [{ field: 'email', value: 'a@b.com' }], lead: { orgId: 'org_1' } },
     });
+  });
+
+  it('getLead decrypts stored PII before returning it to the caller', async () => {
+    const d = deps();
+    d.prisma.lead.findFirst.mockResolvedValue({
+      id: 'l1',
+      orgId: 'org_1',
+      fieldValues: [{ field: 'email', value: encryptField('a@b.com'), source: 'user_message' }],
+      consentRecords: [],
+      deliveryAttempts: [],
+    });
+    const lead: any = await make(d).getLead('org_1', 'l1');
+    expect(lead.fieldValues[0].value).toBe('a@b.com');
   });
 
   it('listLeads is org-scoped with relations', async () => {

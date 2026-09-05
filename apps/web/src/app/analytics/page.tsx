@@ -1,8 +1,10 @@
 'use client';
 
-import type { ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { useApiClient } from '@/lib/api';
 import { useAsync } from '@/lib/useAsync';
+import { useToast, Modal } from '@/components/feedback';
+import { ApiClientError, type BudgetStatus } from '@acp/api-client';
 import { Icon, type IconName } from '@/components/Icon';
 import {
   PageHeader,
@@ -35,6 +37,9 @@ const platformName = (slug: string) =>
 
 export default function AnalyticsPage() {
   const client = useApiClient();
+  const toast = useToast();
+  const [reload, setReload] = useState(0);
+  const refetch = () => setReload((n) => n + 1);
   const { data, error, loading } = useAsync(
     () =>
       Promise.all([
@@ -44,8 +49,11 @@ export default function AnalyticsPage() {
         client.experiments.list(),
         client.cost.status(),
       ]),
-    [client],
+    [client, reload],
   );
+
+  const [experimentOpen, setExperimentOpen] = useState(false);
+  const [budgetOpen, setBudgetOpen] = useState(false);
 
   const [funnel, spend, attribution, experiments, budget] = data ?? [];
 
@@ -62,10 +70,24 @@ export default function AnalyticsPage() {
         subtitle="Measuring how ad conversations turn into qualified pipeline — from first impression through the AI agent to booked meetings and CRM revenue."
         actions={
           <>
-            <Button icon="clock" variant="ghost">
-              Last 30 days
-            </Button>
-            <Button icon="download" variant="ghost">
+            <span
+              className="chip chip-neutral"
+              title="Reporting window — fixed to the last 30 days"
+            >
+              <Icon name="clock" size={12} /> Last 30 days
+            </span>
+            <Button
+              icon="download"
+              variant="ghost"
+              disabled={providers.length === 0}
+              onClick={() => {
+                if (!spend) return;
+                exportSpendCsv(providers, spend.totals);
+                toast.success(
+                  `Exported ${providers.length} platform${providers.length === 1 ? '' : 's'} to CSV`,
+                );
+              }}
+            >
               Export
             </Button>
           </>
@@ -292,15 +314,17 @@ export default function AnalyticsPage() {
         </Panel>
 
         {/* Experiments + budget */}
-        <div
-          className="grid analytics-mt"
-          style={{ gridTemplateColumns: 'minmax(0, 1.6fr) minmax(0, 1fr)' }}
-        >
+        <div className="grid grid-hero analytics-mt">
           <Panel
             title="Experiments"
             note="A/B tests on creative and agent copy"
             actions={
-              <Button size="sm" icon="plus" variant="ghost">
+              <Button
+                size="sm"
+                icon="plus"
+                variant="ghost"
+                onClick={() => setExperimentOpen(true)}
+              >
                 New experiment
               </Button>
             }
@@ -337,7 +361,12 @@ export default function AnalyticsPage() {
                 title="No experiments running"
                 hint="Test a headline, offer, or agent opener against your control to see what lifts qualified-lead rate."
                 action={
-                  <Button size="sm" icon="plus" variant="primary">
+                  <Button
+                    size="sm"
+                    icon="plus"
+                    variant="primary"
+                    onClick={() => setExperimentOpen(true)}
+                  >
                     Design an experiment
                   </Button>
                 }
@@ -345,13 +374,72 @@ export default function AnalyticsPage() {
             )}
           </Panel>
 
-          <BudgetCard budget={budget} />
+          <BudgetCard budget={budget} onSetCap={() => setBudgetOpen(true)} />
         </div>
       </DataState>
+
+      {experimentOpen ? (
+        <NewExperimentModal
+          onClose={() => setExperimentOpen(false)}
+          onCreated={refetch}
+        />
+      ) : null}
+
+      {budgetOpen ? (
+        <SetBudgetModal
+          budget={budget}
+          onClose={() => setBudgetOpen(false)}
+          onSaved={refetch}
+        />
+      ) : null}
 
       <style>{`.analytics-mt { margin-top: 1rem; }`}</style>
     </div>
   );
+}
+
+/* ---- Spend CSV export ---------------------------------------------- */
+type SpendRow = { impressions: number; clicks: number; spend: number };
+
+/** Escape one CSV field: wrap in quotes when it contains a delimiter/quote/newline. */
+function csvCell(value: string | number): string {
+  const s = String(value);
+  return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+}
+
+/** Client-side CSV download of the current spend-by-platform table. */
+function exportSpendCsv(
+  providers: [string, SpendRow][],
+  totals: SpendRow,
+): void {
+  const ctr = (clicks: number, impressions: number) =>
+    impressions ? pct(clicks / impressions, 2) : '';
+  const header = ['Platform', 'Impressions', 'Clicks', 'CTR', 'Spend (USD)'];
+  const rows = providers.map(([slug, row]) => [
+    platformName(slug),
+    row.impressions,
+    row.clicks,
+    ctr(row.clicks, row.impressions),
+    row.spend.toFixed(2),
+  ]);
+  const totalRow = [
+    'All platforms',
+    totals.impressions,
+    totals.clicks,
+    ctr(totals.clicks, totals.impressions),
+    totals.spend.toFixed(2),
+  ];
+  const csv = [header, ...rows, totalRow]
+    .map((r) => r.map(csvCell).join(','))
+    .join('\r\n');
+  const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `convoads-spend-by-platform-${new Date().toISOString().slice(0, 10)}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
 }
 
 /* ---- Attribution row ------------------------------------------------ */
@@ -400,6 +488,7 @@ function AttrRow({
 /* ---- Budget card ---------------------------------------------------- */
 function BudgetCard({
   budget,
+  onSetCap,
 }: {
   budget:
     | {
@@ -411,6 +500,7 @@ function BudgetCard({
         tier: string;
       }
     | undefined;
+  onSetCap: () => void;
 }) {
   const configured = !!budget?.configured && (budget?.limit ?? 0) > 0;
   const mtd = budget?.monthToDate ?? 0;
@@ -473,11 +563,307 @@ function BudgetCard({
             <Icon name="shield" size={12} /> No monthly cap set — usage is uncapped on the {tier}{' '}
             tier.
           </div>
-          <Button size="sm" icon="settings" variant="ghost">
+          <Button size="sm" icon="settings" variant="ghost" onClick={onSetCap}>
             Set a monthly cap
           </Button>
         </>
       )}
     </Card>
+  );
+}
+
+/* ---- New experiment modal ------------------------------------------ */
+function NewExperimentModal({
+  onClose,
+  onCreated,
+}: {
+  onClose: () => void;
+  onCreated: () => void;
+}) {
+  const client = useApiClient();
+  const toast = useToast();
+  const {
+    data: campaigns,
+    error: campaignsError,
+    loading: campaignsLoading,
+  } = useAsync(() => client.campaigns.list(), [client]);
+
+  const [campaignId, setCampaignId] = useState('');
+  const [hypothesis, setHypothesis] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [touched, setTouched] = useState(false);
+
+  // Default the select to the first campaign once the list arrives.
+  useEffect(() => {
+    if (!campaignId && campaigns && campaigns.length > 0) {
+      setCampaignId(campaigns[0].id);
+    }
+  }, [campaigns, campaignId]);
+
+  const trimmed = hypothesis.trim();
+  const campaignValid = campaignId !== '';
+  const hypothesisValid = trimmed.length >= 8;
+  const canSubmit = campaignValid && hypothesisValid && !busy;
+  const noCampaigns = !campaignsLoading && !campaignsError && (campaigns?.length ?? 0) === 0;
+
+  async function submit() {
+    if (!canSubmit) {
+      setTouched(true);
+      return;
+    }
+    setBusy(true);
+    try {
+      await client.experiments.create({ campaignId, hypothesis: trimmed });
+      toast.success('Experiment created');
+      onCreated();
+      onClose();
+    } catch (e) {
+      toast.error(
+        e instanceof ApiClientError ? e.body.message : 'Could not create the experiment',
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title="Design an experiment"
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose} disabled={busy}>
+            Cancel
+          </Button>
+          <Button variant="primary" icon="plus" onClick={submit} disabled={!canSubmit}>
+            {busy ? 'Creating…' : 'Create experiment'}
+          </Button>
+        </>
+      }
+    >
+      <p className="muted" style={{ margin: 0, fontSize: 13 }}>
+        Test a headline, offer, or agent opener against your control to see what lifts the
+        qualified-lead rate.
+      </p>
+
+      <form
+        className="stack"
+        style={{ gap: '0.9rem' }}
+        onSubmit={(e) => {
+          e.preventDefault();
+          submit();
+        }}
+      >
+        <div className="field">
+          <label className="field-label" htmlFor="experiment-campaign">
+            Campaign
+          </label>
+          <select
+            id="experiment-campaign"
+            className="select"
+            value={campaignId}
+            onChange={(e) => setCampaignId(e.target.value)}
+            onBlur={() => setTouched(true)}
+            disabled={campaignsLoading || noCampaigns}
+            aria-invalid={touched && !campaignValid}
+          >
+            {campaignsLoading ? (
+              <option value="">Loading campaigns…</option>
+            ) : noCampaigns ? (
+              <option value="">No campaigns yet</option>
+            ) : (
+              campaigns?.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {campaignLabel(c)}
+                </option>
+              ))
+            )}
+          </select>
+          {campaignsError ? (
+            <span style={{ fontSize: 12, color: 'var(--color-danger)' }}>
+              Couldn&apos;t load campaigns. Make sure the API is running on :4000.
+            </span>
+          ) : noCampaigns ? (
+            <span className="muted" style={{ fontSize: 12 }}>
+              Create a campaign first, then come back to run an experiment against it.
+            </span>
+          ) : null}
+        </div>
+
+        <div className="field">
+          <label className="field-label" htmlFor="experiment-hypothesis">
+            Hypothesis
+          </label>
+          <textarea
+            id="experiment-hypothesis"
+            className="textarea"
+            placeholder="e.g. A benefit-led headline will lift qualified-lead rate over the price-led control."
+            value={hypothesis}
+            onChange={(e) => setHypothesis(e.target.value)}
+            onBlur={() => setTouched(true)}
+            aria-invalid={touched && !hypothesisValid}
+          />
+          {touched && !hypothesisValid ? (
+            <span style={{ fontSize: 12, color: 'var(--color-danger)' }}>
+              Describe what you expect to happen (at least 8 characters).
+            </span>
+          ) : (
+            <span className="muted" style={{ fontSize: 12 }}>
+              State the change and the outcome you expect it to move.
+            </span>
+          )}
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+function campaignLabel(c: { id: string; name?: string | null; objective: string }): string {
+  return c.name?.trim() || c.objective || `Campaign ${c.id.slice(0, 8)}`;
+}
+
+/* ---- Set monthly cap modal ----------------------------------------- */
+function SetBudgetModal({
+  budget,
+  onClose,
+  onSaved,
+}: {
+  budget?: BudgetStatus;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const client = useApiClient();
+  const toast = useToast();
+  const configured = !!budget?.configured && (budget?.limit ?? 0) > 0;
+  const [limit, setLimit] = useState(configured ? String(budget?.limit ?? '') : '');
+  const [threshold, setThreshold] = useState('80');
+  const [busy, setBusy] = useState(false);
+  const [touched, setTouched] = useState(false);
+
+  const limitNum = limit.trim() === '' ? NaN : Number(limit);
+  const limitValid = Number.isFinite(limitNum) && limitNum >= 0;
+  const thresholdTrimmed = threshold.trim();
+  const thresholdNum = thresholdTrimmed === '' ? undefined : Number(thresholdTrimmed);
+  const thresholdValid =
+    thresholdNum === undefined ||
+    (Number.isFinite(thresholdNum) && thresholdNum >= 1 && thresholdNum <= 100);
+  const canSubmit = limitValid && thresholdValid && !busy;
+
+  async function submit() {
+    if (!canSubmit) {
+      setTouched(true);
+      return;
+    }
+    setBusy(true);
+    try {
+      await client.cost.setBudget({
+        monthlyLimitUsd: limitNum,
+        ...(thresholdNum !== undefined ? { alertThresholdPct: thresholdNum } : {}),
+      });
+      toast.success('Budget updated');
+      onSaved();
+      onClose();
+    } catch (e) {
+      toast.error(
+        e instanceof ApiClientError ? e.body.message : 'Could not update the budget',
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title={configured ? 'Edit monthly cap' : 'Set a monthly cap'}
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose} disabled={busy}>
+            Cancel
+          </Button>
+          <Button variant="primary" icon="check" onClick={submit} disabled={!canSubmit}>
+            {busy ? 'Saving…' : 'Save budget'}
+          </Button>
+        </>
+      }
+    >
+      <p className="muted" style={{ margin: 0, fontSize: 13 }}>
+        Caps AI model spend for the sales agent each billing period. Ad spend billed by connected
+        platforms is tracked separately.
+      </p>
+
+      <form
+        className="stack"
+        style={{ gap: '0.9rem' }}
+        onSubmit={(e) => {
+          e.preventDefault();
+          submit();
+        }}
+      >
+        <div className="field">
+          <label className="field-label" htmlFor="analytics-budget-limit">
+            Monthly cap (USD)
+          </label>
+          <input
+            id="analytics-budget-limit"
+            className="input"
+            type="number"
+            min={0}
+            step={50}
+            inputMode="numeric"
+            autoFocus
+            placeholder="2500"
+            value={limit}
+            onChange={(e) => setLimit(e.target.value)}
+            onBlur={() => setTouched(true)}
+            aria-invalid={touched && !limitValid}
+          />
+          <span className="muted" style={{ fontSize: 12 }}>
+            Enter <strong>0</strong> for no ceiling (unlimited spend).
+          </span>
+          {touched && !limitValid ? (
+            <span style={{ fontSize: 12, color: 'var(--color-danger)' }}>
+              Enter a dollar amount of 0 or more.
+            </span>
+          ) : null}
+        </div>
+
+        <div className="field">
+          <label className="field-label" htmlFor="analytics-budget-threshold">
+            Alert threshold (%){' '}
+            <span className="muted" style={{ fontWeight: 400 }}>
+              — optional
+            </span>
+          </label>
+          <input
+            id="analytics-budget-threshold"
+            className="input"
+            type="number"
+            min={1}
+            max={100}
+            step={5}
+            inputMode="numeric"
+            placeholder="80"
+            value={threshold}
+            onChange={(e) => setThreshold(e.target.value)}
+            onBlur={() => setTouched(true)}
+            aria-invalid={touched && !thresholdValid}
+            disabled={limitValid && limitNum === 0}
+          />
+          <span className="muted" style={{ fontSize: 12 }}>
+            {limitValid && limitNum === 0
+              ? 'Alerts are off while spend is unlimited.'
+              : 'Warn the workspace once spend reaches this share of the cap.'}
+          </span>
+          {touched && !thresholdValid ? (
+            <span style={{ fontSize: 12, color: 'var(--color-danger)' }}>
+              Use a percentage between 1 and 100, or leave it blank.
+            </span>
+          ) : null}
+        </div>
+      </form>
+    </Modal>
   );
 }

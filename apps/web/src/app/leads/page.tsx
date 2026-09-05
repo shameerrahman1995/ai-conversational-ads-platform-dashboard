@@ -85,6 +85,15 @@ export default function LeadsPage() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const selected = leads.find((l) => l.id === selectedId) ?? leads[0] ?? null;
 
+  // Fetch the selected lead's full, decrypted detail (real consent records +
+  // transcript). Keyed on the selection and the reload counter so an action
+  // (Send to CRM, stage change) refreshes the detail alongside the inbox list.
+  const detailKey = selected?.id ?? null;
+  const { data: detail, loading: detailLoading } = useAsync(
+    () => (detailKey ? client.leads.get(detailKey) : Promise.resolve(null)),
+    [client, detailKey, reload],
+  );
+
   const total = leads.length;
   const qualified = leads.filter((l) => l.qualified).length;
   const scored = leads.filter((l) => l.score != null);
@@ -141,8 +150,8 @@ export default function LeadsPage() {
 
         {/* Master–detail */}
         <div
-          className="grid"
-          style={{ gridTemplateColumns: 'minmax(0, 1.65fr) minmax(0, 1fr)', marginTop: '1rem', alignItems: 'start' }}
+          className="grid grid-hero"
+          style={{ marginTop: '1rem', alignItems: 'start' }}
         >
           <Panel
             title="Inbox"
@@ -215,7 +224,13 @@ export default function LeadsPage() {
 
           <div style={{ position: 'sticky', top: '0.25rem' }}>
             {selected ? (
-              <LeadDetail key={selected.id} lead={selected} onChanged={() => setReload((n) => n + 1)} />
+              <LeadDetail
+                key={selected.id}
+                lead={selected}
+                detail={detail && detail.id === selected.id ? detail : null}
+                detailLoading={detailLoading}
+                onChanged={() => setReload((n) => n + 1)}
+              />
             ) : null}
           </div>
         </div>

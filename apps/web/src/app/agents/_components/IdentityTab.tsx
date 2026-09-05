@@ -93,10 +93,7 @@ export function IdentityTab({
 
   return (
     <div className="stack" style={{ gap: '1rem' }}>
-      <div
-        className="grid"
-        style={{ gridTemplateColumns: 'minmax(0, 1.35fr) minmax(0, 1fr)', gap: '1rem' }}
-      >
+      <div className="grid grid-hero" style={{ gap: '1rem' }}>
         {/* Persona + prompt */}
         <Card className="card-pad stack" style={{ gap: '1rem' }}>
           <SectionTitle hint="How the agent introduces itself and sounds to visitors.">

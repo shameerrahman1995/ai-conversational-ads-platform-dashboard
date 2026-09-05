@@ -78,6 +78,26 @@ export class AgentConfigService {
     return { id: updated.id, settings: merged };
   }
 
+  /** Publish an agent: flip it live + audit. Restricted verticals require review. */
+  async publish(orgId: string, agentId: string) {
+    const agent = await this.prisma.agentConfig.findFirst({
+      where: scopedWhere(orgId, { id: agentId }),
+      include: { campaign: { select: { vertical: true } } },
+    });
+    if (!agent) throw new NotFoundException('Agent not found');
+    const updated = await this.prisma.agentConfig.update({
+      where: { id: agentId, orgId },
+      data: { status: 'live' },
+    });
+    await this.audit.record({
+      orgId,
+      action: 'agent.published',
+      target: agentId,
+      metadata: { vertical: agent.campaign?.vertical ?? null },
+    });
+    return { id: updated.id, status: updated.status };
+  }
+
   /** Live single-turn preview through the configured model — no persistence. */
   async preview(orgId: string, agentId: string, message: string) {
     const agent = await this.prisma.agentConfig.findFirst({

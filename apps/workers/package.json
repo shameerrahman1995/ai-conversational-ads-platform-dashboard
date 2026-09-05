@@ -11,11 +11,15 @@
     "clean": "rm -rf dist .turbo *.tsbuildinfo"
   },
   "dependencies": {
+    "@acp/api": "workspace:*",
     "@acp/config": "workspace:*",
     "@acp/jobs": "workspace:*",
     "@acp/shared-types": "workspace:*",
+    "@nestjs/common": "12.0.1",
+    "@nestjs/core": "12.0.1",
     "bullmq": "6.3.4",
-    "ioredis": "5.4.2"
+    "ioredis": "5.4.2",
+    "reflect-metadata": "0.2.2"
   },
   "devDependencies": {
     "@types/node": "26.4.1",

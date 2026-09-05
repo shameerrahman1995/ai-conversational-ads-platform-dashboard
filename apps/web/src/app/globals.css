@@ -152,6 +152,57 @@ main::-webkit-scrollbar-thumb:hover {
   top: 0;
   height: 100vh;
 }
+
+/* Mobile drawer trigger + backdrop (hidden on desktop). */
+.rail-toggle {
+  display: none;
+}
+.rail-backdrop {
+  display: none;
+}
+
+@media (max-width: 900px) {
+  .app-shell {
+    grid-template-columns: 1fr;
+  }
+  .rail {
+    position: fixed;
+    top: 0;
+    left: 0;
+    z-index: 1002;
+    width: 250px;
+    transform: translateX(-100%);
+    transition: transform 0.2s ease;
+  }
+  .rail--open {
+    transform: translateX(0);
+  }
+  .rail-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    background: rgba(15, 23, 42, 0.45);
+    z-index: 1001;
+  }
+  .rail-toggle {
+    display: grid;
+    place-items: center;
+    width: 34px;
+    height: 34px;
+    border-radius: var(--radius-control);
+    border: 1px solid var(--color-line);
+    background: var(--color-surface);
+    color: var(--color-ink-2);
+    cursor: pointer;
+    flex: none;
+  }
+  .topbar-search {
+    display: none;
+  }
+  main.workspace-main {
+    padding: 1.1rem 1rem 3rem;
+  }
+}
 .rail-brand {
   display: flex;
   align-items: center;
@@ -472,12 +523,29 @@ main.workspace-main {
 .grid-3 {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
+/* Asymmetric splits (primary panel + sidebar); all collapse to one column. */
+.grid-hero {
+  grid-template-columns: minmax(0, 1.65fr) minmax(0, 1fr);
+}
+.grid-split {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+}
+.grid-rail-l {
+  grid-template-columns: minmax(0, 288px) minmax(0, 1fr);
+}
+.grid-rail-r {
+  grid-template-columns: minmax(0, 1fr) 300px;
+}
 @media (max-width: 1100px) {
   .grid-kpi {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
   .grid-3,
-  .grid-2 {
+  .grid-2,
+  .grid-hero,
+  .grid-split,
+  .grid-rail-l,
+  .grid-rail-r {
     grid-template-columns: 1fr;
   }
 }

@@ -16,6 +16,8 @@ function baseLead() {
 
 function deps(opts: { existing?: any; attempt?: any; adapter?: any } = {}) {
   const prisma = {
+    // Interactive-transaction callbacks run against the same mock.
+    $transaction: (fn: any) => fn(prisma),
     lead: {
       findFirst: vi.fn().mockResolvedValue(baseLead()),
       update: vi.fn().mockResolvedValue({}),

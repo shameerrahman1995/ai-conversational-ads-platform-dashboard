@@ -1,11 +1,12 @@
 'use client';
 
-import type { ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import { Icon, type IconName } from './Icon';
 import { OrgSwitcher } from './OrgSwitcher';
 import { ToastProvider } from './feedback';
+import { useOrg } from '@/lib/org-context';
 
 interface NavItem {
   href: string;
@@ -51,11 +52,23 @@ function isActive(pathname: string, href: string): boolean {
 
 export function AppShell({ children }: { children: ReactNode }) {
   const pathname = usePathname() || '/';
+  const router = useRouter();
+  const { signOut } = useOrg();
+  const [drawer, setDrawer] = useState(false);
+
+  // Login renders without the app chrome.
+  if (pathname === '/login') return <>{children}</>;
+
+  function logout() {
+    signOut();
+    router.push('/login');
+  }
 
   return (
     <ToastProvider>
     <div className="app-shell">
-      <aside className="rail">
+      {drawer ? <div className="rail-backdrop" onClick={() => setDrawer(false)} /> : null}
+      <aside className={`rail ${drawer ? 'rail--open' : ''}`}>
         <div className="rail-brand">
           <span className="rail-brand-mark">
             <Icon name="message" size={17} />
@@ -76,6 +89,7 @@ export function AppShell({ children }: { children: ReactNode }) {
                 <Link
                   key={item.href}
                   href={item.href}
+                  onClick={() => setDrawer(false)}
                   className={`nav-link ${isActive(pathname, item.href) ? 'active' : ''}`}
                   aria-current={isActive(pathname, item.href) ? 'page' : undefined}
                 >
@@ -89,7 +103,7 @@ export function AppShell({ children }: { children: ReactNode }) {
 
         <div className="rail-foot">
           <span className="rail-avatar">SR</span>
-          <span style={{ minWidth: 0 }}>
+          <span style={{ minWidth: 0, flex: 1 }}>
             <span style={{ display: 'block', color: '#fff', fontSize: 13, fontWeight: 500 }}>
               S. Rahman
             </span>
@@ -97,11 +111,35 @@ export function AppShell({ children }: { children: ReactNode }) {
               Administrator
             </span>
           </span>
+          <button
+            onClick={logout}
+            aria-label="Sign out"
+            title="Sign out"
+            style={{
+              background: 'transparent',
+              border: 'none',
+              color: 'var(--color-rail-dim)',
+              cursor: 'pointer',
+              padding: 4,
+              display: 'grid',
+              placeItems: 'center',
+            }}
+          >
+            <Icon name="external" size={16} />
+          </button>
         </div>
       </aside>
 
       <div className="workspace">
         <header className="topbar">
+          <button
+            className="rail-toggle"
+            onClick={() => setDrawer(true)}
+            aria-label="Open navigation menu"
+            type="button"
+          >
+            <Icon name="menu" size={18} />
+          </button>
           <div className="topbar-search" aria-hidden="true">
             <Icon name="search" size={15} />
             <span>Search campaigns, leads, agents…</span>

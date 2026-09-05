@@ -4,6 +4,7 @@ import type { ConsentType } from '@acp/shared-types';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuditService } from '../../common/audit/audit.service';
 import { scopedWhere } from '../../common/tenant/scoped-where';
+import { decryptField } from '../../common/crypto/field-crypto';
 import { CrmRegistry } from './crm-registry';
 
 type LeadWithRelations = {
@@ -48,14 +49,14 @@ export class DeliveryService {
 
     const idempotencyKey = `${leadId}:${provider}`;
     const existing = await this.prisma.deliveryAttempt.findUnique({
-      where: { provider_idempotencyKey: { provider, idempotencyKey } },
+      where: { orgId_provider_idempotencyKey: { orgId, provider, idempotencyKey } },
     });
     if (existing?.status === 'accepted') return existing; // idempotent: already delivered
 
     const attempt =
       existing ??
       (await this.prisma.deliveryAttempt.create({
-        data: { leadId, provider, idempotencyKey, status: 'queued', attempt: 1 },
+        data: { orgId, leadId, provider, idempotencyKey, status: 'queued', attempt: 1 },
       }));
 
     return this.execute(orgId, attempt, lead, mappings, provider, idempotencyKey);
@@ -117,13 +118,18 @@ export class DeliveryService {
     });
 
     if (result.ok) {
-      const updated = await this.prisma.deliveryAttempt.update({
-        where: { id: attempt.id },
-        data: { status: 'accepted', remoteId: result.remoteId },
-      });
-      await this.prisma.lead.update({
-        where: { id: attempt.leadId, orgId },
-        data: { crmId: result.remoteId },
+      // Mark the attempt accepted and stamp the lead's crmId together so we can't
+      // record a success without capturing its remote id (or vice versa).
+      const updated = await this.prisma.$transaction(async (tx) => {
+        const accepted = await tx.deliveryAttempt.update({
+          where: { id: attempt.id },
+          data: { status: 'accepted', remoteId: result.remoteId },
+        });
+        await tx.lead.update({
+          where: { id: attempt.leadId, orgId },
+          data: { crmId: result.remoteId },
+        });
+        return accepted;
       });
       await this.audit.record({
         orgId,
@@ -171,7 +177,8 @@ export class DeliveryService {
     const field = (name: string) => lead.fieldValues.find((f) => f.field === name);
     const sourced = (name: string) => {
       const f = field(name);
-      return f ? { value: f.value, source: f.source as never } : undefined;
+      // Field values are encrypted at rest; decrypt before handing to the CRM.
+      return f ? { value: decryptField(f.value) as string, source: f.source as never } : undefined;
     };
     return {
       contact: { fullName: sourced('fullName'), email: sourced('email'), phone: sourced('phone') },

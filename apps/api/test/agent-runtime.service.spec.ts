@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { AgentRuntimeService } from '../src/modules/agent-runtime/agent-runtime.service';
+import { decryptField } from '../src/common/crypto/field-crypto';
 
 function deps(opts: { agent?: any; convo?: any; chunks?: any; gateway?: any } = {}) {
   const prisma = {
@@ -44,7 +45,8 @@ describe('AgentRuntimeService', () => {
     const d = deps();
     await make(d).sendMessage('org_1', 'co1', 'email me at a@b.com');
     const userCall = d.prisma.message.create.mock.calls[0][0];
-    expect(userCall.data.contentRef).toContain('[redacted-email]');
+    // contentRef is now encrypted at rest — decrypt to assert PII redaction.
+    expect(decryptField(userCall.data.contentRef)).toContain('[redacted-email]');
   });
 
   it('sendMessage falls back on gateway failure (circuit breaker)', async () => {

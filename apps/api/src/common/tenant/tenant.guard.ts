@@ -12,10 +12,20 @@ import { assertDevAuthAllowed } from '../auth/dev-auth';
 @Injectable()
 export class TenantGuard implements CanActivate {
   canActivate(context: ExecutionContext): boolean {
-    assertDevAuthAllowed();
     const req = context
       .switchToHttp()
-      .getRequest<{ headers: Record<string, string>; orgId?: string }>();
+      .getRequest<{
+        headers: Record<string, string>;
+        orgId?: string;
+        user?: { orgId?: string };
+      }>();
+    // Prefer the verified principal (JwtAuthGuard set req.user); else dev header.
+    const fromToken = req.user?.orgId;
+    if (fromToken) {
+      req.orgId = fromToken;
+      return true;
+    }
+    assertDevAuthAllowed();
     const orgId = req.headers['x-org-id'];
     if (!orgId) throw new BadRequestException('Missing x-org-id');
     req.orgId = orgId;

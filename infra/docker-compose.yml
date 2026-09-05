@@ -50,6 +50,95 @@ services:
       timeout: 5s
       retries: 10
 
+  # One-shot: create the `acp-assets` bucket once MinIO is healthy, then exit.
+  minio-createbucket:
+    image: minio/mc:latest
+    depends_on:
+      minio:
+        condition: service_healthy
+    restart: "no"
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        mc alias set local http://minio:9000 acp-minio acp-minio-secret &&
+        mc mb --ignore-existing local/acp-assets &&
+        echo "bucket acp-assets ready"
+
+  # ---- Application tier (built from the per-app Dockerfiles) ----
+  api:
+    build:
+      context: ..
+      dockerfile: apps/api/Dockerfile
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      API_PORT: "4000"
+      API_BASE_URL: http://localhost:4000
+      DATABASE_URL: postgresql://acp:acp@postgres:5432/acp?schema=public
+      REDIS_URL: redis://redis:6379
+      S3_ENDPOINT: http://minio:9000
+      S3_REGION: us-east-1
+      S3_ACCESS_KEY_ID: acp-minio
+      S3_SECRET_ACCESS_KEY: acp-minio-secret
+      S3_BUCKET: acp-assets
+    ports:
+      - "4000:4000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      minio-createbucket:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:4000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  workers:
+    build:
+      context: ..
+      dockerfile: apps/workers/Dockerfile
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://acp:acp@postgres:5432/acp?schema=public
+      REDIS_URL: redis://redis:6379
+      S3_ENDPOINT: http://minio:9000
+      S3_REGION: us-east-1
+      S3_ACCESS_KEY_ID: acp-minio
+      S3_SECRET_ACCESS_KEY: acp-minio-secret
+      S3_BUCKET: acp-assets
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  web:
+    build:
+      context: ..
+      dockerfile: apps/web/Dockerfile
+      args:
+        # Baked into the browser bundle at build time (NEXT_PUBLIC_*).
+        NEXT_PUBLIC_API_BASE_URL: http://localhost:4000
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      HOSTNAME: 0.0.0.0
+      NEXT_PUBLIC_API_BASE_URL: http://localhost:4000
+    ports:
+      - "3000:3000"
+    depends_on:
+      api:
+        condition: service_healthy
+
 volumes:
   acp_pg:
   acp_redis:

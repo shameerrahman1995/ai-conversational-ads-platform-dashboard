@@ -1,0 +1,103 @@
+name: Deploy
+
+# Build + push the three service images to GHCR, then run DB migrations.
+# Triggers: pushes to main and version tags (v*), plus manual dispatch.
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_PREFIX: ghcr.io/${{ github.repository }}
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: api
+            dockerfile: apps/api/Dockerfile
+          - name: workers
+            dockerfile: apps/workers/Dockerfile
+          - name: web
+            dockerfile: apps/web/Dockerfile
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE_PREFIX }}/${{ matrix.name }}
+          tags: |
+            type=sha
+            type=ref,event=branch
+            type=ref,event=tag
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push ${{ matrix.name }}
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.5.2
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      # Apply pending migrations against the target database (idempotent).
+      - name: Run database migrations (migrate deploy)
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: pnpm --filter @acp/db exec prisma migrate deploy
+
+      # ---- Deploy target hook ---------------------------------------------------
+      # Images are now published to GHCR and the DB schema is migrated. Wire your
+      # runtime here (e.g. Fly.io, AWS ECS, Kubernetes, or `docker compose pull &&
+      # up -d` over SSH). Roll api + workers first, then web, once healthy.
+      - name: Deploy (placeholder)
+        run: |
+          echo "Published images:"
+          echo "  ${IMAGE_PREFIX}/api"
+          echo "  ${IMAGE_PREFIX}/workers"
+          echo "  ${IMAGE_PREFIX}/web"
+          echo "Tag: ${GITHUB_SHA}"
+          echo "TODO: pull the new images on the deploy target and roll the services."

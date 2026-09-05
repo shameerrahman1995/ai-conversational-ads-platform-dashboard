@@ -4,6 +4,8 @@ import { StubCopyGenerator } from '../src/modules/campaign-intel/stub-copy-gener
 
 function deps(opts: { facts?: string[]; versionCount?: number; latest?: any } = {}) {
   const prisma = {
+    // Interactive-transaction callbacks run against the same mock.
+    $transaction: (fn: any) => fn(prisma),
     campaign: {
       create: vi.fn().mockResolvedValue({ id: 'c1', version: 1, status: 'DRAFT' }),
       findFirst: vi.fn().mockResolvedValue({ id: 'c1', version: 1, status: 'DRAFT' }),

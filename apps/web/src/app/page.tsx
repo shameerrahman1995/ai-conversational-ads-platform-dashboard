@@ -1,5 +1,6 @@
 'use client';
 
+import { useRouter } from 'next/navigation';
 import { useApiClient } from '@/lib/api';
 import { useAsync } from '@/lib/useAsync';
 import { Icon } from '@/components/Icon';
@@ -19,6 +20,7 @@ const usd = (n: number, max = 0) =>
 const num = (n: number) => n.toLocaleString('en-US');
 
 export default function OverviewPage() {
+  const router = useRouter();
   const client = useApiClient();
   const { data, error, loading } = useAsync(
     () =>
@@ -44,10 +46,12 @@ export default function OverviewPage() {
         subtitle="How conversations are turning into qualified pipeline across every connected channel."
         actions={
           <>
-            <Button icon="clock" variant="ghost">
-              Last 30 days
-            </Button>
-            <Button icon="plus" variant="primary">
+            <Chip icon="clock">Last 30 days</Chip>
+            <Button
+              icon="plus"
+              variant="primary"
+              onClick={() => router.push('/campaigns/new')}
+            >
               New campaign
             </Button>
           </>
@@ -61,8 +65,7 @@ export default function OverviewPage() {
             label="Qualified leads"
             value={num(attribution?.qualifiedLeads ?? 0)}
             icon="leads"
-            delta={{ dir: 'up', value: '12.4%' }}
-            footNote="vs. prior period"
+            footNote="This period"
           />
           <StatCard
             label="Ad spend"
@@ -78,7 +81,6 @@ export default function OverviewPage() {
                 : '—'
             }
             icon="analytics"
-            delta={{ dir: 'down', value: '6.1%' }}
             footNote="lower is better"
           />
           <StatCard
@@ -90,10 +92,7 @@ export default function OverviewPage() {
         </div>
 
         {/* Hero: funnel + pipeline pulse */}
-        <div
-          className="grid"
-          style={{ gridTemplateColumns: 'minmax(0, 1.75fr) minmax(0, 1fr)', marginTop: '1rem' }}
-        >
+        <div className="grid grid-hero" style={{ marginTop: '1rem' }}>
           <Panel
             title="Conversation funnel"
             note="impression → click → chat → qualified → meeting"

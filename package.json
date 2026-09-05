@@ -10,7 +10,9 @@
     "build": "turbo run build",
     "dev": "turbo run dev",
     "typecheck": "turbo run typecheck",
-    "lint": "turbo run lint",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "lint:turbo": "turbo run lint",
     "test": "turbo run test",
     "clean": "turbo run clean",
     "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,md}\"",
@@ -20,9 +22,12 @@
     "infra:down": "docker compose -f infra/docker-compose.yml down"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@types/node": "26.4.1",
+    "eslint": "^10.9.1",
     "prettier": "3.6.2",
     "turbo": "2.10.12",
-    "typescript": "5.9.3"
+    "typescript": "5.9.3",
+    "typescript-eslint": "^8.69.0"
   }
 }

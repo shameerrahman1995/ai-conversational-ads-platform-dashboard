@@ -376,13 +376,7 @@ export default function CampaignDetailPage() {
             </div>
 
             {/* Copy + creative */}
-            <div
-              className="grid"
-              style={{
-                gridTemplateColumns: 'minmax(0, 1.4fr) minmax(0, 1fr)',
-                marginTop: '1rem',
-              }}
-            >
+            <div className="grid grid-hero" style={{ marginTop: '1rem' }}>
               <Panel
                 title="Generated ad copy"
                 note={
