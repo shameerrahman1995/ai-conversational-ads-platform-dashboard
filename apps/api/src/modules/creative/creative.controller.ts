@@ -1,8 +1,14 @@
-import { Body, Controller, Get, Param, Post, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post, Req, UseGuards } from '@nestjs/common';
 import { ApiHeader, ApiTags } from '@nestjs/swagger';
 import { CreativeService } from './creative.service';
 import { Html5CompilerService } from './html5-compiler.service';
-import { CompileHtml5Dto, CreateVariantDto } from './dto';
+import {
+  CompileHtml5Dto,
+  CreateVariantDto,
+  GenerateAdaptiveDto,
+  GenerateImageDto,
+  UpdateVariantDto,
+} from './dto';
 import { TenantGuard } from '../../common/tenant/tenant.guard';
 import { RolesGuard } from '../../common/rbac/roles.guard';
 import { Roles } from '../../common/rbac/roles.decorator';
@@ -30,10 +36,22 @@ export class CreativeController {
     return this.html5.previewPolicy();
   }
 
+  @Post('creative/generate-image')
+  @Roles('creator')
+  generateImage(@Req() req: { orgId: string }, @Body() dto: GenerateImageDto) {
+    return this.creative.generateImage(req.orgId, dto);
+  }
+
   @Post('campaigns/:id/variants')
   @Roles('creator')
   create(@Req() req: { orgId: string }, @Param('id') id: string, @Body() dto: CreateVariantDto) {
     return this.creative.createVariant(req.orgId, id, dto.format, dto.spec);
+  }
+
+  @Post('campaigns/:id/creative/generate')
+  @Roles('creator')
+  generateAdaptive(@Req() req: { orgId: string }, @Param('id') id: string, @Body() dto: GenerateAdaptiveDto) {
+    return this.creative.generateAdaptive(req.orgId, id, dto);
   }
 
   @Get('campaigns/:id/variants')
@@ -46,6 +64,18 @@ export class CreativeController {
   @Roles('creator')
   render(@Req() req: { orgId: string }, @Param('id') id: string) {
     return this.creative.render(req.orgId, id);
+  }
+
+  @Patch('variants/:id')
+  @Roles('creator')
+  update(@Req() req: { orgId: string }, @Param('id') id: string, @Body() dto: UpdateVariantDto) {
+    return this.creative.updateVariant(req.orgId, id, dto);
+  }
+
+  @Delete('variants/:id')
+  @Roles('creator')
+  remove(@Req() req: { orgId: string }, @Param('id') id: string) {
+    return this.creative.deleteVariant(req.orgId, id);
   }
 
   @Get('variants/:id')

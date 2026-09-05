@@ -26,7 +26,10 @@ export class LeadService {
   ) {}
 
   async createLead(orgId: string, input: CreateLeadInput) {
-    const dupId = await this.findDuplicate(orgId, input.fields);
+    // `fields` is optional over the wire; never dereference it undefined.
+    const fields = input.fields ?? {};
+    input = { ...input, fields };
+    const dupId = await this.findDuplicate(orgId, fields);
     if (dupId) {
       await this.audit.record({ orgId, action: 'lead.deduped', target: dupId });
       return { leadId: dupId, deduped: true };

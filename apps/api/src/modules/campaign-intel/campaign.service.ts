@@ -17,6 +17,7 @@ export interface ClaimAnnotation {
 export interface CampaignSnapshot {
   copy: CampaignCopy;
   claims: ClaimAnnotation[];
+  generation?: { model: string; brandVoice: string };
 }
 
 const REGENERATABLE: CopyField[] = ['headline', 'offer', 'cta'];
@@ -35,19 +36,46 @@ export class CampaignService {
     @Inject(COPY_GENERATOR) private readonly generator: CopyGeneratorPort,
   ) {}
 
-  async createDraft(orgId: string, objective: string, name?: string, vertical?: string) {
+  async createDraft(
+    orgId: string,
+    objective: string,
+    name?: string,
+    vertical?: string,
+    settings?: Record<string, unknown>,
+  ) {
     const campaign = await this.prisma.campaign.create({
-      data: { orgId, objective, name, vertical, status: 'DRAFT', version: 1 },
+      data: {
+        orgId,
+        objective,
+        name,
+        vertical,
+        settings: (settings ?? undefined) as never,
+        status: 'DRAFT',
+        version: 1,
+      },
     });
     await this.audit.record({ orgId, action: 'campaign.created', target: campaign.id });
     return campaign;
   }
 
-  async generate(orgId: string, campaignId: string) {
+  async generate(
+    orgId: string,
+    campaignId: string,
+    opts?: { model?: string; brandVoice?: string },
+  ) {
     await this.requireCampaign(orgId, campaignId);
     const facts = await this.approvedFacts(orgId);
     const snapshot = this.annotate(this.generator.generate(facts), facts);
-    return this.commitVersion(orgId, campaignId, snapshot, 'campaign.generated');
+    if (opts?.model || opts?.brandVoice) {
+      snapshot.generation = {
+        model: opts.model ?? 'claude-sonnet-5',
+        brandVoice: opts.brandVoice ?? 'Default',
+      };
+    }
+    return this.commitVersion(orgId, campaignId, snapshot, 'campaign.generated', {
+      model: opts?.model,
+      brandVoice: opts?.brandVoice,
+    });
   }
 
   async regenerateField(orgId: string, campaignId: string, field: CopyField) {

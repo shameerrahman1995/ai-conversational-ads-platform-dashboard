@@ -8,6 +8,37 @@ import { ConnectorRegistry } from '../publishing/connector-registry';
 type Conn = { id: string; provider: string; status: ConnectorStatus; secretRef: string | null };
 
 /**
+ * Non-ad providers (CRM, calendar, AI voice/video, webhooks) that connect through
+ * a generic OAuth stub rather than the ad ConnectorRegistry. Ad platforms are
+ * resolved via the registry; anything here is handled generically.
+ */
+const GENERIC_PROVIDERS = new Set<string>([
+  'hubspot',
+  'salesforce',
+  'zoho',
+  'google_calendar',
+  'calendly',
+  'elevenlabs',
+  'deepgram',
+  'heygen',
+  'd_id',
+  'webhook',
+]);
+
+const GENERIC_SCOPES: Record<string, string[]> = {
+  hubspot: ['crm.objects.contacts.write', 'crm.schemas.read'],
+  salesforce: ['api', 'refresh_token'],
+  zoho: ['ZohoCRM.modules.ALL'],
+  google_calendar: ['calendar.events'],
+  calendly: ['scheduling'],
+  elevenlabs: ['tts'],
+  deepgram: ['stt'],
+  heygen: ['avatar.render'],
+  d_id: ['avatar.render'],
+  webhook: [],
+};
+
+/**
  * Ad-platform connection lifecycle (blueprint §8/§14): authorize -> connect ->
  * test -> rotate -> reauth (on 401) -> revoke, enforcing the connector state
  * machine. Provider tokens are held only as `secretRef` references, never raw.
@@ -21,8 +52,23 @@ export class ConnectionsService {
     private readonly registry: ConnectorRegistry,
   ) {}
 
+  private isAdProvider(provider: string): boolean {
+    try {
+      this.registry.get(provider);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  private assertKnownProvider(provider: string): void {
+    if (!this.isAdProvider(provider) && !GENERIC_PROVIDERS.has(provider)) {
+      throw new BadRequestException(`Unsupported provider: ${provider}`);
+    }
+  }
+
   async startAuthorization(orgId: string, provider: string) {
-    this.registry.get(provider); // validates the provider is supported
+    this.assertKnownProvider(provider); // ad platform OR generic (CRM/calendar/voice/video/webhook)
     let conn = (await this.prisma.connection.findFirst({
       where: scopedWhere(orgId, { provider }),
     })) as Conn | null;
@@ -43,10 +89,18 @@ export class ConnectionsService {
       where: scopedWhere(orgId, { provider }),
     })) as Conn | null;
     if (!conn) throw new NotFoundException('Start authorization first');
-    const result = await this.registry.get(provider).authorize({ orgId, code });
+    if (this.isAdProvider(provider)) {
+      const result = await this.registry.get(provider).authorize({ orgId, code });
+      return this.transition(orgId, conn, 'CONNECTED', 'connection.connected', {
+        secretRef: result.secretRef,
+        scopes: result.scopes,
+      });
+    }
+    // Generic provider (CRM/calendar/voice/video/webhook): stub OAuth exchange.
+    // The token is never stored raw — only a secrets-manager reference.
     return this.transition(orgId, conn, 'CONNECTED', 'connection.connected', {
-      secretRef: result.secretRef,
-      scopes: result.scopes,
+      secretRef: `secret::${provider}::${conn.id}`,
+      scopes: GENERIC_SCOPES[provider] ?? [],
     });
   }
 
@@ -56,6 +110,11 @@ export class ConnectionsService {
 
   async test(orgId: string, id: string) {
     const conn = await this.require(orgId, id);
+    if (!this.isAdProvider(conn.provider)) {
+      // Generic provider: a stub health check that always reports healthy.
+      if (conn.status === 'DEGRADED') await this.transition(orgId, conn, 'CONNECTED', 'connection.recovered');
+      return { ok: true, accounts: [] };
+    }
     try {
       const accounts = await this.registry
         .get(conn.provider)
@@ -89,7 +148,7 @@ export class ConnectionsService {
 
   async disconnect(orgId: string, id: string) {
     const conn = await this.require(orgId, id);
-    if (conn.secretRef) {
+    if (conn.secretRef && this.isAdProvider(conn.provider)) {
       await this.registry
         .get(conn.provider)
         .revoke({ secretRef: conn.secretRef })

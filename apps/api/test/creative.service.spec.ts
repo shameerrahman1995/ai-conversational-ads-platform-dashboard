@@ -20,7 +20,10 @@ function deps(opts: { variant?: any; renderer?: any } = {}) {
 }
 
 function make(d: ReturnType<typeof deps>) {
-  return new CreativeService(d.prisma, d.audit, d.renderer);
+  const imageGen = {
+    generate: vi.fn().mockResolvedValue({ url: 'data:image/svg+xml;base64,AAA', provider: 'stub' }),
+  } as never;
+  return new CreativeService(d.prisma, d.audit, d.renderer, imageGen);
 }
 
 describe('CreativeService', () => {

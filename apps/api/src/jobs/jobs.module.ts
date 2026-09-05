@@ -3,7 +3,6 @@ import { Redis } from 'ioredis';
 import { createQueue, QUEUES } from '@acp/jobs';
 import { loadEnv } from '@acp/config';
 import { JobsProducer } from './jobs.producer';
-import { JobsController } from './jobs.controller';
 import {
   JOBS_REDIS,
   QUEUE_CRM_SYNC,
@@ -27,7 +26,6 @@ const queueProvider = (token: symbol, name: (typeof QUEUES)[keyof typeof QUEUES]
 
 @Global()
 @Module({
-  controllers: [JobsController],
   providers: [
     redisProvider,
     queueProvider(QUEUE_INGESTION, QUEUES.ingestion),

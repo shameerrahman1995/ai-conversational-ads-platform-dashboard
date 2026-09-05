@@ -1,7 +1,7 @@
 import { Body, Controller, Get, Param, Post, Req, UseGuards } from '@nestjs/common';
 import { ApiHeader, ApiTags } from '@nestjs/swagger';
 import { CampaignService } from './campaign.service';
-import { CreateCampaignDto, RegenerateFieldDto } from './dto';
+import { CreateCampaignDto, GenerateCopyDto, RegenerateFieldDto } from './dto';
 import { TenantGuard } from '../../common/tenant/tenant.guard';
 import { RolesGuard } from '../../common/rbac/roles.guard';
 import { Roles } from '../../common/rbac/roles.decorator';
@@ -17,13 +17,13 @@ export class CampaignController {
   @Post()
   @Roles('creator')
   create(@Req() req: { orgId: string }, @Body() dto: CreateCampaignDto) {
-    return this.campaigns.createDraft(req.orgId, dto.objective, dto.name, dto.vertical);
+    return this.campaigns.createDraft(req.orgId, dto.objective, dto.name, dto.vertical, dto.settings);
   }
 
   @Post(':id/generate')
   @Roles('creator')
-  generate(@Req() req: { orgId: string }, @Param('id') id: string) {
-    return this.campaigns.generate(req.orgId, id);
+  generate(@Req() req: { orgId: string }, @Param('id') id: string, @Body() dto: GenerateCopyDto) {
+    return this.campaigns.generate(req.orgId, id, { model: dto.model, brandVoice: dto.brandVoice });
   }
 
   @Post(':id/regenerate')

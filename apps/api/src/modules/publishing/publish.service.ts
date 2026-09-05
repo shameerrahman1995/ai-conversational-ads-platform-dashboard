@@ -99,6 +99,14 @@ export class PublishService {
         },
       }));
 
+    // Advance the campaign into review once it has a publish plan.
+    await this.prisma.campaign
+      .updateMany({
+        where: { id: input.campaignId, orgId, status: { in: ['DRAFT', 'GENERATED', 'VALIDATION_FAILED'] } },
+        data: { status: 'READY_FOR_REVIEW' },
+      })
+      .catch(() => undefined);
+
     await this.audit.record({
       orgId,
       action: 'publish.plan_created',
@@ -152,6 +160,9 @@ export class PublishService {
     const connector = this.registry.get(plan.platform);
 
     await this.prisma.publishJob.update({ where: { id: planId, orgId }, data: { status: 'PUBLISHING' } });
+    await this.prisma.campaign
+      .update({ where: { id: variant.campaignId, orgId }, data: { status: 'PUBLISHING' } })
+      .catch(() => undefined);
 
     const draft = await connector.createDraft({
       accountId: plan.accountId ?? '',
@@ -197,6 +208,17 @@ export class PublishService {
       where: { id: planId, orgId },
       data: { status: mapped, reviewReason: status.reason ?? null },
     });
+    // Reflect the live/rejected outcome on the owning campaign.
+    if (mapped === 'LIVE' || mapped === 'REJECTED') {
+      const v = await this.prisma.creativeVariant.findFirst({
+        where: scopedWhere(orgId, { id: plan.variantId }),
+      });
+      if (v) {
+        await this.prisma.campaign
+          .update({ where: { id: v.campaignId, orgId }, data: { status: mapped } })
+          .catch(() => undefined);
+      }
+    }
     await this.audit.record({
       orgId,
       action: mapped === 'REJECTED' ? 'publish.rejected' : 'publish.review_synced',

@@ -47,9 +47,11 @@ export class IngestionService {
         key,
         input.contentType ?? 'application/octet-stream',
       );
-      return { sourceId: source.id, uploadUrl: signed.url };
+      // Return the full source row (so the client has id/uri/parseStatus/createdAt)
+      // plus sourceId + uploadUrl for the upload step.
+      return { ...source, sourceId: source.id, uploadUrl: signed.url };
     }
-    return { sourceId: source.id, uploadUrl: undefined as string | undefined };
+    return { ...source, sourceId: source.id, uploadUrl: undefined as string | undefined };
   }
 
   async listSources(orgId: string) {

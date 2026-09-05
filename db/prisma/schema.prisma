@@ -245,6 +245,7 @@ model Campaign {
   version   Int            @default(1)
   name      String?
   vertical  String? // restricted-vertical policy pack key (blueprint §17)
+  settings  Json? // setup wizard config: platforms, audience, budget, schedule
   createdAt DateTime       @default(now())
   updatedAt DateTime       @updatedAt
 
@@ -299,6 +300,9 @@ model AgentConfig {
   campaignId String   @unique
   promptVer  String   @default("1")
   kbId       String?
+  name       String?
+  status     String   @default("draft") // draft | live | paused
+  settings   Json? // model/persona/voice/avatar config (blueprint §16)
   createdAt  DateTime @default(now())
 
   campaign      Campaign       @relation(fields: [campaignId], references: [id], onDelete: Cascade)
