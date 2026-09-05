@@ -94,7 +94,21 @@ export class LeadService {
       include: { fieldValues: true, consentRecords: true, deliveryAttempts: true },
     });
     if (!lead) throw new NotFoundException('Lead not found');
-    return { ...lead, fieldValues: this.decryptFieldValues(lead.fieldValues) };
+    // Include the real (decrypted) conversation transcript when one exists, so the
+    // Leads inbox shows the actual chat + consent instead of representative data.
+    let transcript: Array<{ role: string; content: string; createdAt: Date }> = [];
+    if (lead.conversationId) {
+      const messages = await this.prisma.message.findMany({
+        where: { conversationId: lead.conversationId },
+        orderBy: { createdAt: 'asc' },
+      });
+      transcript = messages.map((m) => ({
+        role: m.role,
+        content: decryptField(m.contentRef) ?? '',
+        createdAt: m.createdAt,
+      }));
+    }
+    return { ...lead, fieldValues: this.decryptFieldValues(lead.fieldValues), transcript };
   }
 
   async assignOwner(orgId: string, id: string, ownerId: string) {

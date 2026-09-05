@@ -68,6 +68,36 @@ export interface DeliveryAttempt {
   createdAt: string;
 }
 
+export interface ConsentRecord {
+  id: string;
+  type: string;
+  granted: boolean;
+  disclosureVersion: string;
+  timestamp: string;
+}
+
+export interface TranscriptTurn {
+  role: string;
+  content: string;
+  createdAt: string;
+}
+
+export interface LeadDetail extends LeadSummary {
+  fieldValues?: { field: string; value: string }[];
+  consentRecords?: ConsentRecord[];
+  deliveryAttempts?: DeliveryAttempt[];
+  transcript?: TranscriptTurn[];
+}
+
+export interface AuditEvent {
+  id: string;
+  actorId: string | null;
+  action: string;
+  target: string | null;
+  metadata?: unknown;
+  createdAt: string;
+}
+
 export interface SourceSummary {
   id: string;
   type: string;
@@ -288,6 +318,12 @@ export function createApiClient(opts: ClientOptions) {
           method: 'POST',
           body: JSON.stringify({ message }),
         }),
+      publish: (id: string) =>
+        request<{ id: string; status: string }>(`/v1/agents/${id}/publish`, { method: 'POST' }),
+    },
+
+    audit: {
+      list: (limit = 100) => request<AuditEvent[]>(`/v1/audit${qs({ limit: String(limit) })}`),
     },
 
     campaigns: {
@@ -375,7 +411,7 @@ export function createApiClient(opts: ClientOptions) {
 
     leads: {
       list: () => request<LeadSummary[]>('/v1/leads'),
-      get: (id: string) => request<LeadSummary>(`/v1/leads/${id}`),
+      get: (id: string) => request<LeadDetail>(`/v1/leads/${id}`),
       deliveries: (id: string) => request<DeliveryAttempt[]>(`/v1/leads/${id}/deliveries`),
       deliver: (id: string, provider: 'webhook' | 'hubspot' | 'zoho' = 'hubspot') =>
         request<Record<string, unknown>>(`/v1/leads/${id}/deliver`, {

@@ -38,6 +38,7 @@ export const envSchema = z.object({
 
   // AI model gateway (provider-neutral)
   ANTHROPIC_API_KEY: z.string().optional(),
+  ANTHROPIC_BASE_URL: z.string().url().optional(),
   MODEL_GATEWAY_DEFAULT_MODEL: z.string().default('claude-sonnet-5'),
 
   // Provider selection: 'stub' (default) or 'live' — 'live' requires real creds.

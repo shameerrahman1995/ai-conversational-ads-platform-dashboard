@@ -42,7 +42,8 @@ export type IconName =
   | 'globe'
   | 'bolt'
   | 'doc'
-  | 'link';
+  | 'link'
+  | 'menu';
 
 const PATHS: Record<IconName, React.ReactNode> = {
   overview: (
@@ -214,6 +215,7 @@ const PATHS: Record<IconName, React.ReactNode> = {
       <path d="M14 11a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1.5-1.5" />
     </>
   ),
+  menu: <path d="M4 6h16M4 12h16M4 18h16" />,
 };
 
 export function Icon({

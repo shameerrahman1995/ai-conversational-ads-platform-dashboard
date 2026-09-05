@@ -152,6 +152,57 @@ main::-webkit-scrollbar-thumb:hover {
   top: 0;
   height: 100vh;
 }
+
+/* Mobile drawer trigger + backdrop (hidden on desktop). */
+.rail-toggle {
+  display: none;
+}
+.rail-backdrop {
+  display: none;
+}
+
+@media (max-width: 900px) {
+  .app-shell {
+    grid-template-columns: 1fr;
+  }
+  .rail {
+    position: fixed;
+    top: 0;
+    left: 0;
+    z-index: 1002;
+    width: 250px;
+    transform: translateX(-100%);
+    transition: transform 0.2s ease;
+  }
+  .rail--open {
+    transform: translateX(0);
+  }
+  .rail-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    background: rgba(15, 23, 42, 0.45);
+    z-index: 1001;
+  }
+  .rail-toggle {
+    display: grid;
+    place-items: center;
+    width: 34px;
+    height: 34px;
+    border-radius: var(--radius-control);
+    border: 1px solid var(--color-line);
+    background: var(--color-surface);
+    color: var(--color-ink-2);
+    cursor: pointer;
+    flex: none;
+  }
+  .topbar-search {
+    display: none;
+  }
+  main.workspace-main {
+    padding: 1.1rem 1rem 3rem;
+  }
+}
 .rail-brand {
   display: flex;
   align-items: center;

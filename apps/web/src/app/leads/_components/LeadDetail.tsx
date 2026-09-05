@@ -1,7 +1,13 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import type { DeliveryAttempt, LeadSummary } from '@acp/api-client';
+import type {
+  ConsentRecord,
+  DeliveryAttempt,
+  LeadDetail as LeadDetailData,
+  LeadSummary,
+  TranscriptTurn,
+} from '@acp/api-client';
 import { ApiClientError } from '@acp/api-client';
 import { Icon } from '@/components/Icon';
 import { Button, Chip, type Tone } from '@/components/ui';
@@ -52,28 +58,15 @@ function deliveryLabel(status: string): string {
 const PROVIDER_LABEL: Record<string, string> = { hubspot: 'HubSpot', webhook: 'Webhook', zoho: 'Zoho' };
 const providerName = (p: string) => PROVIDER_LABEL[p] ?? p.charAt(0).toUpperCase() + p.slice(1);
 
-/** Representative transcripts, grounded in this roofing/HVAC advertiser. */
-type Turn = { who: 'agent' | 'visitor'; text: string };
-const TRANSCRIPTS: Record<Level, Turn[]> = {
-  high: [
-    { who: 'agent', text: 'Thanks for stopping by after the storm — are you seeing missing shingles or any active leaks?' },
-    { who: 'visitor', text: 'Half the ridge cap blew off and water is coming in over the garage. My insurer already opened a claim.' },
-    { who: 'agent', text: 'Got it. I can send a licensed roofer for a free inspection this week and document everything for the adjuster. Does Thursday morning work?' },
-    { who: 'visitor', text: 'Thursday morning is perfect. Let’s book it.' },
-  ],
-  medium: [
-    { who: 'agent', text: 'Happy to help you compare — is this a seasonal tune-up or a repair on an existing system?' },
-    { who: 'visitor', text: 'Just a furnace tune-up before winter. I already have two other quotes.' },
-    { who: 'agent', text: 'Understood. Our 21-point maintenance visit is $129 and we can usually beat a written quote. Want me to hold a slot?' },
-    { who: 'visitor', text: 'Maybe — can you email me the details first?' },
-  ],
-  low: [
-    { who: 'agent', text: 'Sure — are you looking at a roof replacement, a repair, or HVAC service today?' },
-    { who: 'visitor', text: 'Just wondering what a new roof runs, ballpark.' },
-    { who: 'agent', text: 'For a single-story home in this area it’s typically $8k–$14k depending on material. Want a tailored estimate?' },
-    { who: 'visitor', text: 'Not right now, just browsing.' },
-  ],
+/** Human labels for the consent types the agent records during a conversation. */
+const CONSENT_LABEL: Record<string, string> = {
+  ai_disclosure: 'AI disclosure',
+  marketing: 'Marketing opt-in',
+  call_recording: 'Call recording',
 };
+function consentLabel(type: string): string {
+  return CONSENT_LABEL[type] ?? type.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+}
 
 function SectionLabel({ children }: { children: React.ReactNode }) {
   return (
@@ -91,13 +84,27 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
   );
 }
 
-export function LeadDetail({ lead, onChanged }: { lead: LeadSummary; onChanged: () => void }) {
+export function LeadDetail({
+  lead,
+  detail,
+  detailLoading,
+  onChanged,
+}: {
+  lead: LeadSummary;
+  detail: LeadDetailData | null;
+  detailLoading: boolean;
+  onChanged: () => void;
+}) {
   const client = useApiClient();
   const toast = useToast();
 
   const level = (lead.qualificationLevel ?? 'low') as Level;
   const score = lead.score ?? 0;
-  const turns = TRANSCRIPTS[level] ?? TRANSCRIPTS.low;
+
+  // Real, decrypted detail from leads.get(). Falls back to empty while loading.
+  const consentRecords: ConsentRecord[] = detail?.consentRecords ?? [];
+  const transcript: TranscriptTurn[] = detail?.transcript ?? [];
+  const detailPending = detailLoading && !detail;
 
   // ---- Live CRM delivery state -------------------------------------------
   const [deliveriesReload, setDeliveriesReload] = useState(0);
@@ -246,20 +253,36 @@ export function LeadDetail({ lead, onChanged }: { lead: LeadSummary; onChanged: 
 
       <hr className="divider" />
 
-      {/* Consent */}
+      {/* Consent — real records captured in-conversation */}
       <div className="card-pad stack" style={{ gap: '0.6rem' }}>
         <SectionLabel>Consent on file</SectionLabel>
-        <div className="row" style={{ flexWrap: 'wrap', gap: '0.4rem' }}>
-          <Chip tone="success" icon="check">
-            AI disclosure shown
-          </Chip>
-          <Chip tone="success" icon="check">
-            Marketing opt-in
-          </Chip>
-        </div>
-        <div className="muted" style={{ fontSize: 12.5 }}>
-          Visitor was told they were chatting with an AI agent and agreed to follow-up contact.
-        </div>
+        {detailPending ? (
+          <div className="muted" style={{ fontSize: 12 }}>
+            Loading consent records…
+          </div>
+        ) : consentRecords.length > 0 ? (
+          <>
+            <div className="row" style={{ flexWrap: 'wrap', gap: '0.4rem' }}>
+              {consentRecords.map((c) => (
+                <span
+                  key={c.id}
+                  title={`Disclosure ${c.disclosureVersion} · ${new Date(c.timestamp).toLocaleString()}`}
+                >
+                  <Chip tone={c.granted ? 'success' : 'danger'} icon={c.granted ? 'check' : 'x'}>
+                    {consentLabel(c.type)}
+                  </Chip>
+                </span>
+              ))}
+            </div>
+            <div className="muted" style={{ fontSize: 12.5 }}>
+              Consent recorded during the conversation, with disclosure version and timestamp on file.
+            </div>
+          </>
+        ) : (
+          <div className="muted" style={{ fontSize: 12.5 }}>
+            No consent records captured.
+          </div>
+        )}
       </div>
 
       <hr className="divider" />
@@ -353,45 +376,55 @@ export function LeadDetail({ lead, onChanged }: { lead: LeadSummary; onChanged: 
           </Chip>
         </div>
         <div className="stack" style={{ gap: '0.5rem' }}>
-          {turns.map((t, i) => {
-            const isAgent = t.who === 'agent';
-            return (
-              <div
-                key={i}
-                style={{
-                  alignSelf: isAgent ? 'flex-start' : 'flex-end',
-                  maxWidth: '86%',
-                }}
-              >
+          {detailPending ? (
+            <div className="muted" style={{ fontSize: 12 }}>
+              Loading conversation…
+            </div>
+          ) : transcript.length > 0 ? (
+            transcript.map((t, i) => {
+              const isAgent = t.role !== 'user';
+              return (
                 <div
+                  key={i}
                   style={{
-                    padding: '0.5rem 0.7rem',
-                    borderRadius: 12,
-                    borderTopLeftRadius: isAgent ? 3 : 12,
-                    borderTopRightRadius: isAgent ? 12 : 3,
-                    fontSize: 13,
-                    lineHeight: 1.45,
-                    background: isAgent ? 'var(--color-inset)' : 'var(--color-brand-soft)',
-                    color: isAgent ? 'var(--color-ink)' : 'var(--color-brand-ink)',
-                    border: `1px solid ${isAgent ? 'var(--color-line)' : '#dcdcfb'}`,
+                    alignSelf: isAgent ? 'flex-start' : 'flex-end',
+                    maxWidth: '86%',
                   }}
                 >
-                  {t.text}
+                  <div
+                    style={{
+                      padding: '0.5rem 0.7rem',
+                      borderRadius: 12,
+                      borderTopLeftRadius: isAgent ? 3 : 12,
+                      borderTopRightRadius: isAgent ? 12 : 3,
+                      fontSize: 13,
+                      lineHeight: 1.45,
+                      background: isAgent ? 'var(--color-inset)' : 'var(--color-brand-soft)',
+                      color: isAgent ? 'var(--color-ink)' : 'var(--color-brand-ink)',
+                      border: `1px solid ${isAgent ? 'var(--color-line)' : '#dcdcfb'}`,
+                    }}
+                  >
+                    {t.content}
+                  </div>
+                  <div
+                    className="muted"
+                    style={{
+                      fontSize: 10.5,
+                      marginTop: 2,
+                      textAlign: isAgent ? 'left' : 'right',
+                      paddingInline: '0.2rem',
+                    }}
+                  >
+                    {isAgent ? 'AI agent' : 'Visitor'}
+                  </div>
                 </div>
-                <div
-                  className="muted"
-                  style={{
-                    fontSize: 10.5,
-                    marginTop: 2,
-                    textAlign: isAgent ? 'left' : 'right',
-                    paddingInline: '0.2rem',
-                  }}
-                >
-                  {isAgent ? 'AI agent' : 'Visitor'}
-                </div>
-              </div>
-            );
-          })}
+              );
+            })
+          ) : (
+            <div className="muted" style={{ fontSize: 12.5 }}>
+              No conversation recorded for this lead.
+            </div>
+          )}
         </div>
       </div>
 
