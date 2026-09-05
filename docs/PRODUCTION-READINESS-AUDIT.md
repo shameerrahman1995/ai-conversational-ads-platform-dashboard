@@ -135,3 +135,33 @@ the SSRF-safe fetch (DNS-rebinding-safe connect-time lookup, redirect re-validat
 size/time caps); secret-name log redaction; boot-time env validation; the audit
 data model; provider ports/stubs architecture; the eval-gated agent publish design;
 restricted-vertical policy packs; broad unit coverage of service/guard/policy logic.
+
+---
+
+## Remediation status (branch `feat/prod-hardening`, PR #28)
+
+**Wave 1 — P0 (done):** real JWT auth (scrypt passwords, `/v1/auth/login` + `/me`),
+global default-deny `JwtAuthGuard` (`@Public()` opt-out), `req.user`-derived org/role;
+AsyncLocalStorage request context → audit actor + `x-request-id` correlation; workers
+do real work (Nest app context) with Redis-backed idempotency; DB transactions in
+lead + publish writes; AES-256-GCM PII field encryption + retention + DSAR
+export/erase + audit read/CSV export (formula-injection-safe); env-based provider
+selection (`PROVIDERS_MODE`) with a real Anthropic Messages adapter; Dockerfiles +
+CD + `/health`/`/livez`/`/readyz`; eslint + integration/e2e tests in CI.
+
+**Wave 2 — P1 (done):** rate limiting (throttler), helmet + CORS allowlist, global
+exception filter, gated Swagger, graceful shutdown; replaced fabricated UI with live
+endpoints (admin audit, lead consent/transcript, agent publish, overview deltas,
+analytics actions); responsive drawer + modal focus trap.
+
+**Wave 3 — P2/P3 (done):** worker DLQ ops (`OpsModule`: job counts / failed list /
+retry, admin-only); org-scoped idempotency uniques (`PublishJob`, `DeliveryAttempt`
++ `orgId`); frontend route resilience (`error`/`global-error`/`not-found`/`loading`);
+responsive grid helpers replacing non-collapsing inline layouts.
+
+**Still open (infra/credential-gated — not fabricated here):** Postgres RLS
+enforcement + `orgId` on remaining child tables; pgvector retrieval; real OAuth apps
++ a secrets vault; live ad-platform / CRM / STT-TTS / image / renderer / calendar
+adapters; managed Postgres with backups/PITR; connection pooling; JSON-column schema
+validation/versioning; soft-delete for consent/audit evidence; AST-based HTML5
+creative sanitizer; a11y keyboard/ARIA completion, theming, i18n, skeleton loaders.
