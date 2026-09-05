@@ -88,7 +88,9 @@ export class PublishService {
     const snapshotId = version?.id ?? null;
 
     const existing = await db.publishJob.findUnique({
-      where: { platform_idempotencyKey: { platform: input.platform, idempotencyKey } },
+      where: {
+        orgId_platform_idempotencyKey: { orgId, platform: input.platform, idempotencyKey },
+      },
     });
 
     // Create the plan and advance the campaign into review as one unit so a plan

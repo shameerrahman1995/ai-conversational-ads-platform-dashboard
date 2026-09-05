@@ -314,10 +314,7 @@ export default function AnalyticsPage() {
         </Panel>
 
         {/* Experiments + budget */}
-        <div
-          className="grid analytics-mt"
-          style={{ gridTemplateColumns: 'minmax(0, 1.6fr) minmax(0, 1fr)' }}
-        >
+        <div className="grid grid-hero analytics-mt">
           <Panel
             title="Experiments"
             note="A/B tests on creative and agent copy"

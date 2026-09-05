@@ -29,6 +29,7 @@ import { PolicyModule } from './modules/policy/policy.module';
 import { RetentionModule } from './modules/retention/retention.module';
 import { PrivacyModule } from './modules/privacy/privacy.module';
 import { AuditLogModule } from './modules/audit-log/audit-log.module';
+import { OpsModule } from './modules/ops/ops.module';
 import { HealthModule } from './health/health.module';
 
 @Module({
@@ -59,6 +60,7 @@ import { HealthModule } from './health/health.module';
     RetentionModule,
     PrivacyModule,
     AuditLogModule,
+    OpsModule,
     HealthModule,
   ],
   providers: [

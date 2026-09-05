@@ -49,14 +49,14 @@ export class DeliveryService {
 
     const idempotencyKey = `${leadId}:${provider}`;
     const existing = await this.prisma.deliveryAttempt.findUnique({
-      where: { provider_idempotencyKey: { provider, idempotencyKey } },
+      where: { orgId_provider_idempotencyKey: { orgId, provider, idempotencyKey } },
     });
     if (existing?.status === 'accepted') return existing; // idempotent: already delivered
 
     const attempt =
       existing ??
       (await this.prisma.deliveryAttempt.create({
-        data: { leadId, provider, idempotencyKey, status: 'queued', attempt: 1 },
+        data: { orgId, leadId, provider, idempotencyKey, status: 'queued', attempt: 1 },
       }));
 
     return this.execute(orgId, attempt, lead, mappings, provider, idempotencyKey);

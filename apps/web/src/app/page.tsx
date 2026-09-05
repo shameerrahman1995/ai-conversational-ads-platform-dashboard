@@ -92,10 +92,7 @@ export default function OverviewPage() {
         </div>
 
         {/* Hero: funnel + pipeline pulse */}
-        <div
-          className="grid"
-          style={{ gridTemplateColumns: 'minmax(0, 1.75fr) minmax(0, 1fr)', marginTop: '1rem' }}
-        >
+        <div className="grid grid-hero" style={{ marginTop: '1rem' }}>
           <Panel
             title="Conversation funnel"
             note="impression → click → chat → qualified → meeting"

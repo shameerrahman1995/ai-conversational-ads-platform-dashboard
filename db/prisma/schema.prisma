@@ -426,6 +426,7 @@ model CrmMapping {
 
 model DeliveryAttempt {
   id             String         @id @default(cuid())
+  orgId          String? // tenant scope (backfilled from lead); org-scopes idempotency
   leadId         String
   provider       String
   status         DeliveryStatus @default(queued)
@@ -437,8 +438,9 @@ model DeliveryAttempt {
 
   lead Lead @relation(fields: [leadId], references: [id], onDelete: Cascade)
 
-  @@unique([provider, idempotencyKey])
+  @@unique([orgId, provider, idempotencyKey])
   @@index([leadId])
+  @@index([orgId])
 }
 
 // ---------------- Publishing ----------------
@@ -459,7 +461,7 @@ model PublishJob {
   org     Organization    @relation(fields: [orgId], references: [id], onDelete: Cascade)
   variant CreativeVariant @relation(fields: [variantId], references: [id], onDelete: Cascade)
 
-  @@unique([platform, idempotencyKey])
+  @@unique([orgId, platform, idempotencyKey])
   @@index([variantId])
   @@index([orgId])
 }

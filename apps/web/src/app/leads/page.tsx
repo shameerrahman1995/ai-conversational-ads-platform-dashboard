@@ -150,8 +150,8 @@ export default function LeadsPage() {
 
         {/* Master–detail */}
         <div
-          className="grid"
-          style={{ gridTemplateColumns: 'minmax(0, 1.65fr) minmax(0, 1fr)', marginTop: '1rem', alignItems: 'start' }}
+          className="grid grid-hero"
+          style={{ marginTop: '1rem', alignItems: 'start' }}
         >
           <Panel
             title="Inbox"

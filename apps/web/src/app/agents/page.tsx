@@ -175,10 +175,7 @@ export default function AgentsPage() {
         emptyHint="Every campaign hosts its own AI sales agent. Launch a campaign to build your first one."
       >
         {selected ? (
-          <div
-            className="grid"
-            style={{ gridTemplateColumns: 'minmax(0, 288px) minmax(0, 1fr)', gap: '1rem' }}
-          >
+          <div className="grid grid-rail-l" style={{ gap: '1rem' }}>
             <AgentRail agents={list} selectedId={selected.id} onSelect={selectAgent} />
 
             <div className="stack" style={{ gap: '1rem' }}>
