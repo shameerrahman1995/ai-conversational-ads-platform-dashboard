@@ -4,6 +4,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { AuditService } from '../../common/audit/audit.service';
 import { scopedWhere } from '../../common/tenant/scoped-where';
 import { computeLeadScore, normalizeField, type LeadFields } from './lead-scoring';
+import { encryptField, decryptField } from '../../common/crypto/field-crypto';
 
 export interface CreateLeadInput {
   conversationId?: string;
@@ -36,47 +37,55 @@ export class LeadService {
     }
 
     const score = computeLeadScore(input);
-    const lead = await this.prisma.lead.create({
-      data: {
-        orgId,
-        conversationId: input.conversationId,
-        score,
-        qualificationLevel: input.qualificationLevel,
-        agentSummary: input.agentSummary,
-        lifecycleStage: 'new',
-      },
-    });
-
-    const fieldRows = (Object.entries(input.fields) as Array<[keyof LeadFields, string | undefined]>)
-      .filter(([, v]) => !!v)
-      .map(([field, value]) => ({
-        leadId: lead.id,
-        field: String(field),
-        value: normalizeField(String(field), value as string),
-        source: input.fieldSources?.[field] ?? 'user_message',
-      }));
-    if (fieldRows.length) await this.prisma.leadFieldValue.createMany({ data: fieldRows });
-
-    if (input.consents?.length) {
-      await this.prisma.consentRecord.createMany({
-        data: input.consents.map((c) => ({
-          leadId: lead.id,
-          type: c.type,
-          granted: c.granted,
-          disclosureVersion: c.disclosureVersion,
-        })),
+    // Atomic intake: the lead row and its field/consent children commit together
+    // so a partial failure can never leave a lead without its captured data.
+    const lead = await this.prisma.$transaction(async (tx) => {
+      const created = await tx.lead.create({
+        data: {
+          orgId,
+          conversationId: input.conversationId,
+          score,
+          qualificationLevel: input.qualificationLevel,
+          agentSummary: input.agentSummary,
+          lifecycleStage: 'new',
+        },
       });
-    }
+
+      const fieldRows = (Object.entries(input.fields) as Array<[keyof LeadFields, string | undefined]>)
+        .filter(([, v]) => !!v)
+        .map(([field, value]) => ({
+          leadId: created.id,
+          field: String(field),
+          // PII encrypted at rest (AES-256-GCM); read back via decryptField.
+          value: encryptField(normalizeField(String(field), value as string)) as string,
+          source: input.fieldSources?.[field] ?? 'user_message',
+        }));
+      if (fieldRows.length) await tx.leadFieldValue.createMany({ data: fieldRows });
+
+      if (input.consents?.length) {
+        await tx.consentRecord.createMany({
+          data: input.consents.map((c) => ({
+            leadId: created.id,
+            type: c.type,
+            granted: c.granted,
+            disclosureVersion: c.disclosureVersion,
+          })),
+        });
+      }
+
+      return created;
+    });
 
     await this.audit.record({ orgId, action: 'lead.captured', target: lead.id });
     return { leadId: lead.id, deduped: false, score };
   }
 
   async listLeads(orgId: string) {
-    return this.prisma.lead.findMany({
+    const leads = await this.prisma.lead.findMany({
       where: scopedWhere(orgId),
       include: { fieldValues: true, consentRecords: true },
     });
+    return leads.map((lead) => ({ ...lead, fieldValues: this.decryptFieldValues(lead.fieldValues) }));
   }
 
   async getLead(orgId: string, id: string) {
@@ -85,7 +94,7 @@ export class LeadService {
       include: { fieldValues: true, consentRecords: true, deliveryAttempts: true },
     });
     if (!lead) throw new NotFoundException('Lead not found');
-    return lead;
+    return { ...lead, fieldValues: this.decryptFieldValues(lead.fieldValues) };
   }
 
   async assignOwner(orgId: string, id: string, ownerId: string) {
@@ -110,19 +119,28 @@ export class LeadService {
   async merge(orgId: string, sourceId: string, targetId: string) {
     await this.requireLead(orgId, sourceId);
     await this.requireLead(orgId, targetId);
-    await this.prisma.leadFieldValue.updateMany({
-      where: { leadId: sourceId },
-      data: { leadId: targetId },
+    // Reparent field/consent rows and drop the source in one unit so a merge
+    // can't half-apply (orphaned children or a lost source).
+    await this.prisma.$transaction(async (tx) => {
+      await tx.leadFieldValue.updateMany({
+        where: { leadId: sourceId },
+        data: { leadId: targetId },
+      });
+      await tx.consentRecord.updateMany({
+        where: { leadId: sourceId },
+        data: { leadId: targetId },
+      });
+      await tx.lead.delete({ where: { id: sourceId, orgId } });
     });
-    await this.prisma.consentRecord.updateMany({
-      where: { leadId: sourceId },
-      data: { leadId: targetId },
-    });
-    await this.prisma.lead.delete({ where: { id: sourceId, orgId } });
     await this.audit.record({ orgId, action: 'lead.merged', target: targetId, metadata: { sourceId } });
   }
 
   // ---- internals ----
+
+  /** Decrypt PII field values before returning them to a caller. */
+  private decryptFieldValues<T extends { value: string }>(rows: T[]): T[] {
+    return rows.map((row) => ({ ...row, value: decryptField(row.value) as string }));
+  }
 
   private async findDuplicate(orgId: string, fields: LeadFields): Promise<string | null> {
     const or: Array<{ field: string; value: string }> = [];

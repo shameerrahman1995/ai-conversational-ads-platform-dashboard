@@ -1,4 +1,5 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { Prisma } from '@acp/db';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuditService } from '../../common/audit/audit.service';
 import { scopedWhere } from '../../common/tenant/scoped-where';
@@ -34,12 +35,16 @@ export class PublishService {
     return this.registry.get(platform).capabilities({ accountId, secretRef: '' });
   }
 
-  async createPlan(orgId: string, input: CreatePlanInput) {
-    const campaign = await this.prisma.campaign.findFirst({
+  async createPlan(orgId: string, input: CreatePlanInput, tx?: Prisma.TransactionClient) {
+    // When a caller (e.g. resubmit) supplies its own transaction, run every read
+    // and write on it so the plan commits atomically with the caller's writes
+    // (and can see rows the caller created but has not yet committed).
+    const db = tx ?? this.prisma;
+    const campaign = await db.campaign.findFirst({
       where: scopedWhere(orgId, { id: input.campaignId }),
     });
     if (!campaign) throw new NotFoundException('Campaign not found');
-    const variant = await this.prisma.creativeVariant.findFirst({
+    const variant = await db.creativeVariant.findFirst({
       where: scopedWhere(orgId, { id: input.variantId, campaignId: input.campaignId }),
     });
     if (!variant) throw new NotFoundException('Variant not found');
@@ -76,36 +81,41 @@ export class PublishService {
     });
 
     // Immutable snapshot = the latest campaign version.
-    const version = await this.prisma.campaignVersion.findFirst({
+    const version = await db.campaignVersion.findFirst({
       where: { campaignId: input.campaignId },
       orderBy: { version: 'desc' },
     });
     const snapshotId = version?.id ?? null;
 
-    const existing = await this.prisma.publishJob.findUnique({
+    const existing = await db.publishJob.findUnique({
       where: { platform_idempotencyKey: { platform: input.platform, idempotencyKey } },
     });
-    const plan =
-      existing ??
-      (await this.prisma.publishJob.create({
-        data: {
-          orgId,
-          variantId: input.variantId,
-          platform: input.platform,
-          accountId: input.accountId,
-          status: 'READY_FOR_REVIEW',
-          idempotencyKey,
-          snapshotId,
-        },
-      }));
 
-    // Advance the campaign into review once it has a publish plan.
-    await this.prisma.campaign
-      .updateMany({
-        where: { id: input.campaignId, orgId, status: { in: ['DRAFT', 'GENERATED', 'VALIDATION_FAILED'] } },
-        data: { status: 'READY_FOR_REVIEW' },
-      })
-      .catch(() => undefined);
+    // Create the plan and advance the campaign into review as one unit so a plan
+    // can never exist without its campaign reflecting the review state.
+    const writes = async (t: Prisma.TransactionClient) => {
+      const plan =
+        existing ??
+        (await t.publishJob.create({
+          data: {
+            orgId,
+            variantId: input.variantId,
+            platform: input.platform,
+            accountId: input.accountId,
+            status: 'READY_FOR_REVIEW',
+            idempotencyKey,
+            snapshotId,
+          },
+        }));
+      await t.campaign
+        .updateMany({
+          where: { id: input.campaignId, orgId, status: { in: ['DRAFT', 'GENERATED', 'VALIDATION_FAILED'] } },
+          data: { status: 'READY_FOR_REVIEW' },
+        })
+        .catch(() => undefined);
+      return plan;
+    };
+    const plan = tx ? await writes(tx) : await this.prisma.$transaction(writes);
 
     await this.audit.record({
       orgId,
@@ -243,15 +253,31 @@ export class PublishService {
     });
     if (!original) throw new NotFoundException('Original variant not found');
 
-    const clone = await this.prisma.creativeVariant.create({
-      data: {
+    // Clone the variant and create its fresh plan in a single transaction so a
+    // failure while planning can never leave an orphaned clone behind.
+    const { clone, created } = await this.prisma.$transaction(async (tx) => {
+      const clone = await tx.creativeVariant.create({
+        data: {
+          orgId,
+          campaignId: original.campaignId,
+          format: original.format,
+          spec: original.spec as never,
+          status: 'draft',
+        },
+      });
+      const created = await this.createPlan(
         orgId,
-        campaignId: original.campaignId,
-        format: original.format,
-        spec: original.spec as never,
-        status: 'draft',
-      },
+        {
+          campaignId: original.campaignId,
+          variantId: clone.id,
+          platform: rejected.platform,
+          accountId: rejected.accountId ?? '',
+        },
+        tx,
+      );
+      return { clone, created };
     });
+
     await this.audit.record({
       orgId,
       action: 'creative.cloned_for_resubmit',
@@ -262,13 +288,6 @@ export class PublishService {
         rejectedRemoteId: rejected.remoteId,
         reason: rejected.reviewReason,
       },
-    });
-
-    const created = await this.createPlan(orgId, {
-      campaignId: original.campaignId,
-      variantId: clone.id,
-      platform: rejected.platform,
-      accountId: rejected.accountId ?? '',
     });
     await this.audit.record({
       orgId,

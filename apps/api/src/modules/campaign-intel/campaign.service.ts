@@ -142,12 +142,16 @@ export class CampaignService {
     extra?: Record<string, unknown>,
   ) {
     const version = (await this.prisma.campaignVersion.count({ where: { campaignId } })) + 1;
-    await this.prisma.campaignVersion.create({
-      data: { campaignId, version, snapshot: snapshot as never },
-    });
-    await this.prisma.campaign.update({
-      where: { id: campaignId, orgId },
-      data: { version, status: 'GENERATED' },
+    // Persist the new version and advance the campaign pointer atomically so the
+    // campaign's `version` can never point at a version row that failed to write.
+    await this.prisma.$transaction(async (tx) => {
+      await tx.campaignVersion.create({
+        data: { campaignId, version, snapshot: snapshot as never },
+      });
+      await tx.campaign.update({
+        where: { id: campaignId, orgId },
+        data: { version, status: 'GENERATED' },
+      });
     });
     await this.audit.record({ orgId, action, target: campaignId, metadata: { version, ...extra } });
     return { version, snapshot };

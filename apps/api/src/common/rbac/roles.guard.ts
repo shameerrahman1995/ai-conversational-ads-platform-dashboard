@@ -20,9 +20,15 @@ export class RolesGuard implements CanActivate {
     ]);
     if (!required || required.length === 0) return true;
 
-    assertDevAuthAllowed();
-    const req = context.switchToHttp().getRequest<{ headers: Record<string, string> }>();
-    const userRole = req.headers['x-user-role'] as UserRole | undefined;
+    const req = context
+      .switchToHttp()
+      .getRequest<{ headers: Record<string, string>; user?: { role?: string } }>();
+    // Prefer the verified principal's role (from JWT); else dev header.
+    let userRole = req.user?.role as UserRole | undefined;
+    if (!userRole) {
+      assertDevAuthAllowed();
+      userRole = req.headers['x-user-role'] as UserRole | undefined;
+    }
     if (!userRole || !roleSatisfies(userRole, required)) {
       throw new ForbiddenException('Insufficient role');
     }

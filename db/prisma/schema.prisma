@@ -137,6 +137,7 @@ model User {
   role      UserRole   @default(creator)
   status    UserStatus @default(invited)
   name      String?
+  passwordHash String? // scrypt hash for password login (null = invite not yet accepted)
   createdAt DateTime   @default(now())
   updatedAt DateTime   @updatedAt
 
@@ -289,6 +290,7 @@ model CreativeVariant {
   publishJobs PublishJob[]
 
   @@index([campaignId])
+  @@index([assetId])
   @@index([orgId])
 }
 
@@ -458,6 +460,7 @@ model PublishJob {
   variant CreativeVariant @relation(fields: [variantId], references: [id], onDelete: Cascade)
 
   @@unique([platform, idempotencyKey])
+  @@index([variantId])
   @@index([orgId])
 }
 
@@ -491,6 +494,7 @@ model Approval {
   org             Organization    @relation(fields: [orgId], references: [id], onDelete: Cascade)
   campaignVersion CampaignVersion @relation(fields: [campaignVersionId], references: [id], onDelete: Cascade)
 
+  @@index([campaignVersionId])
   @@index([orgId])
 }
 
@@ -624,6 +628,7 @@ model Booking {
 
   org Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
 
+  @@index([conversationId])
   @@index([orgId])
 }
 
@@ -639,6 +644,7 @@ model Handoff {
 
   org Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
 
+  @@index([conversationId])
   @@index([orgId])
 }
 

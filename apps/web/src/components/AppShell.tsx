@@ -2,10 +2,11 @@
 
 import type { ReactNode } from 'react';
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import { Icon, type IconName } from './Icon';
 import { OrgSwitcher } from './OrgSwitcher';
 import { ToastProvider } from './feedback';
+import { useOrg } from '@/lib/org-context';
 
 interface NavItem {
   href: string;
@@ -51,6 +52,16 @@ function isActive(pathname: string, href: string): boolean {
 
 export function AppShell({ children }: { children: ReactNode }) {
   const pathname = usePathname() || '/';
+  const router = useRouter();
+  const { signOut } = useOrg();
+
+  // Login renders without the app chrome.
+  if (pathname === '/login') return <>{children}</>;
+
+  function logout() {
+    signOut();
+    router.push('/login');
+  }
 
   return (
     <ToastProvider>
@@ -89,7 +100,7 @@ export function AppShell({ children }: { children: ReactNode }) {
 
         <div className="rail-foot">
           <span className="rail-avatar">SR</span>
-          <span style={{ minWidth: 0 }}>
+          <span style={{ minWidth: 0, flex: 1 }}>
             <span style={{ display: 'block', color: '#fff', fontSize: 13, fontWeight: 500 }}>
               S. Rahman
             </span>
@@ -97,6 +108,22 @@ export function AppShell({ children }: { children: ReactNode }) {
               Administrator
             </span>
           </span>
+          <button
+            onClick={logout}
+            aria-label="Sign out"
+            title="Sign out"
+            style={{
+              background: 'transparent',
+              border: 'none',
+              color: 'var(--color-rail-dim)',
+              cursor: 'pointer',
+              padding: 4,
+              display: 'grid',
+              placeItems: 'center',
+            }}
+          >
+            <Icon name="external" size={16} />
+          </button>
         </div>
       </aside>
 

@@ -2,6 +2,7 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuditService } from '../../common/audit/audit.service';
 import { scopedWhere } from '../../common/tenant/scoped-where';
+import { decryptField } from '../../common/crypto/field-crypto';
 
 /**
  * Human handoff (blueprint §6): escalate a conversation to a person, keeping the
@@ -55,10 +56,13 @@ export class HandoffService {
       where: scopedWhere(orgId, { id: conversationId }),
     });
     if (!convo) throw new NotFoundException('Conversation not found');
-    return this.prisma.message.findMany({
+    const messages = await this.prisma.message.findMany({
       where: { conversationId },
       orderBy: { createdAt: 'asc' },
     });
+    // Transcripts are encrypted at rest; decrypt for the human taking over.
+    // decryptField returns legacy plaintext untouched (backward compatible).
+    return messages.map((m) => ({ ...m, contentRef: decryptField(m.contentRef) }));
   }
 
   private async require(orgId: string, handoffId: string) {
