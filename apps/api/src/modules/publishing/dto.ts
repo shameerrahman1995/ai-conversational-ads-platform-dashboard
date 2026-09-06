@@ -20,3 +20,9 @@ export class CreatePlanDto {
   @IsString()
   accountId!: string;
 }
+
+export class ChangeVariantDto {
+  @ApiProperty({ description: 'The creative variant to bind to this plan (same campaign).' })
+  @IsString()
+  variantId!: string;
+}

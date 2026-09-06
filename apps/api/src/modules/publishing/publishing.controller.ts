@@ -1,7 +1,7 @@
 import { Body, Controller, Get, Param, Post, Query, Req, UseGuards } from '@nestjs/common';
 import { ApiHeader, ApiTags } from '@nestjs/swagger';
 import { PublishService } from './publish.service';
-import { CreatePlanDto } from './dto';
+import { CreatePlanDto, ChangeVariantDto } from './dto';
 import { TenantGuard } from '../../common/tenant/tenant.guard';
 import { RolesGuard } from '../../common/rbac/roles.guard';
 import { Roles } from '../../common/rbac/roles.decorator';
@@ -30,6 +30,17 @@ export class PublishingController {
   @Roles('creator')
   create(@Req() req: { orgId: string }, @Body() dto: CreatePlanDto) {
     return this.publish.createPlan(req.orgId, dto);
+  }
+
+  // Swap the bound creative while the plan is still in review (pre-approval).
+  @Post('publish-plans/:id/variant')
+  @Roles('creator')
+  changeVariant(
+    @Req() req: { orgId: string },
+    @Param('id') id: string,
+    @Body() dto: ChangeVariantDto,
+  ) {
+    return this.publish.changeVariant(req.orgId, id, dto.variantId);
   }
 
   // Approval separation: a publisher (not the creator) approves the immutable plan.

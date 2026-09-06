@@ -7,7 +7,9 @@ import { useApiClient } from '@/lib/api';
 import { useAsync } from '@/lib/useAsync';
 import { useToast } from '@/components/feedback';
 import { ApiClientError } from '@acp/api-client';
+import type { CreativeVariant } from '@acp/api-client';
 import { Icon } from '@/components/Icon';
+import { AdPreviewModal } from '../../creative/_components/AdPreviewModal';
 import {
   PageHeader,
   Button,
@@ -58,6 +60,8 @@ export default function CampaignDetailPage() {
 
   const [reload, setReload] = useState(0);
   const [busy, setBusy] = useState(false);
+  const [changingId, setChangingId] = useState<string | null>(null);
+  const [previewVariant, setPreviewVariant] = useState<CreativeVariant | null>(null);
 
   const { data, error, loading } = useAsync(
     () =>
@@ -66,14 +70,28 @@ export default function CampaignDetailPage() {
         client.campaigns.versions(id),
         client.creative.variants(id),
         client.publishing.plans(),
+        client.agents.list(),
       ]),
     [client, id, reload],
   );
 
-  const [campaigns, versions, variants, allPlans] = data ?? [];
+  const [campaigns, versions, variants, allPlans, agents] = data ?? [];
   const campaign = useMemo(
     () => (campaigns ?? []).find((c) => c.id === id),
     [campaigns, id],
+  );
+
+  // The one AI agent that handles click-throughs for this campaign.
+  const agent = useMemo(
+    () => (agents ?? []).find((a) => a.campaignId === id),
+    [agents, id],
+  );
+  const agentLive = agent?.status === 'live';
+
+  // Fast lookup so each launch row can show the exact creative it will ship.
+  const variantById = useMemo(
+    () => new Map((variants ?? []).map((v) => [v.id, v] as const)),
+    [variants],
   );
 
   // Latest version = the current, canonical copy.
@@ -108,6 +126,21 @@ export default function CampaignDetailPage() {
       toast.error(e instanceof ApiClientError ? e.body.message : "Couldn't publish this plan");
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function changeVariant(planId: string, variantId: string) {
+    setChangingId(planId);
+    try {
+      await client.publishing.setVariant(planId, variantId);
+      toast.success('Creative updated for this channel');
+      setReload((n) => n + 1);
+    } catch (e) {
+      toast.error(
+        e instanceof ApiClientError ? e.body.message : "Couldn't change the creative",
+      );
+    } finally {
+      setChangingId(null);
     }
   }
 
@@ -296,7 +329,7 @@ export default function CampaignDetailPage() {
             <div style={{ marginTop: '1rem' }}>
               <Panel
                 title="Launch"
-                note="approve a channel to push it live"
+                note="review the creative + agent, then approve each channel"
                 actions={
                   readyCount > 0 ? (
                     <Button variant="primary" icon="publishing" onClick={launchAll} disabled={busy}>
@@ -309,54 +342,187 @@ export default function CampaignDetailPage() {
                   ) : undefined
                 }
               >
+                {/* Click-through agent — the conversation a click opens into. */}
+                <div className="card-pad" style={{ paddingBottom: 0 }}>
+                  {agent ? (
+                    <Card
+                      className="card-pad spread"
+                      style={{ gap: '0.75rem', alignItems: 'center', flexWrap: 'wrap' }}
+                    >
+                      <div className="row" style={{ gap: '0.6rem', alignItems: 'center' }}>
+                        <span
+                          className="stat-ic"
+                          style={{
+                            background: agentLive
+                              ? 'var(--color-success-soft)'
+                              : 'var(--color-warning-soft)',
+                            color: agentLive
+                              ? 'var(--color-success)'
+                              : 'var(--color-warning)',
+                          }}
+                        >
+                          <Icon name="agents" size={16} />
+                        </span>
+                        <div>
+                          <div style={{ fontWeight: 600, fontSize: 13.5 }}>
+                            Click-through agent: {agent.name}
+                          </div>
+                          <div className="cell-muted" style={{ fontSize: 12 }}>
+                            {agent.model}
+                            {agent.voiceEnabled ? ' · voice on' : ''} — handles the
+                            conversation after someone clicks
+                          </div>
+                        </div>
+                      </div>
+                      <div className="row" style={{ gap: '0.5rem', alignItems: 'center' }}>
+                        {agentLive ? (
+                          <Chip tone="success" dot>
+                            Live
+                          </Chip>
+                        ) : (
+                          <Chip tone="warning" icon="alert">
+                            Draft — publish before launch
+                          </Chip>
+                        )}
+                        <Link href="/agents" className="btn btn-ghost btn-sm">
+                          {agentLive ? 'Manage agent' : 'Publish agent'}
+                        </Link>
+                      </div>
+                    </Card>
+                  ) : (
+                    <Card
+                      className="card-pad spread"
+                      style={{ gap: '0.75rem', alignItems: 'center', flexWrap: 'wrap' }}
+                    >
+                      <div className="row" style={{ gap: '0.6rem', alignItems: 'center' }}>
+                        <span
+                          className="stat-ic"
+                          style={{
+                            background: 'var(--color-warning-soft)',
+                            color: 'var(--color-warning)',
+                          }}
+                        >
+                          <Icon name="alert" size={16} />
+                        </span>
+                        <div>
+                          <div style={{ fontWeight: 600, fontSize: 13.5 }}>
+                            No AI agent attached
+                          </div>
+                          <div className="cell-muted" style={{ fontSize: 12 }}>
+                            Visitors who click these ads won&apos;t get a conversation.
+                            Add one to make this a conversational ad.
+                          </div>
+                        </div>
+                      </div>
+                      <Link href="/agents" className="btn btn-primary btn-sm">
+                        <Icon name="plus" size={14} /> Add an agent
+                      </Link>
+                    </Card>
+                  )}
+                </div>
+
                 {plans.length ? (
                   <div className="table-wrap">
                     <table className="table">
                       <thead>
                         <tr>
                           <th>Channel</th>
-                          <th>Account</th>
+                          <th>Creative (the ad)</th>
                           <th>Status</th>
                           <th style={{ textAlign: 'right' }}>Action</th>
                         </tr>
                       </thead>
                       <tbody>
-                        {plans.map((p) => (
-                          <tr key={p.id}>
-                            <td>
-                              <Chip tone="brand" icon="globe">
-                                {p.platform.replace(/_/g, ' ')}
-                              </Chip>
-                            </td>
-                            <td className="cell-muted">{p.accountId ?? '—'}</td>
-                            <td>
-                              <StatusChip status={p.status} />
-                            </td>
-                            <td style={{ textAlign: 'right' }}>
-                              {p.status === 'READY_FOR_REVIEW' ? (
-                                <Button
-                                  size="sm"
-                                  variant="primary"
-                                  icon="check"
-                                  onClick={() => approveAndPublish(p.id)}
-                                  disabled={busy}
-                                >
-                                  Approve &amp; publish
-                                </Button>
-                              ) : p.status === 'IN_REVIEW' ? (
-                                <span className="muted" style={{ fontSize: 12.5 }}>
-                                  Awaiting platform review
-                                </span>
-                              ) : p.status === 'LIVE' ? (
-                                <Chip tone="success" dot>
-                                  Live
+                        {plans.map((p) => {
+                          const bound = variantById.get(p.variantId) ?? null;
+                          const editable = p.status === 'READY_FOR_REVIEW';
+                          return (
+                            <tr key={p.id}>
+                              <td>
+                                <Chip tone="brand" icon="globe">
+                                  {p.platform.replace(/_/g, ' ')}
                                 </Chip>
-                              ) : (
-                                <span className="cell-muted">—</span>
-                              )}
-                            </td>
-                          </tr>
-                        ))}
+                                <div
+                                  className="cell-muted"
+                                  style={{ fontSize: 11.5, marginTop: '0.3rem' }}
+                                >
+                                  {p.accountId ?? '—'}
+                                </div>
+                              </td>
+                              <td>
+                                {(variants ?? []).length ? (
+                                  <select
+                                    className="select"
+                                    style={{ maxWidth: 260 }}
+                                    value={p.variantId}
+                                    disabled={!editable || changingId === p.id}
+                                    onChange={(e) => changeVariant(p.id, e.target.value)}
+                                    aria-label="Creative for this channel"
+                                  >
+                                    {(variants ?? []).map((v) => (
+                                      <option key={v.id} value={v.id}>
+                                        {(typeof v.spec.headline === 'string'
+                                          ? v.spec.headline
+                                          : 'Untitled')}{' '}
+                                        · {formatLabel(v.format)}
+                                      </option>
+                                    ))}
+                                  </select>
+                                ) : (
+                                  <span className="cell-muted">—</span>
+                                )}
+                                <div
+                                  className="cell-muted"
+                                  style={{ fontSize: 11.5, marginTop: '0.3rem' }}
+                                >
+                                  {editable
+                                    ? 'You can swap this until you approve'
+                                    : 'Locked — this is exactly what shipped'}
+                                </div>
+                              </td>
+                              <td>
+                                <StatusChip status={p.status} />
+                              </td>
+                              <td style={{ textAlign: 'right' }}>
+                                <div
+                                  className="row"
+                                  style={{ gap: '0.4rem', justifyContent: 'flex-end' }}
+                                >
+                                  <Button
+                                    size="sm"
+                                    variant="ghost"
+                                    icon="play"
+                                    onClick={() => setPreviewVariant(bound)}
+                                    disabled={!bound}
+                                  >
+                                    Preview
+                                  </Button>
+                                  {p.status === 'READY_FOR_REVIEW' ? (
+                                    <Button
+                                      size="sm"
+                                      variant="primary"
+                                      icon="check"
+                                      onClick={() => approveAndPublish(p.id)}
+                                      disabled={busy || changingId === p.id}
+                                    >
+                                      Approve &amp; publish
+                                    </Button>
+                                  ) : p.status === 'IN_REVIEW' ? (
+                                    <span className="muted" style={{ fontSize: 12.5 }}>
+                                      Awaiting platform review
+                                    </span>
+                                  ) : p.status === 'LIVE' ? (
+                                    <Chip tone="success" dot>
+                                      Live
+                                    </Chip>
+                                  ) : (
+                                    <span className="cell-muted">—</span>
+                                  )}
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })}
                       </tbody>
                     </table>
                   </div>
@@ -546,6 +712,15 @@ export default function CampaignDetailPage() {
           </>
         )}
       </DataState>
+
+      {/* Ad → chat preview: exactly what a visitor sees and can talk to. */}
+      <AdPreviewModal
+        open={previewVariant !== null}
+        onClose={() => setPreviewVariant(null)}
+        variant={previewVariant}
+        agentId={agent?.id}
+        agentName={agent?.name}
+      />
     </div>
   );
 }

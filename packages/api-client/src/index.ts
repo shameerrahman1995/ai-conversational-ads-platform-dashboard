@@ -407,6 +407,11 @@ export function createApiClient(opts: ClientOptions) {
         request<PublishPlan>(`/v1/publish-plans/${id}/pause`, { method: 'POST' }),
       resubmit: (id: string) =>
         request<Record<string, unknown>>(`/v1/publish-plans/${id}/resubmit`, { method: 'POST' }),
+      setVariant: (id: string, variantId: string) =>
+        request<PublishPlan>(`/v1/publish-plans/${id}/variant`, {
+          method: 'POST',
+          body: JSON.stringify({ variantId }),
+        }),
     },
 
     leads: {
