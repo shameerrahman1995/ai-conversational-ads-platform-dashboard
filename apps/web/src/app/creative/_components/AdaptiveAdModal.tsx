@@ -14,12 +14,12 @@ const TIER_LABEL: Record<ModelOption['tier'], string> = {
   fast: 'Fast',
 };
 
-/** Tones Demo Advertiser Co. (roofing/HVAC) speaks in across the ad set. */
+/** Tones the advertiser can speak in across the ad set. */
 const BRAND_VOICES = [
   'Confident & local',
   'Warm & consultative',
   'Straightforward',
-  'Urgent — storm season',
+  'Urgent — limited time',
 ];
 
 /** Placements checked by default — the two highest-reach formats. */
@@ -34,12 +34,16 @@ export function AdaptiveAdModal({
   open,
   onClose,
   campaignId,
+  campaignName,
+  advertiser = 'Demo Advertiser Co.',
   models,
   onCreated,
 }: {
   open: boolean;
   onClose: () => void;
   campaignId: string;
+  campaignName?: string;
+  advertiser?: string;
   models: ModelOption[];
   onCreated: () => void;
 }) {
@@ -90,7 +94,9 @@ export function AdaptiveAdModal({
         model,
         brandVoice,
       });
-      toast.success(`Generated ${created.length} adaptive variants`);
+      toast.success(`Generated ${created.length} adaptive variant${created.length === 1 ? '' : 's'} (copy + layout)`);
+      // Honest nudge: generation writes copy/layout only — no imagery/video/audio.
+      toast.toast('Open Customize on each variant to add imagery, video, or audio.', 'info');
       onCreated();
     } catch (e) {
       if (e instanceof ApiClientError) {
@@ -120,8 +126,20 @@ export function AdaptiveAdModal({
         </>
       }
     >
+      {campaignName ? (
+        <div
+          className="row"
+          style={{ gap: '0.4rem', fontSize: 12.5, color: 'var(--color-ink-2)', marginBottom: '-0.15rem' }}
+        >
+          <Icon name="creative" size={13} />
+          <span>
+            Adding to: <strong>{campaignName}</strong>
+          </span>
+        </div>
+      ) : null}
+
       <p className="muted" style={{ fontSize: 13, lineHeight: 1.5, margin: 0 }}>
-        One pass writes grounded copy for Demo Advertiser Co. and adapts it across every placement
+        One pass writes grounded copy for {advertiser} and adapts it across every placement
         you pick. Claims land unverified until each is linked to an approved source.
       </p>
 
@@ -175,6 +193,15 @@ export function AdaptiveAdModal({
             );
           })}
         </div>
+        <span
+          className="row"
+          style={{ gap: '0.35rem', fontSize: 12, color: 'var(--color-ink-3)', lineHeight: 1.4, marginTop: '0.4rem' }}
+        >
+          <Icon name="alert" size={12} style={{ flex: 'none' }} />
+          {mediaType === 'none'
+            ? 'Text-only ad — copy and layout, no media to add.'
+            : `Copy + layout only — no ${mediaType} is generated. Add the ${mediaType} in Customize on each variant after generating.`}
+        </span>
       </div>
 
       {/* Formats (adaptive placements) ------------------------------- */}
@@ -348,7 +375,7 @@ export function AdaptiveAdModal({
           ))}
         </select>
         <span className="row" style={{ gap: '0.35rem', fontSize: 12, color: 'var(--color-ink-3)' }}>
-          <Icon name="creative" size={12} /> Sets the tone Demo Advertiser Co. speaks in across every placement.
+          <Icon name="creative" size={12} /> Sets the tone {advertiser} speaks in across every placement.
         </span>
       </label>
     </Modal>

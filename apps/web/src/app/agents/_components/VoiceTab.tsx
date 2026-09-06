@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import type { AgentSettings, AgentVoiceSettings } from '@acp/api-client';
 import { Card, Chip } from '@/components/ui';
 import { IconTile, SectionTitle, Toggle, SaveBar, DisclosureNote } from './primitives';
@@ -68,7 +69,7 @@ export function VoiceTab({
 
               <div className="field">
                 <label className="field-label" htmlFor="voice-id">
-                  Voice ID
+                  Voice ID (from your provider)
                 </label>
                 <input
                   id="voice-id"
@@ -77,6 +78,32 @@ export function VoiceTab({
                   placeholder="e.g. ava_en"
                   onChange={(e) => set({ voiceId: e.target.value })}
                 />
+                <span className="muted" style={{ fontSize: 12 }}>
+                  Paste the voice identifier from your provider&rsquo;s library. There&rsquo;s no in-app
+                  audio preview yet — sample voices in the provider&rsquo;s console.
+                </span>
+              </div>
+            </div>
+
+            <div
+              className="row"
+              style={{
+                gap: '0.6rem',
+                alignItems: 'flex-start',
+                padding: '0.8rem 0.9rem',
+                borderRadius: 'var(--radius-control)',
+                border: '1px solid var(--color-line)',
+                background: 'var(--color-surface-2)',
+              }}
+            >
+              <IconTile icon="bell" tone="info" size={30} />
+              <div style={{ fontSize: 12.5, color: 'var(--color-ink-2)', lineHeight: 1.5 }}>
+                Voice replies only work once the provider is connected. Connect{' '}
+                {provider === 'deepgram' ? 'Deepgram' : 'ElevenLabs'} (or another voice provider) on{' '}
+                <Link href="/connections" style={{ color: 'var(--color-brand)', fontWeight: 600 }}>
+                  Connections
+                </Link>{' '}
+                to enable spoken output in live conversations.
               </div>
             </div>
 

@@ -407,6 +407,15 @@ export function createApiClient(opts: ClientOptions) {
         request<PublishPlan>(`/v1/publish-plans/${id}/pause`, { method: 'POST' }),
       resubmit: (id: string) =>
         request<Record<string, unknown>>(`/v1/publish-plans/${id}/resubmit`, { method: 'POST' }),
+      setVariant: (id: string, variantId: string) =>
+        request<PublishPlan>(`/v1/publish-plans/${id}/variant`, {
+          method: 'POST',
+          body: JSON.stringify({ variantId }),
+        }),
+      resume: (id: string) =>
+        request<PublishPlan>(`/v1/publish-plans/${id}/resume`, { method: 'POST' }),
+      cancel: (id: string) =>
+        request<PublishPlan>(`/v1/publish-plans/${id}/cancel`, { method: 'POST' }),
     },
 
     leads: {
@@ -463,6 +472,26 @@ export function createApiClient(opts: ClientOptions) {
       status: () => request<BudgetStatus>('/v1/budget'),
       setBudget: (body: { monthlyLimitUsd: number; alertThresholdPct?: number }) =>
         request<BudgetStatus>('/v1/budget', { method: 'POST', body: JSON.stringify(body) }),
+    },
+
+    // DSAR / data-subject actions (admin). Export or erase one lead's PII.
+    privacy: {
+      export: (leadId: string) =>
+        request<Record<string, unknown>>('/v1/privacy/export', {
+          method: 'POST',
+          body: JSON.stringify({ leadId }),
+        }),
+      erase: (leadId: string) =>
+        request<Record<string, unknown>>('/v1/privacy/erase', {
+          method: 'POST',
+          body: JSON.stringify({ leadId }),
+        }),
+    },
+
+    // Retention sweep (admin): apply the org's retention policy now.
+    retention: {
+      run: () =>
+        request<Record<string, unknown>>('/v1/admin/retention/run', { method: 'POST' }),
     },
 
     sources: {

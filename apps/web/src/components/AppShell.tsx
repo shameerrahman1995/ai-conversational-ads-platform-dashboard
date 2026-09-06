@@ -1,12 +1,16 @@
 'use client';
 
-import { useState, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { Icon, type IconName } from './Icon';
 import { OrgSwitcher } from './OrgSwitcher';
+import { SearchBar } from './SearchBar';
 import { ToastProvider } from './feedback';
 import { useOrg } from '@/lib/org-context';
+
+/** Dev-only tenant/role switcher must never ship to production users. */
+const IS_DEV = process.env.NODE_ENV !== 'production';
 
 interface NavItem {
   href: string;
@@ -53,11 +57,21 @@ function isActive(pathname: string, href: string): boolean {
 export function AppShell({ children }: { children: ReactNode }) {
   const pathname = usePathname() || '/';
   const router = useRouter();
-  const { signOut } = useOrg();
+  const { orgId, token, ready, signOut } = useOrg();
   const [drawer, setDrawer] = useState(false);
+
+  // Client-side auth guard. Only acts once localStorage is hydrated (`ready`),
+  // so it never fires during the pre-hydration window and never touches /login.
+  const unauthenticated = ready && !token && pathname !== '/login';
+  useEffect(() => {
+    if (unauthenticated) router.replace('/login');
+  }, [unauthenticated, router]);
 
   // Login renders without the app chrome.
   if (pathname === '/login') return <>{children}</>;
+
+  // Redirecting to /login — don't flash the authenticated shell.
+  if (unauthenticated) return null;
 
   function logout() {
     signOut();
@@ -111,21 +125,9 @@ export function AppShell({ children }: { children: ReactNode }) {
               Administrator
             </span>
           </span>
-          <button
-            onClick={logout}
-            aria-label="Sign out"
-            title="Sign out"
-            style={{
-              background: 'transparent',
-              border: 'none',
-              color: 'var(--color-rail-dim)',
-              cursor: 'pointer',
-              padding: 4,
-              display: 'grid',
-              placeItems: 'center',
-            }}
-          >
-            <Icon name="external" size={16} />
+          <button onClick={logout} aria-label="Sign out" title="Sign out" className="rail-signout">
+            <Icon name="external" size={15} />
+            Sign out
           </button>
         </div>
       </aside>
@@ -140,23 +142,18 @@ export function AppShell({ children }: { children: ReactNode }) {
           >
             <Icon name="menu" size={18} />
           </button>
-          <div className="topbar-search" aria-hidden="true">
-            <Icon name="search" size={15} />
-            <span>Search campaigns, leads, agents…</span>
-          </div>
+          <SearchBar />
 
           <div className="topbar-actions">
-            <span className="ctx" title="Active advertiser context">
+            <span className="ctx" title="Active organization">
               <span className="ctx-dot" />
-              Demo Advertiser Co.
+              {orgId}
             </span>
-            <span className="chip chip-neutral">
-              <Icon name="globe" size={12} /> Google Ads
-            </span>
-            <OrgSwitcher />
-            <button className="icon-btn" aria-label="Notifications" type="button">
-              <Icon name="bell" size={17} />
-            </button>
+            {IS_DEV ? (
+              <div className="topbar-orgswitcher">
+                <OrgSwitcher />
+              </div>
+            ) : null}
           </div>
         </header>
 

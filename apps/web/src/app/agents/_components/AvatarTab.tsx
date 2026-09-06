@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import type { AgentSettings, AgentAvatarSettings } from '@acp/api-client';
 import { Card, Chip } from '@/components/ui';
 import { IconTile, SectionTitle, Toggle, SaveBar, DisclosureNote } from './primitives';
@@ -39,7 +40,7 @@ export function AvatarTab({
           <div className="row" style={{ gap: '0.7rem', alignItems: 'flex-start' }}>
             <IconTile icon="users" tone={avatar.enabled ? 'brand' : 'neutral'} size={38} />
             <div>
-              <SectionTitle hint="Show a talking on-screen avatar in the chat window.">
+              <SectionTitle hint="Choose the avatar provider and render style for the chat window.">
                 On-screen avatar
               </SectionTitle>
               <Chip tone={avatar.enabled ? 'success' : 'neutral'} dot>
@@ -112,6 +113,28 @@ export function AvatarTab({
                     </button>
                   );
                 })}
+              </div>
+            </div>
+
+            <div
+              className="row"
+              style={{
+                gap: '0.6rem',
+                alignItems: 'flex-start',
+                padding: '0.8rem 0.9rem',
+                borderRadius: 'var(--radius-control)',
+                border: '1px solid var(--color-line)',
+                background: 'var(--color-surface-2)',
+              }}
+            >
+              <IconTile icon="users" tone="info" size={30} />
+              <div style={{ fontSize: 12.5, color: 'var(--color-ink-2)', lineHeight: 1.5 }}>
+                This sets the provider and render style only. Picking a specific avatar likeness — or
+                uploading your own — happens in the provider&rsquo;s studio after you connect it on{' '}
+                <Link href="/connections" style={{ color: 'var(--color-brand)', fontWeight: 600 }}>
+                  Connections
+                </Link>
+                . The avatar won&rsquo;t appear in live chats until that provider is connected.
               </div>
             </div>
 

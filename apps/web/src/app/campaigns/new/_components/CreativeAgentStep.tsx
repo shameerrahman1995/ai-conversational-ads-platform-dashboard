@@ -3,10 +3,10 @@
 import { Icon } from '@/components/Icon';
 import { FORMATS, BRAND_VOICES, type StepProps } from './types';
 
-/** Where each placement actually runs — grounds the choice for a roofing/HVAC advertiser. */
+/** Where each placement actually runs — grounds the choice for the advertiser. */
 const FORMAT_HINTS: Record<string, string> = {
   image_1_1: 'Google & Meta feeds — the everyday workhorse.',
-  image_9_16: 'Reels, Stories & TikTok — storm-season demand.',
+  image_9_16: 'Reels, Stories & TikTok — mobile-first reach.',
   image_16_9: 'Search display & YouTube pre-roll.',
   image_4_5: 'Instagram feed — tallest in-feed placement.',
 };
@@ -49,7 +49,7 @@ export function CreativeAgentStep({ state, patch, models }: StepProps) {
           type="url"
           inputMode="url"
           value={state.sourceUri}
-          placeholder="https://yourroofing.com/services/storm-damage-repair"
+          placeholder="https://yourcompany.com/services"
           onChange={(e) => patch({ sourceUri: e.target.value })}
         />
         <span className="muted" style={{ fontSize: 12.5 }}>
@@ -137,7 +137,7 @@ export function CreativeAgentStep({ state, patch, models }: StepProps) {
           ))}
         </select>
         <span className="muted" style={{ fontSize: 12.5 }}>
-          Sets the tone for headlines, ad copy and how the agent talks to homeowners.
+          Sets the tone for headlines, ad copy and how the agent talks to visitors.
         </span>
       </label>
 
@@ -278,8 +278,29 @@ export function CreativeAgentStep({ state, patch, models }: StepProps) {
               />
               <span style={{ fontSize: 13, color: 'var(--color-info-ink)' }}>
                 Post-click, the agent greets each visitor, answers only from your approved facts — never
-                inventing pricing or warranty terms — and books qualified roofing &amp; HVAC leads straight
-                onto the calendar.
+                inventing pricing or warranty terms — and books qualified leads straight onto the
+                calendar.
+              </span>
+            </div>
+
+            <div
+              className="row"
+              style={{
+                gap: '0.6rem',
+                alignItems: 'flex-start',
+                padding: '0.85rem 1rem',
+                borderRadius: 'var(--radius-card)',
+                background: 'var(--color-warning-soft)',
+              }}
+            >
+              <Icon
+                name="alert"
+                size={16}
+                style={{ color: 'var(--color-warning)', flex: 'none', marginTop: 2 }}
+              />
+              <span style={{ fontSize: 13, color: 'var(--color-warning-ink)' }}>
+                The agent is created as a <strong>draft</strong>. Review and publish it on the Agents
+                page before it can answer click-throughs — until then, clicks land on your page as usual.
               </span>
             </div>
           </div>

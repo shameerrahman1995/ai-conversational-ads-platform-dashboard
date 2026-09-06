@@ -1,17 +1,8 @@
 'use client';
 
 import { Icon } from '@/components/Icon';
+import { VERTICAL_OPTIONS, isRestrictedVertical } from '@/lib/taxonomy';
 import { OBJECTIVES, type StepProps } from './types';
-
-const RESTRICTED = [
-  'healthcare',
-  'finance',
-  'employment',
-  'housing',
-  'legal',
-  'politics',
-  'age_restricted',
-];
 
 export function ObjectiveStep({ state, patch }: StepProps) {
   return (
@@ -66,7 +57,7 @@ export function ObjectiveStep({ state, patch }: StepProps) {
           <input
             className="input"
             value={state.name}
-            placeholder="e.g. Spring Roofing Promo"
+            placeholder="e.g. Spring Promo"
             onChange={(e) => patch({ name: e.target.value })}
             autoFocus
           />
@@ -78,17 +69,16 @@ export function ObjectiveStep({ state, patch }: StepProps) {
             value={state.vertical}
             onChange={(e) => patch({ vertical: e.target.value })}
           >
-            <option value="none">Standard (no restriction)</option>
-            {RESTRICTED.map((v) => (
-              <option key={v} value={v}>
-                {v.replace(/_/g, ' ')} (restricted)
+            {VERTICAL_OPTIONS.map((v) => (
+              <option key={v.value} value={v.value}>
+                {v.label}
               </option>
             ))}
           </select>
         </label>
       </div>
 
-      {state.vertical !== 'none' ? (
+      {isRestrictedVertical(state.vertical) ? (
         <div className="chip chip-warning" style={{ alignSelf: 'flex-start' }}>
           <Icon name="shield" size={12} /> Restricted vertical — every claim needs human review before publishing
         </div>

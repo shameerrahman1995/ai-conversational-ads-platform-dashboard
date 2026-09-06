@@ -320,6 +320,102 @@ export class PublishService {
     return updated;
   }
 
+  /** Resume a paused plan back to LIVE (the counterpart to pause). */
+  async resume(orgId: string, planId: string) {
+    const plan = await this.requirePlan(orgId, planId);
+    if (plan.status !== 'PAUSED') {
+      throw new BadRequestException(`Only a paused plan can be resumed (status ${plan.status}).`);
+    }
+    // Stub connectors have no resume; a live adapter would re-enable the remote ad here.
+    if (plan.remoteId) {
+      const connector = this.registry.get(plan.platform) as { resume?: (i: { remoteId: string; secretRef: string }) => Promise<void> };
+      await connector.resume?.({ remoteId: plan.remoteId, secretRef: '' });
+    }
+    const updated = await this.prisma.publishJob.update({
+      where: { id: planId, orgId },
+      data: { status: 'LIVE' },
+    });
+    await this.audit.record({ orgId, action: 'publish.resumed', target: planId });
+    return updated;
+  }
+
+  /** Cancel/archive a non-live plan (remove it from the review queue). */
+  async cancel(orgId: string, planId: string) {
+    const plan = await this.requirePlan(orgId, planId);
+    if (plan.status === 'LIVE') {
+      throw new BadRequestException('Pause a live plan before cancelling it.');
+    }
+    if (plan.status === 'ARCHIVED') return plan;
+    const updated = await this.prisma.publishJob.update({
+      where: { id: planId, orgId },
+      data: { status: 'ARCHIVED' },
+    });
+    await this.audit.record({ orgId, action: 'publish.cancelled', target: planId });
+    return updated;
+  }
+
+  /**
+   * Swap the creative a plan will ship, allowed only while the plan is still in
+   * review (before approval). This preserves the "what you approve is exactly what
+   * ships" guarantee: once approved, the snapshot is immutable — swap earlier, or
+   * resubmit. The new variant must belong to the same campaign and re-clears the
+   * restricted-vertical policy gate.
+   */
+  async changeVariant(orgId: string, planId: string, variantId: string) {
+    const plan = await this.requirePlan(orgId, planId);
+    if (plan.status !== 'READY_FOR_REVIEW') {
+      throw new BadRequestException(
+        'Only a plan still in review can change its creative. Pause or resubmit instead.',
+      );
+    }
+    if (variantId === plan.variantId) return plan; // no-op
+
+    const current = await this.prisma.creativeVariant.findFirst({
+      where: scopedWhere(orgId, { id: plan.variantId }),
+    });
+    if (!current) throw new NotFoundException('Current variant not found');
+    const next = await this.prisma.creativeVariant.findFirst({
+      where: scopedWhere(orgId, { id: variantId, campaignId: current.campaignId }),
+    });
+    if (!next) throw new NotFoundException('Variant not found for this campaign');
+
+    // Re-run the restricted-vertical policy gate against the new creative.
+    const campaign = await this.prisma.campaign.findFirst({
+      where: scopedWhere(orgId, { id: current.campaignId }),
+    });
+    const policy = this.policy.evaluateCampaignCopy({
+      vertical: campaign?.vertical ?? null,
+      spec: next.spec,
+    });
+    if (!policy.ok) {
+      throw new BadRequestException(
+        `Policy blocked creative swap: ${this.policy.blockingReasons(policy).join('; ')}`,
+      );
+    }
+
+    const idempotencyKey = `${next.id}:${plan.platform}`;
+    try {
+      const updated = await this.prisma.publishJob.update({
+        where: { id: planId, orgId },
+        data: { variantId: next.id, idempotencyKey },
+      });
+      await this.audit.record({
+        orgId,
+        action: 'publish.variant_changed',
+        target: planId,
+        metadata: { from: plan.variantId, to: next.id },
+      });
+      return updated;
+    } catch (e) {
+      if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
+        throw new BadRequestException(
+          'A publish plan for that creative already exists on this channel.',
+        );
+      }
+      throw e;
+    }
+  }
+
   async listPlans(orgId: string) {
     return this.prisma.publishJob.findMany({ where: scopedWhere(orgId) });
   }

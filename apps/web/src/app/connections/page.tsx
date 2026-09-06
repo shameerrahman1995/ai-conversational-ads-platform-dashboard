@@ -36,7 +36,7 @@ const CATALOG: Category[] = [
       {
         key: 'google_ads',
         name: 'Google Ads',
-        blurb: 'Search & Performance Max for high-intent roofing and HVAC queries.',
+        blurb: 'Search & Performance Max for high-intent queries.',
       },
       {
         key: 'meta',
@@ -46,12 +46,12 @@ const CATALOG: Category[] = [
       {
         key: 'tiktok',
         name: 'TikTok Ads',
-        blurb: 'Short-form Spark Ads for storm-damage and AC-repair demand.',
+        blurb: 'Short-form Spark Ads for mobile-first discovery.',
       },
       {
         key: 'microsoft',
         name: 'Microsoft Advertising',
-        blurb: 'Bing search coverage for older, higher-value homeowners.',
+        blurb: 'Bing search coverage for higher-value customers.',
       },
       {
         key: 'amazon_dsp',
@@ -61,7 +61,7 @@ const CATALOG: Category[] = [
       {
         key: 'linkedin',
         name: 'LinkedIn Ads',
-        blurb: 'Reach property managers and facilities buyers with B2B lead forms.',
+        blurb: 'Reach professional and B2B audiences with lead forms.',
       },
     ],
   },
@@ -91,18 +91,18 @@ const CATALOG: Category[] = [
   {
     key: 'calendar',
     label: 'Calendar',
-    note: 'Where the AI agent books estimates and consultations',
+    note: 'Where the AI agent books meetings and consultations',
     icon: 'clock',
     providers: [
       {
         key: 'google_calendar',
         name: 'Google Calendar',
-        blurb: "Let the agent book on-site estimates on your crew's calendar.",
+        blurb: 'Let the agent book meetings on your team calendar.',
       },
       {
         key: 'calendly',
         name: 'Calendly',
-        blurb: 'Hand qualified homeowners a scheduling link to self-book.',
+        blurb: 'Hand qualified leads a scheduling link to self-book.',
       },
     ],
   },
@@ -115,7 +115,7 @@ const CATALOG: Category[] = [
       {
         key: 'elevenlabs',
         name: 'ElevenLabs',
-        blurb: 'Natural text-to-speech so the agent can answer homeowners out loud.',
+        blurb: 'Natural text-to-speech so the agent can answer out loud.',
       },
       {
         key: 'deepgram',
@@ -125,7 +125,7 @@ const CATALOG: Category[] = [
       {
         key: 'heygen',
         name: 'HeyGen',
-        blurb: 'Render a talking avatar that walks homeowners through an estimate.',
+        blurb: 'Render a talking avatar that walks visitors through an offer.',
       },
       {
         key: 'd_id',
@@ -196,7 +196,12 @@ export default function ConnectionsPage() {
         }
       />
 
-      <DataState loading={loading} error={error} loadingLabel="Loading your connections…">
+      <DataState
+        loading={loading}
+        error={error}
+        loadingLabel="Loading your connections…"
+        onRetry={refetch}
+      >
         {/* Summary row */}
         <div className="grid grid-kpi">
           <StatCard
@@ -296,12 +301,12 @@ export default function ConnectionsPage() {
               <div>
                 <h2 style={{ fontSize: 16, lineHeight: 1.2 }}>Webhooks</h2>
                 <div className="muted" style={{ fontSize: 12.5 }}>
-                  Send events to your own systems in real time
+                  Developer feature — endpoints are configured via the API, not the dashboard
                 </div>
               </div>
             </div>
-            <Chip tone={webhookConn ? 'success' : 'neutral'} dot={!!webhookConn}>
-              {webhookConn ? '1 endpoint active' : 'No endpoints yet'}
+            <Chip tone="info" icon="doc">
+              {webhookConn ? '1 endpoint active · via API' : 'Configured via API'}
             </Chip>
           </div>
           <Card className="card-pad">
@@ -314,7 +319,8 @@ export default function ConnectionsPage() {
                   <div style={{ fontWeight: 600, fontSize: 14.5 }}>{WEBHOOK.name}</div>
                   <div className="muted" style={{ fontSize: 13, marginTop: 2, maxWidth: '62ch' }}>
                     {WEBHOOK.blurb} Every request is signed with HMAC-SHA256 and failed deliveries
-                    retry with exponential backoff.
+                    retry with exponential backoff. Endpoints are created and rotated through the
+                    ConvoAds API — there is no add-endpoint form in the dashboard.
                   </div>
                 </div>
               </div>

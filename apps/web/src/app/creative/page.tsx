@@ -1,10 +1,11 @@
 'use client';
 
 import { useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { useApiClient } from '@/lib/api';
 import { useAsync } from '@/lib/useAsync';
 import { Icon } from '@/components/Icon';
-import { PageHeader, Button, Card, Chip, StatusChip, DataState, Meter } from '@/components/ui';
+import { PageHeader, Button, Card, Chip, StatusChip, DataState, EmptyState, Meter } from '@/components/ui';
 import { useToast } from '@/components/feedback';
 import { ApiClientError } from '@acp/api-client';
 import type { CampaignVersion, CreativeVariant, ModelOption } from '@acp/api-client';
@@ -40,13 +41,15 @@ function latestGeneration(
 export default function CreativeStudioPage() {
   const client = useApiClient();
   const toast = useToast();
+  const router = useRouter();
   const [reload, setReload] = useState(0);
+  const [campReload, setCampReload] = useState(0);
 
   const {
     data: campaigns,
     error: campErr,
     loading: campLoading,
-  } = useAsync(() => client.campaigns.list(), [client]);
+  } = useAsync(() => client.campaigns.list(), [client, campReload]);
 
   const { data: agents } = useAsync(() => client.agents.list(), [client]);
   const { data: modelData } = useAsync(() => client.agents.models(), [client]);
@@ -81,6 +84,12 @@ export default function CreativeStudioPage() {
   const sourceLinked = list.filter((v) => v.status.toLowerCase() === 'approved').length;
   const pct = total ? (sourceLinked / total) * 100 : 0;
   const gridClass = total >= 3 ? 'grid-3' : 'grid-2';
+
+  // Brand/advertiser identity for previews + generated copy. Sourced from the
+  // selected campaign; the demo literal is only a last-resort fallback.
+  const campaignName = campaign?.name?.trim() || (campaign ? titleCase(campaign.objective) : '');
+  const advertiser = campaign?.name?.trim() || 'Demo Advertiser Co.';
+  const campaignsEmpty = !campLoading && !campErr && (campaigns?.length ?? 0) === 0;
   const restrictedLabel =
     campaign?.vertical && RESTRICTED.has(campaign.vertical.toLowerCase())
       ? titleCase(campaign.vertical)
@@ -120,10 +129,22 @@ export default function CreativeStudioPage() {
   async function handleRender(variant: CreativeVariant) {
     try {
       await client.creative.render(variant.id);
-      toast.success('Variant rendered');
+      toast.success('Placement assets built');
       setReload((n) => n + 1);
     } catch (e) {
       toast.error(errMessage(e, 'Could not render this variant.'));
+    }
+  }
+
+  // Approve a variant: flips its status to 'approved', which is what the
+  // "Source-linked claims" meter counts and what clears a variant to publish.
+  async function handleApprove(variant: CreativeVariant) {
+    try {
+      await client.creative.updateVariant(variant.id, { status: 'approved' });
+      toast.success('Variant approved — cleared to publish');
+      setReload((n) => n + 1);
+    } catch (e) {
+      toast.error(errMessage(e, 'Could not approve this variant.'));
     }
   }
 
@@ -157,11 +178,26 @@ export default function CreativeStudioPage() {
       <DataState
         loading={campLoading}
         error={campErr}
-        isEmpty={!campLoading && !campErr && (campaigns?.length ?? 0) === 0}
+        onRetry={() => setCampReload((n) => n + 1)}
         loadingLabel="Loading Creative Studio…"
-        emptyTitle="No campaigns to design for yet"
-        emptyHint="Create a campaign first — then generate creative concepts grounded in its sources."
       >
+        {campaignsEmpty ? (
+          <EmptyState
+            icon="database"
+            title="No campaigns to design for yet"
+            hint="Create a campaign first — then generate creative concepts grounded in its sources."
+            action={
+              <Button
+                variant="primary"
+                icon="plus"
+                onClick={() => router.push('/campaigns/new')}
+              >
+                Create campaign
+              </Button>
+            }
+          />
+        ) : (
+          <>
         {/* Studio bar: campaign selector · identity · provenance summary */}
         <Card className="card-pad">
           <div
@@ -260,6 +296,7 @@ export default function CreativeStudioPage() {
           <DataState
             loading={varLoading}
             error={varErr}
+            onRetry={() => setReload((n) => n + 1)}
             isEmpty={!varLoading && !varErr && total === 0}
             loadingLabel="Loading variants…"
             emptyTitle={
@@ -277,8 +314,11 @@ export default function CreativeStudioPage() {
                   onRender={handleRender}
                   onEdit={() => setEditorVariant(v)}
                   onDelete={() => handleDelete(v)}
+                  onApprove={handleApprove}
                   agentId={agent?.id}
                   agentName={agent?.name}
+                  campaignId={activeId}
+                  advertiser={advertiser}
                 />
               ))}
             </div>
@@ -307,6 +347,8 @@ export default function CreativeStudioPage() {
             </div>
           </div>
         </Card>
+          </>
+        )}
       </DataState>
 
       {activeId ? (
@@ -314,6 +356,8 @@ export default function CreativeStudioPage() {
           open={adaptiveOpen}
           onClose={() => setAdaptiveOpen(false)}
           campaignId={activeId}
+          campaignName={campaignName}
+          advertiser={advertiser}
           models={models}
           onCreated={() => {
             setAdaptiveOpen(false);
@@ -326,6 +370,7 @@ export default function CreativeStudioPage() {
         open={editorVariant !== null}
         onClose={() => setEditorVariant(null)}
         variant={editorVariant}
+        advertiser={advertiser}
         onSaved={() => {
           setEditorVariant(null);
           setReload((n) => n + 1);
@@ -336,6 +381,7 @@ export default function CreativeStudioPage() {
         open={nvOpen}
         onClose={() => (nvBusy ? undefined : setNvOpen(false))}
         busy={nvBusy}
+        campaignName={campaignName}
         onCreate={handleCreateVariant}
       />
     </div>

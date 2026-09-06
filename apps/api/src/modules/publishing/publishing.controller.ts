@@ -1,7 +1,7 @@
 import { Body, Controller, Get, Param, Post, Query, Req, UseGuards } from '@nestjs/common';
 import { ApiHeader, ApiTags } from '@nestjs/swagger';
 import { PublishService } from './publish.service';
-import { CreatePlanDto } from './dto';
+import { CreatePlanDto, ChangeVariantDto } from './dto';
 import { TenantGuard } from '../../common/tenant/tenant.guard';
 import { RolesGuard } from '../../common/rbac/roles.guard';
 import { Roles } from '../../common/rbac/roles.decorator';
@@ -32,6 +32,17 @@ export class PublishingController {
     return this.publish.createPlan(req.orgId, dto);
   }
 
+  // Swap the bound creative while the plan is still in review (pre-approval).
+  @Post('publish-plans/:id/variant')
+  @Roles('creator')
+  changeVariant(
+    @Req() req: { orgId: string },
+    @Param('id') id: string,
+    @Body() dto: ChangeVariantDto,
+  ) {
+    return this.publish.changeVariant(req.orgId, id, dto.variantId);
+  }
+
   // Approval separation: a publisher (not the creator) approves the immutable plan.
   @Post('publish-plans/:id/approve')
   @Roles('publisher')
@@ -56,6 +67,19 @@ export class PublishingController {
   @Roles('publisher')
   pause(@Req() req: { orgId: string }, @Param('id') id: string) {
     return this.publish.pause(req.orgId, id);
+  }
+
+  @Post('publish-plans/:id/resume')
+  @Roles('publisher')
+  resume(@Req() req: { orgId: string }, @Param('id') id: string) {
+    return this.publish.resume(req.orgId, id);
+  }
+
+  // Cancel/archive a non-live plan (mistaken or stuck) — removes it from the queue.
+  @Post('publish-plans/:id/cancel')
+  @Roles('creator')
+  cancel(@Req() req: { orgId: string }, @Param('id') id: string) {
+    return this.publish.cancel(req.orgId, id);
   }
 
   // Creative-rejection recovery: clone the rejected variant into a fresh plan,

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui';
+import { Icon } from '@/components/Icon';
 import { Modal } from '@/components/feedback';
 
 /** The placement formats the studio can hand-author a variant for. */
@@ -22,11 +23,13 @@ export function NewVariantModal({
   open,
   onClose,
   busy,
+  campaignName,
   onCreate,
 }: {
   open: boolean;
   onClose: () => void;
   busy: boolean;
+  campaignName?: string;
   onCreate: (format: string, headline: string, cta: string) => void | Promise<void>;
 }) {
   const [format, setFormat] = useState(FORMATS[0].value);
@@ -71,6 +74,18 @@ export function NewVariantModal({
         </>
       }
     >
+      {campaignName ? (
+        <div
+          className="row"
+          style={{ gap: '0.4rem', fontSize: 12.5, color: 'var(--color-ink-2)', marginBottom: '0.25rem' }}
+        >
+          <Icon name="creative" size={13} />
+          <span>
+            Adding to: <strong>{campaignName}</strong>
+          </span>
+        </div>
+      ) : null}
+
       <label className="field">
         <span className="field-label">Placement format</span>
         <select
@@ -93,7 +108,7 @@ export function NewVariantModal({
           className="input"
           value={headline}
           onChange={(e) => setHeadline(e.target.value)}
-          placeholder="New roof before storm season — no upfront cost"
+          placeholder="Your headline — e.g. Limited-time offer, no upfront cost"
           maxLength={HEADLINE_MAX + 20}
           disabled={busy}
         />

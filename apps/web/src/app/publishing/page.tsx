@@ -1,6 +1,7 @@
 'use client';
 
-import { useState } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
+import Link from 'next/link';
 import { useApiClient } from '@/lib/api';
 import { useAsync } from '@/lib/useAsync';
 import { useToast, Modal } from '@/components/feedback';
@@ -14,8 +15,17 @@ import {
   Chip,
   StatusChip,
   DataState,
+  Meter,
 } from '@/components/ui';
-import { ApiClientError, type PublishPlan, type CreativeVariant } from '@acp/api-client';
+import {
+  ApiClientError,
+  type PublishPlan,
+  type CreativeVariant,
+  type Connection,
+  type AgentSummary,
+} from '@acp/api-client';
+import { AdPreviewModal } from '../creative/_components/AdPreviewModal';
+import { readSpec } from '../creative/_components/spec';
 
 /* Platform display metadata — order fixes the account-map layout. */
 const PLATFORM_ORDER = ['google_ads', 'meta', 'tiktok'];
@@ -39,6 +49,9 @@ const PUBLISH_PLATFORMS = [
   'generic_export',
 ] as const;
 
+/* Connection states that mean this channel can't currently receive a push. */
+const CONNECTION_NEEDS_FIX = new Set(['REAUTH_REQUIRED', 'DISCONNECTED', 'REVOKED', 'DEGRADED']);
+
 const platformLabel = (p: string) =>
   PLATFORM_LABEL[p] ?? p.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
 
@@ -48,35 +61,130 @@ const fmtDate = (iso: string) =>
   new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 const fmtTime = (iso: string) =>
   new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+const fmtTimeMs = (ms: number) =>
+  new Date(ms).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+const fmtMoney = (n: number) =>
+  n.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
 
 const errMsg = (e: unknown, fallback = 'Something went wrong') =>
   e instanceof ApiClientError ? e.body.message : fallback;
 
+/* The ad account identifier carried by a connection (best-effort — falls back
+ * to the connection id when the provider didn't hand back an account handle). */
+function connAccountId(c: Connection): string {
+  const m = (c.meta ?? {}) as Record<string, unknown>;
+  for (const k of ['accountId', 'externalAccountId', 'adAccountId', 'customerId']) {
+    const v = m[k];
+    if (typeof v === 'string' && v) return v;
+  }
+  return c.id;
+}
+function connAccountLabel(c: Connection): string {
+  const m = (c.meta ?? {}) as Record<string, unknown>;
+  const name = typeof m.displayName === 'string' ? (m.displayName as string) : null;
+  const acct = connAccountId(c);
+  return name ? `${name} — ${acct}` : acct;
+}
+
 export default function PublishingPage() {
   const client = useApiClient();
   const toast = useToast();
-  const [reload, setReload] = useState(0);
-  const { data, error, loading } = useAsync(() => client.publishing.plans(), [client, reload]);
 
-  // Which plan id (or 'create') currently has an action in flight.
+  // `reload` refreshes everything (manual retry); `plansReload` refreshes only
+  // the queue after a mutation/poll so we don't re-fetch the whole catalog.
+  const [reload, setReload] = useState(0);
+  const [plansReload, setPlansReload] = useState(0);
+
+  const { data, error, loading } = useAsync(
+    () => client.publishing.plans(),
+    [client, reload, plansReload],
+  );
+
+  // Supporting data — each degrades gracefully so a hiccup here never blanks the queue.
+  const connectionsState = useAsync(() => client.connections.list(), [client, reload]);
+  const connections = connectionsState.data ?? [];
+  const budgetState = useAsync(() => client.cost.status(), [client, reload]);
+  const budget = budgetState.data;
+  const creativeState = useAsync(
+    async () => {
+      const [campaigns, agents] = await Promise.all([
+        client.campaigns.list(),
+        client.agents.list(),
+      ]);
+      const lists = await Promise.all(
+        campaigns.map((c) =>
+          client.creative.variants(c.id).catch(() => [] as CreativeVariant[]),
+        ),
+      );
+      return { variants: lists.flat(), agents };
+    },
+    [client, reload],
+  );
+
+  // Which plan id (or 'bulk') currently has an action in flight.
   const [busyId, setBusyId] = useState<string | null>(null);
   const [pauseTarget, setPauseTarget] = useState<PublishPlan | null>(null);
+  const [cancelTarget, setCancelTarget] = useState<PublishPlan | null>(null);
   const [newPlanOpen, setNewPlanOpen] = useState(false);
+  const [previewVariant, setPreviewVariant] = useState<CreativeVariant | null>(null);
+  // Over-budget approval gate.
+  const [pendingApprove, setPendingApprove] = useState<
+    { kind: 'single'; id: string } | { kind: 'bulk' } | null
+  >(null);
+  // Client-side "last synced" stamps (the plan record carries no synced-at field).
+  const [syncedAt, setSyncedAt] = useState<Record<string, number>>({});
 
-  const refetch = () => setReload((n) => n + 1);
+  const refetch = () => setPlansReload((n) => n + 1);
+  const retryAll = () => setReload((n) => n + 1);
 
-  const plans = data ?? [];
+  const allPlans = data ?? [];
+  const plans = allPlans.filter((p) => p.status !== 'ARCHIVED'); // hide archived
   const live = plans.filter((p) => p.status === 'LIVE').length;
   const inReview = plans.filter((p) => p.status === 'IN_REVIEW').length;
   const awaiting = plans.filter((p) => p.status === 'READY_FOR_REVIEW').length;
+
+  // variantId → variant, and campaignId → its click-through agent.
+  const variantMap = useMemo(() => {
+    const m = new Map<string, CreativeVariant>();
+    for (const v of creativeState.data?.variants ?? []) m.set(v.id, v);
+    return m;
+  }, [creativeState.data]);
+  const agentByCampaign = useMemo(() => {
+    const m = new Map<string, AgentSummary>();
+    for (const a of creativeState.data?.agents ?? []) if (!m.has(a.campaignId)) m.set(a.campaignId, a);
+    return m;
+  }, [creativeState.data]);
+
+  // provider → live connection (real status per platform).
+  const connByProvider = useMemo(() => {
+    const m = new Map<string, Connection>();
+    for (const c of connections) if (!m.has(c.provider)) m.set(c.provider, c);
+    return m;
+  }, [connections]);
+  const connectedCount = connections.filter(
+    (c) => c.status === 'CONNECTED' && (PUBLISH_PLATFORMS as readonly string[]).includes(c.provider),
+  ).length;
+
+  const previewAgent = previewVariant
+    ? agentByCampaign.get(previewVariant.campaignId)
+    : undefined;
 
   // One account-map entry per platform present in the plans.
   const platforms = PLATFORM_ORDER.filter((p) => plans.some((pl) => pl.platform === p)).concat(
     Array.from(new Set(plans.map((p) => p.platform))).filter((p) => !PLATFORM_ORDER.includes(p)),
   );
 
+  function markSynced(ids: string[]) {
+    const now = Date.now();
+    setSyncedAt((prev) => {
+      const next = { ...prev };
+      for (const id of ids) next[id] = now;
+      return next;
+    });
+  }
+
   /* READY_FOR_REVIEW → approve (enqueue) then execute (push draft). */
-  async function approveAndPublish(id: string) {
+  async function runApproveAndPublish(id: string) {
     setBusyId(id);
     try {
       await client.publishing.approve(id);
@@ -85,15 +193,37 @@ export default function PublishingPage() {
       setBusyId(null);
       return;
     }
-    // Approve succeeded — surface that even if the platform push errors.
+    // Approve succeeded — but a failed execute must be surfaced, not swallowed.
     try {
       await client.publishing.execute(id);
-    } catch {
-      /* execute is best-effort here; the plan is approved and queued. */
+      toast.success('Approved & publishing');
+    } catch (e) {
+      toast.error(
+        errMsg(e, 'Approved, but the platform push failed — use "Publish now" to retry'),
+      );
     }
-    toast.success('Approved & publishing');
     refetch();
     setBusyId(null);
+  }
+
+  /* APPROVED / VALIDATION_FAILED / PUBLISHING → (re)push draft then pull status. */
+  async function publishNow(id: string) {
+    setBusyId(id);
+    try {
+      await client.publishing.execute(id);
+      try {
+        await client.publishing.sync(id);
+        markSynced([id]);
+      } catch {
+        /* sync is best-effort; the execute is what matters here */
+      }
+      toast.success('Publishing…');
+      refetch();
+    } catch (e) {
+      toast.error(errMsg(e, "Couldn't publish this plan"));
+    } finally {
+      setBusyId(null);
+    }
   }
 
   /* IN_REVIEW → pull the latest status back from the platform. */
@@ -101,10 +231,25 @@ export default function PublishingPage() {
     setBusyId(id);
     try {
       await client.publishing.sync(id);
+      markSynced([id]);
       toast.success('Publish status synced');
       refetch();
     } catch (e) {
       toast.error(errMsg(e, "Couldn't sync this plan"));
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  /* PAUSED → resume serving. */
+  async function resume(id: string) {
+    setBusyId(id);
+    try {
+      await client.publishing.resume(id);
+      toast.success('Plan resumed');
+      refetch();
+    } catch (e) {
+      toast.error(errMsg(e, "Couldn't resume this plan"));
     } finally {
       setBusyId(null);
     }
@@ -127,6 +272,23 @@ export default function PublishingPage() {
     }
   }
 
+  /* Any non-LIVE, non-ARCHIVED plan → cancel (confirmed via modal). */
+  async function confirmCancel() {
+    if (!cancelTarget) return;
+    const id = cancelTarget.id;
+    setBusyId(id);
+    try {
+      await client.publishing.cancel(id);
+      toast.success('Plan cancelled');
+      setCancelTarget(null);
+      refetch();
+    } catch (e) {
+      toast.error(errMsg(e, "Couldn't cancel this plan"));
+    } finally {
+      setBusyId(null);
+    }
+  }
+
   /* REJECTED → resubmit for another review pass. */
   async function resubmit(id: string) {
     setBusyId(id);
@@ -140,6 +302,66 @@ export default function PublishingPage() {
       setBusyId(null);
     }
   }
+
+  /* Bulk: approve → execute → sync every plan awaiting review. */
+  async function runApproveAll() {
+    const ready = plans.filter((p) => p.status === 'READY_FOR_REVIEW');
+    if (ready.length === 0) return;
+    setBusyId('bulk');
+    let ok = 0;
+    let fail = 0;
+    for (const p of ready) {
+      try {
+        await client.publishing.approve(p.id);
+        await client.publishing.execute(p.id);
+        try {
+          await client.publishing.sync(p.id);
+          markSynced([p.id]);
+        } catch {
+          /* sync best-effort */
+        }
+        ok++;
+      } catch {
+        fail++;
+      }
+    }
+    if (fail === 0) toast.success(`Approved & publishing ${ok} plan${ok === 1 ? '' : 's'}`);
+    else if (ok === 0) toast.error(`Couldn't publish any of ${fail} plan${fail === 1 ? '' : 's'}`);
+    else toast.error(`Published ${ok}, ${fail} failed — check the queue`);
+    setBusyId(null);
+    refetch();
+  }
+
+  // Budget-gated entry points: warn before approving when over budget.
+  function approveAndPublish(id: string) {
+    if (budget?.overBudget) {
+      setPendingApprove({ kind: 'single', id });
+      return;
+    }
+    void runApproveAndPublish(id);
+  }
+  function approveAll() {
+    if (budget?.overBudget) {
+      setPendingApprove({ kind: 'bulk' });
+      return;
+    }
+    void runApproveAll();
+  }
+  function runPendingApprove() {
+    const p = pendingApprove;
+    setPendingApprove(null);
+    if (!p) return;
+    if (p.kind === 'single') void runApproveAndPublish(p.id);
+    else void runApproveAll();
+  }
+
+  const budgetTone = budget?.overBudget ? 'danger' : budget?.alert ? 'warning' : 'success';
+  const budgetSkin =
+    budgetTone === 'danger'
+      ? { bg: 'var(--color-warning-soft)', ink: 'var(--color-danger-ink)' }
+      : budgetTone === 'warning'
+        ? { bg: 'var(--color-warning-soft)', ink: 'var(--color-warning-ink)' }
+        : { bg: 'var(--color-success-soft)', ink: 'var(--color-success)' };
 
   return (
     <div>
@@ -157,6 +379,7 @@ export default function PublishingPage() {
         loading={loading}
         error={error}
         isEmpty={plans.length === 0}
+        onRetry={retryAll}
         loadingLabel="Loading publish plans…"
         emptyTitle="No publish plans yet"
         emptyHint="Approve a creative variant and it will show up here, ready to push to a connected ad account."
@@ -190,17 +413,76 @@ export default function PublishingPage() {
           />
         </div>
 
+        {/* Budget context */}
+        {budget && budget.configured ? (
+          <Card className="card-pad">
+            <div className="spread" style={{ gap: '1rem', flexWrap: 'wrap' }}>
+              <span className="row" style={{ gap: '0.6rem' }}>
+                <span className="stat-ic" style={{ background: budgetSkin.bg, color: budgetSkin.ink }}>
+                  <Icon name="billing" size={16} />
+                </span>
+                <span>
+                  <div style={{ fontWeight: 600 }}>Ad spend budget</div>
+                  <div className="muted" style={{ fontSize: 12.5 }}>
+                    {fmtMoney(budget.monthToDate)} spent of {fmtMoney(budget.limit)} this month
+                    {budget.tier ? ` · ${budget.tier} tier` : ''}
+                  </div>
+                </span>
+              </span>
+              <span style={{ display: 'grid', gap: 6, justifyItems: 'end' }}>
+                {budget.remaining != null ? (
+                  <span className="tnum" style={{ fontWeight: 600 }}>
+                    {fmtMoney(budget.remaining)} left
+                  </span>
+                ) : null}
+                {budget.overBudget ? (
+                  <Chip tone="danger" icon="alert">Over budget</Chip>
+                ) : budget.alert ? (
+                  <Chip tone="warning" icon="alert">Approaching limit</Chip>
+                ) : (
+                  <Chip tone="success" icon="check">On track</Chip>
+                )}
+              </span>
+            </div>
+            {budget.limit > 0 ? (
+              <div style={{ marginTop: '0.75rem' }}>
+                <Meter pct={(budget.monthToDate / budget.limit) * 100} />
+              </div>
+            ) : null}
+            {budget.overBudget || budget.alert ? (
+              <div
+                className="muted"
+                style={{ fontSize: 12.5, marginTop: '0.6rem', color: budgetSkin.ink }}
+              >
+                {budget.overBudget
+                  ? 'Spend is over the monthly limit — approving new plans will increase it further.'
+                  : "You're close to the monthly limit. Review spend before approving more launches."}
+              </div>
+            ) : null}
+          </Card>
+        ) : null}
+
         {/* Account map */}
         <Panel
           title="Account map"
           note="Connected ad accounts receiving approved snapshots"
-          actions={<Chip tone="success" dot>{platforms.length} connected</Chip>}
+          actions={
+            <Chip tone={connectedCount > 0 ? 'success' : 'neutral'} dot>
+              {connectedCount} connected
+            </Chip>
+          }
         >
           <div className="card-pad">
             <div className="grid grid-3">
               {platforms.map((platform) => {
                 const rows = plans.filter((p) => p.platform === platform);
-                const accountId = rows.find((r) => r.accountId)?.accountId ?? '—';
+                const conn = connByProvider.get(platform);
+                const connStatus = conn?.status ?? 'DISCONNECTED';
+                const needsFix = CONNECTION_NEEDS_FIX.has(connStatus);
+                const accountId =
+                  (conn ? connAccountId(conn) : undefined) ??
+                  rows.find((r) => r.accountId)?.accountId ??
+                  '—';
                 const liveRow = rows.find((r) => r.status === 'LIVE' && r.remoteId);
                 return (
                   <Card key={platform} className="card-pad" style={{ background: 'var(--color-surface-2)' }}>
@@ -218,7 +500,24 @@ export default function PublishingPage() {
                           </div>
                         </span>
                       </span>
-                      <StatusChip status="CONNECTED" />
+                      <span style={{ display: 'grid', gap: 4, justifyItems: 'end' }}>
+                        <StatusChip status={connStatus} />
+                        {needsFix ? (
+                          <Link
+                            href="/connections"
+                            className="row"
+                            style={{
+                              gap: '0.2rem',
+                              fontSize: 11.5,
+                              fontWeight: 600,
+                              color: 'var(--color-brand)',
+                            }}
+                          >
+                            {connStatus === 'DISCONNECTED' ? 'Connect' : 'Reconnect'}
+                            <Icon name="external" size={11} />
+                          </Link>
+                        ) : null}
+                      </span>
                     </div>
                     <hr className="divider" style={{ margin: '0.85rem 0' }} />
                     <div className="spread">
@@ -246,17 +545,30 @@ export default function PublishingPage() {
         {/* Review queue */}
         <Panel
           title="Review queue"
-          note="Approve, sync or pause each plan"
+          note="Approve, publish, sync, pause or cancel each plan"
           actions={
-            awaiting > 0 ? (
-              <Chip tone="warning" icon="shield">
-                {awaiting} awaiting approval
-              </Chip>
-            ) : (
-              <Chip tone="success" icon="check">
-                All plans reviewed
-              </Chip>
-            )
+            <>
+              {awaiting > 0 ? (
+                <Button
+                  size="sm"
+                  variant="primary"
+                  icon="check"
+                  disabled={busyId !== null}
+                  onClick={approveAll}
+                >
+                  {busyId === 'bulk' ? 'Approving…' : `Approve all awaiting (${awaiting})`}
+                </Button>
+              ) : null}
+              {awaiting > 0 ? (
+                <Chip tone="warning" icon="shield">
+                  {awaiting} awaiting approval
+                </Chip>
+              ) : (
+                <Chip tone="success" icon="check">
+                  All plans reviewed
+                </Chip>
+              )}
+            </>
           }
         >
           <div className="table-wrap">
@@ -273,13 +585,37 @@ export default function PublishingPage() {
                 </tr>
               </thead>
               <tbody>
-                {plans.map((plan) => (
+                {plans.map((plan) => {
+                  const variant = variantMap.get(plan.variantId);
+                  const headline = variant ? readSpec(variant.spec).headline : null;
+                  return (
                   <tr key={plan.id}>
                     <td>
-                      <div className="cell-strong tnum">Plan #{shortId(plan.id)}</div>
-                      <div className="cell-muted tnum" style={{ fontSize: 12 }}>
-                        Variant {shortId(plan.variantId)}
-                      </div>
+                      {variant ? (
+                        <>
+                          <div className="cell-strong">{headline}</div>
+                          <div className="row" style={{ gap: '0.5rem', marginTop: 3 }}>
+                            <span className="cell-muted tnum" style={{ fontSize: 12 }}>
+                              Plan #{shortId(plan.id)}
+                            </span>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              icon="play"
+                              onClick={() => setPreviewVariant(variant)}
+                            >
+                              Preview
+                            </Button>
+                          </div>
+                        </>
+                      ) : (
+                        <>
+                          <div className="cell-strong tnum">Plan #{shortId(plan.id)}</div>
+                          <div className="cell-muted tnum" style={{ fontSize: 12 }}>
+                            Variant {shortId(plan.variantId)}
+                          </div>
+                        </>
+                      )}
                     </td>
                     <td>
                       <Chip tone="neutral" icon="globe">
@@ -288,7 +624,20 @@ export default function PublishingPage() {
                     </td>
                     <td className="tnum">{plan.accountId ?? <span className="cell-muted">—</span>}</td>
                     <td>
-                      <StatusChip status={plan.status} />
+                      {plan.status === 'IN_REVIEW' ? (
+                        <span title="You approved this; the ad platform is now vetting it before it can serve.">
+                          <StatusChip status={plan.status} />
+                        </span>
+                      ) : (
+                        <StatusChip status={plan.status} />
+                      )}
+                      {plan.status === 'IN_REVIEW' ? (
+                        <div className="cell-muted" style={{ fontSize: 11.5, marginTop: 3 }}>
+                          {syncedAt[plan.id]
+                            ? `Last synced ${fmtTimeMs(syncedAt[plan.id])}`
+                            : 'Not synced yet'}
+                        </div>
+                      ) : null}
                     </td>
                     <td>
                       {plan.reviewReason ? (
@@ -308,15 +657,20 @@ export default function PublishingPage() {
                         <PlanAction
                           plan={plan}
                           busy={busyId === plan.id}
+                          disabled={busyId !== null}
                           onApprove={approveAndPublish}
+                          onPublishNow={publishNow}
                           onSync={syncStatus}
                           onPause={setPauseTarget}
+                          onResume={resume}
                           onResubmit={resubmit}
+                          onCancel={setCancelTarget}
                         />
                       </div>
                     </td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -378,9 +732,69 @@ export default function PublishingPage() {
         ) : null}
       </Modal>
 
+      {/* Cancel confirmation */}
+      <Modal
+        open={cancelTarget != null}
+        onClose={() => (busyId ? null : setCancelTarget(null))}
+        title="Cancel this publish plan?"
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setCancelTarget(null)} disabled={!!busyId}>
+              Keep the plan
+            </Button>
+            <Button variant="danger" icon="x" onClick={confirmCancel} disabled={!!busyId}>
+              {busyId ? 'Cancelling…' : 'Cancel plan'}
+            </Button>
+          </>
+        }
+      >
+        {cancelTarget ? (
+          <p style={{ margin: 0 }}>
+            Cancelling stops <strong>Plan #{shortId(cancelTarget.id)}</strong> on{' '}
+            <strong>{platformLabel(cancelTarget.platform)}</strong> from proceeding. It will no longer
+            appear in the review queue. Nothing is pushed to the platform.
+          </p>
+        ) : null}
+      </Modal>
+
+      {/* Over-budget approval gate */}
+      <Modal
+        open={pendingApprove != null}
+        onClose={() => (busyId ? null : setPendingApprove(null))}
+        title="Approve while over budget?"
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setPendingApprove(null)} disabled={!!busyId}>
+              Not now
+            </Button>
+            <Button variant="danger" icon="check" onClick={runPendingApprove} disabled={!!busyId}>
+              Approve anyway
+            </Button>
+          </>
+        }
+      >
+        <p style={{ margin: 0 }}>
+          You&apos;re{' '}
+          <strong>{budget?.overBudget ? 'over' : 'near'} your monthly ad-spend limit</strong>
+          {budget && budget.remaining != null ? ` (${fmtMoney(budget.remaining)} remaining)` : ''}.
+          Approving {pendingApprove?.kind === 'bulk' ? 'these plans' : 'this plan'} pushes creative to
+          the platform and will increase spend. Continue anyway?
+        </p>
+      </Modal>
+
+      {/* Ad → chat preview: exactly what a reviewer's customer sees and can talk to. */}
+      <AdPreviewModal
+        open={previewVariant !== null}
+        onClose={() => setPreviewVariant(null)}
+        variant={previewVariant}
+        agentId={previewAgent?.id}
+        agentName={previewAgent?.name}
+      />
+
       {/* New publish plan */}
       {newPlanOpen ? (
         <NewPlanModal
+          connections={connections}
           onClose={() => setNewPlanOpen(false)}
           onCreated={() => {
             setNewPlanOpen(false);
@@ -395,47 +809,87 @@ export default function PublishingPage() {
 function PlanAction({
   plan,
   busy,
+  disabled,
   onApprove,
+  onPublishNow,
   onSync,
   onPause,
+  onResume,
   onResubmit,
+  onCancel,
 }: {
   plan: PublishPlan;
   busy: boolean;
+  disabled: boolean;
   onApprove: (id: string) => void;
+  onPublishNow: (id: string) => void;
   onSync: (id: string) => void;
   onPause: (plan: PublishPlan) => void;
+  onResume: (id: string) => void;
   onResubmit: (id: string) => void;
+  onCancel: (plan: PublishPlan) => void;
 }) {
-  if (plan.status === 'READY_FOR_REVIEW') {
-    return (
-      <Button size="sm" variant="primary" icon="check" disabled={busy} onClick={() => onApprove(plan.id)}>
+  const status = plan.status;
+  let primary: ReactNode = null;
+
+  if (status === 'READY_FOR_REVIEW') {
+    primary = (
+      <Button size="sm" variant="primary" icon="check" disabled={disabled} onClick={() => onApprove(plan.id)}>
         {busy ? 'Publishing…' : 'Approve & publish'}
       </Button>
     );
-  }
-  if (plan.status === 'IN_REVIEW') {
-    return (
-      <Button size="sm" variant="ghost" icon="refresh" disabled={busy} onClick={() => onSync(plan.id)}>
+  } else if (status === 'APPROVED') {
+    primary = (
+      <Button size="sm" variant="primary" icon="publishing" disabled={disabled} onClick={() => onPublishNow(plan.id)}>
+        {busy ? 'Publishing…' : 'Publish now'}
+      </Button>
+    );
+  } else if (status === 'VALIDATION_FAILED' || status === 'PUBLISHING') {
+    primary = (
+      <Button size="sm" variant="primary" icon="refresh" disabled={disabled} onClick={() => onPublishNow(plan.id)}>
+        {busy ? 'Retrying…' : 'Retry'}
+      </Button>
+    );
+  } else if (status === 'IN_REVIEW') {
+    primary = (
+      <Button size="sm" variant="ghost" icon="refresh" disabled={disabled} onClick={() => onSync(plan.id)}>
         {busy ? 'Syncing…' : 'Sync status'}
       </Button>
     );
-  }
-  if (plan.status === 'LIVE') {
-    return (
-      <Button size="sm" variant="ghost" icon="pause" disabled={busy} onClick={() => onPause(plan)}>
+  } else if (status === 'LIVE') {
+    primary = (
+      <Button size="sm" variant="ghost" icon="pause" disabled={disabled} onClick={() => onPause(plan)}>
         Pause
       </Button>
     );
-  }
-  if (plan.status === 'REJECTED') {
-    return (
-      <Button size="sm" variant="ghost" icon="refresh" disabled={busy} onClick={() => onResubmit(plan.id)}>
+  } else if (status === 'PAUSED') {
+    primary = (
+      <Button size="sm" variant="ghost" icon="play" disabled={disabled} onClick={() => onResume(plan.id)}>
+        {busy ? 'Resuming…' : 'Resume'}
+      </Button>
+    );
+  } else if (status === 'REJECTED') {
+    primary = (
+      <Button size="sm" variant="ghost" icon="refresh" disabled={disabled} onClick={() => onResubmit(plan.id)}>
         {busy ? 'Resubmitting…' : 'Resubmit'}
       </Button>
     );
   }
-  return <span className="cell-muted">—</span>;
+
+  const showCancel = status !== 'LIVE' && status !== 'ARCHIVED';
+
+  if (!primary && !showCancel) return <span className="cell-muted">—</span>;
+
+  return (
+    <div className="row" style={{ gap: '0.4rem', justifyContent: 'flex-end' }}>
+      {primary}
+      {showCancel ? (
+        <Button size="sm" variant="ghost" icon="x" disabled={disabled} onClick={() => onCancel(plan)}>
+          Cancel
+        </Button>
+      ) : null}
+    </div>
+  );
 }
 
 /* ------------------------------------------------------------------ */
@@ -449,9 +903,11 @@ function variantLabel(v: CreativeVariant): string {
 }
 
 function NewPlanModal({
+  connections,
   onClose,
   onCreated,
 }: {
+  connections: Connection[];
   onClose: () => void;
   onCreated: () => void;
 }) {
@@ -473,6 +929,13 @@ function NewPlanModal({
     [client, campaignId],
   );
   const variants = variantsState.data ?? [];
+
+  // Connected ad accounts available for the chosen platform.
+  const accountOptions =
+    platform === ''
+      ? []
+      : connections.filter((c) => c.provider === platform && c.status === 'CONNECTED');
+  const hasAccountOptions = accountOptions.length > 0;
 
   const valid =
     campaignId !== '' && variantId !== '' && platform !== '' && accountId.trim() !== '';
@@ -574,7 +1037,10 @@ function NewPlanModal({
             id="np-platform"
             className="select"
             value={platform}
-            onChange={(e) => setPlatform(e.target.value)}
+            onChange={(e) => {
+              setPlatform(e.target.value);
+              setAccountId(''); // reset — accounts are platform-scoped
+            }}
           >
             <option value="">Select a platform</option>
             {PUBLISH_PLATFORMS.map((p) => (
@@ -587,15 +1053,40 @@ function NewPlanModal({
 
         <div className="field">
           <label className="field-label" htmlFor="np-account">
-            Ad account ID
+            Ad account
           </label>
-          <input
-            id="np-account"
-            className="input"
-            placeholder="e.g. acct_g1"
-            value={accountId}
-            onChange={(e) => setAccountId(e.target.value)}
-          />
+          {hasAccountOptions ? (
+            <select
+              id="np-account"
+              className="select"
+              value={accountId}
+              onChange={(e) => setAccountId(e.target.value)}
+            >
+              <option value="">Select a connected account</option>
+              {accountOptions.map((c) => (
+                <option key={c.id} value={connAccountId(c)}>
+                  {connAccountLabel(c)}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <input
+              id="np-account"
+              className="input"
+              placeholder="e.g. acct_g1"
+              value={accountId}
+              onChange={(e) => setAccountId(e.target.value)}
+            />
+          )}
+          {platform !== '' && !hasAccountOptions ? (
+            <div className="muted" style={{ fontSize: 12, marginTop: '0.4rem' }}>
+              No connected {platformLabel(platform)} account.{' '}
+              <Link href="/connections" style={{ color: 'var(--color-brand)', fontWeight: 600 }}>
+                Connect one
+              </Link>{' '}
+              or enter an account ID manually.
+            </div>
+          ) : null}
         </div>
 
         <div className="chip chip-info" style={{ alignSelf: 'flex-start' }}>

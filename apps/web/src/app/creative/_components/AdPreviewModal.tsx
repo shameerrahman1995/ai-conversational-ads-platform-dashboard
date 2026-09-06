@@ -1,9 +1,10 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { ApiClientError, type CreativeVariant } from '@acp/api-client';
 import { useApiClient } from '@/lib/api';
-import { Modal } from '@/components/feedback';
+import { Modal, useToast } from '@/components/feedback';
 import { Button, Chip } from '@/components/ui';
 import { Icon } from '@/components/Icon';
 import { readSpec } from './spec';
@@ -31,6 +32,7 @@ export function AdPreviewModal({
   variant,
   agentId,
   agentName,
+  campaignId,
   advertiser = 'Demo Advertiser Co.',
 }: {
   open: boolean;
@@ -38,13 +40,17 @@ export function AdPreviewModal({
   variant: CreativeVariant | null;
   agentId?: string;
   agentName?: string;
+  campaignId?: string;
   advertiser?: string;
 }) {
   const client = useApiClient();
+  const router = useRouter();
+  const toast = useToast();
   const [stage, setStage] = useState<'ad' | 'chat'>('ad');
   const [messages, setMessages] = useState<ChatMsg[]>([]);
   const [input, setInput] = useState('');
   const [pending, setPending] = useState(false);
+  const [creatingAgent, setCreatingAgent] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -84,31 +90,45 @@ export function AdPreviewModal({
       : s.bgColor;
 
   const name = agentName ?? 'Ava';
-  const opening = `Hi! You're chatting with an AI assistant from ${advertiser}. You clicked "${headline}" — how can I help?`;
+  const opening = agentId
+    ? `Hi! You're chatting with an AI assistant from ${advertiser}. You clicked "${headline}" — how can I help?`
+    : `This ad clicks through to a live AI conversation — but ${advertiser} doesn't have a hosted agent for this campaign yet. Create one to test the real post-click chat.`;
 
   function clickAd() {
     setStage('chat');
     setMessages([{ role: 'ai', text: opening, grounded: false }]);
-    setTimeout(() => inputRef.current?.focus(), 50);
+    if (agentId) setTimeout(() => inputRef.current?.focus(), 50);
+  }
+
+  // No agent yet → give the user a real path forward instead of a dead end:
+  // spin up an agent for this campaign, then hand off to the Agents page.
+  async function createAgent() {
+    if (creatingAgent) return;
+    if (!campaignId) {
+      router.push('/agents');
+      onClose();
+      return;
+    }
+    setCreatingAgent(true);
+    setErr(null);
+    try {
+      await client.agents.create({ campaignId });
+      toast.success('Agent created — opening the Agents page to configure it');
+      router.push('/agents');
+      onClose();
+    } catch (e) {
+      setErr(e instanceof ApiClientError ? e.body.message : 'Could not create an agent — is the API running?');
+    } finally {
+      setCreatingAgent(false);
+    }
   }
 
   async function send() {
     const text = input.trim();
-    if (!text || pending) return;
+    if (!text || pending || !agentId) return;
     setErr(null);
     setInput('');
     setMessages((m) => [...m, { role: 'user', text }]);
-    if (!agentId) {
-      setMessages((m) => [
-        ...m,
-        {
-          role: 'ai',
-          text: "This campaign doesn't have a hosted agent yet. Create one on the Agents page to test the live conversation.",
-          grounded: false,
-        },
-      ]);
-      return;
-    }
     setPending(true);
     try {
       const res = await client.agents.preview(agentId, text);
@@ -408,26 +428,57 @@ export function AdPreviewModal({
               ) : null}
             </div>
 
-            <div className="row" style={{ gap: '0.4rem', padding: '0.6rem 0.75rem', borderTop: '1px solid var(--color-line)' }}>
-              <input
-                ref={inputRef}
-                className="input"
-                style={{ flex: 1, height: 34 }}
-                value={input}
-                placeholder="Type as a visitor…"
-                onChange={(e) => setInput(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && !e.shiftKey) {
-                    e.preventDefault();
-                    void send();
-                  }
+            {agentId ? (
+              <div className="row" style={{ gap: '0.4rem', padding: '0.6rem 0.75rem', borderTop: '1px solid var(--color-line)' }}>
+                <input
+                  ref={inputRef}
+                  className="input"
+                  style={{ flex: 1, height: 34 }}
+                  value={input}
+                  placeholder="Type as a visitor…"
+                  onChange={(e) => setInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                      e.preventDefault();
+                      void send();
+                    }
+                  }}
+                  disabled={pending}
+                />
+                <button className="btn btn-primary btn-sm" onClick={() => void send()} disabled={pending || !input.trim()}>
+                  <Icon name="play" size={14} />
+                </button>
+              </div>
+            ) : (
+              <div
+                style={{
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '0.45rem',
+                  padding: '0.6rem 0.75rem',
+                  borderTop: '1px solid var(--color-line)',
                 }}
-                disabled={pending}
-              />
-              <button className="btn btn-primary btn-sm" onClick={() => void send()} disabled={pending || !input.trim()}>
-                <Icon name="play" size={14} />
-              </button>
-            </div>
+              >
+                <Button
+                  variant="primary"
+                  icon={creatingAgent ? 'refresh' : 'plus'}
+                  onClick={() => void createAgent()}
+                  disabled={creatingAgent}
+                  style={{ width: '100%', justifyContent: 'center' }}
+                >
+                  {creatingAgent
+                    ? 'Creating…'
+                    : campaignId
+                      ? 'Create an agent for this campaign'
+                      : 'Go to the Agents page'}
+                </Button>
+                <span className="muted" style={{ fontSize: 11, textAlign: 'center', lineHeight: 1.4 }}>
+                  {campaignId
+                    ? 'Spins up a hosted agent, then opens the Agents page to configure and publish it.'
+                    : 'Set up a hosted agent on the Agents page to make this conversation live.'}
+                </span>
+              </div>
+            )}
           </div>
         )}
       </div>
