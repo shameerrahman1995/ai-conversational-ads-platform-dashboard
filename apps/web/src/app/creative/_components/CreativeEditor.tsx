@@ -312,7 +312,7 @@ export function CreativeEditor({
               className="input"
               value={spec.headline}
               onChange={(e) => update('headline', e.target.value)}
-              placeholder="New roof before storm season"
+              placeholder="Your headline — e.g. Limited-time offer"
               disabled={busy}
             />
           </label>

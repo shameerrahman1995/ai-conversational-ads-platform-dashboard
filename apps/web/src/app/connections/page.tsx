@@ -36,7 +36,7 @@ const CATALOG: Category[] = [
       {
         key: 'google_ads',
         name: 'Google Ads',
-        blurb: 'Search & Performance Max for high-intent roofing and HVAC queries.',
+        blurb: 'Search & Performance Max for high-intent queries.',
       },
       {
         key: 'meta',
@@ -46,12 +46,12 @@ const CATALOG: Category[] = [
       {
         key: 'tiktok',
         name: 'TikTok Ads',
-        blurb: 'Short-form Spark Ads for storm-damage and AC-repair demand.',
+        blurb: 'Short-form Spark Ads for mobile-first discovery.',
       },
       {
         key: 'microsoft',
         name: 'Microsoft Advertising',
-        blurb: 'Bing search coverage for older, higher-value homeowners.',
+        blurb: 'Bing search coverage for higher-value customers.',
       },
       {
         key: 'amazon_dsp',
@@ -61,7 +61,7 @@ const CATALOG: Category[] = [
       {
         key: 'linkedin',
         name: 'LinkedIn Ads',
-        blurb: 'Reach property managers and facilities buyers with B2B lead forms.',
+        blurb: 'Reach professional and B2B audiences with lead forms.',
       },
     ],
   },
@@ -91,18 +91,18 @@ const CATALOG: Category[] = [
   {
     key: 'calendar',
     label: 'Calendar',
-    note: 'Where the AI agent books estimates and consultations',
+    note: 'Where the AI agent books meetings and consultations',
     icon: 'clock',
     providers: [
       {
         key: 'google_calendar',
         name: 'Google Calendar',
-        blurb: "Let the agent book on-site estimates on your crew's calendar.",
+        blurb: 'Let the agent book meetings on your team calendar.',
       },
       {
         key: 'calendly',
         name: 'Calendly',
-        blurb: 'Hand qualified homeowners a scheduling link to self-book.',
+        blurb: 'Hand qualified leads a scheduling link to self-book.',
       },
     ],
   },
@@ -115,7 +115,7 @@ const CATALOG: Category[] = [
       {
         key: 'elevenlabs',
         name: 'ElevenLabs',
-        blurb: 'Natural text-to-speech so the agent can answer homeowners out loud.',
+        blurb: 'Natural text-to-speech so the agent can answer out loud.',
       },
       {
         key: 'deepgram',
@@ -125,7 +125,7 @@ const CATALOG: Category[] = [
       {
         key: 'heygen',
         name: 'HeyGen',
-        blurb: 'Render a talking avatar that walks homeowners through an estimate.',
+        blurb: 'Render a talking avatar that walks visitors through an offer.',
       },
       {
         key: 'd_id',

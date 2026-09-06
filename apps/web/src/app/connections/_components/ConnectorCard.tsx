@@ -189,8 +189,8 @@ export function ConnectorCard({
             </>
           ) : (
             <>
-              <Icon name="clock" size={13} />
-              Connects in about a minute
+              <Icon name="shield" size={13} />
+              Secure OAuth — tokens stored server-side
             </>
           )}
         </span>

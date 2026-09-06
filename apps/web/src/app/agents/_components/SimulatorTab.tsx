@@ -204,7 +204,7 @@ export function SimulatorTab({
               void send();
             }
           }}
-          placeholder="Ask what a visitor might ask — e.g. “How much to repair storm damage?”"
+          placeholder="Ask what a visitor might ask — e.g. “How much does it cost?”"
           style={{ flex: 1 }}
           disabled={pending}
         />

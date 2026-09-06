@@ -14,12 +14,12 @@ const TIER_LABEL: Record<ModelOption['tier'], string> = {
   fast: 'Fast',
 };
 
-/** Tones Demo Advertiser Co. (roofing/HVAC) speaks in across the ad set. */
+/** Tones the advertiser can speak in across the ad set. */
 const BRAND_VOICES = [
   'Confident & local',
   'Warm & consultative',
   'Straightforward',
-  'Urgent — storm season',
+  'Urgent — limited time',
 ];
 
 /** Placements checked by default — the two highest-reach formats. */

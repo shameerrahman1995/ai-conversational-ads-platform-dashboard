@@ -108,7 +108,7 @@ export function NewVariantModal({
           className="input"
           value={headline}
           onChange={(e) => setHeadline(e.target.value)}
-          placeholder="New roof before storm season — no upfront cost"
+          placeholder="Your headline — e.g. Limited-time offer, no upfront cost"
           maxLength={HEADLINE_MAX + 20}
           disabled={busy}
         />
