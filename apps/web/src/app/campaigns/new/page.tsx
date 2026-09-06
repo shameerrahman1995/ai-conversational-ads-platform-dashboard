@@ -9,7 +9,7 @@ import { useAsync } from '@/lib/useAsync';
 import { useToast } from '@/components/feedback';
 import { Button, Card } from '@/components/ui';
 import { Icon } from '@/components/Icon';
-import { DEFAULT_WIZARD, type WizardState } from './_components/types';
+import { DEFAULT_WIZARD, adAccountId, type WizardState } from './_components/types';
 import { ObjectiveStep } from './_components/ObjectiveStep';
 import { ChannelsStep } from './_components/ChannelsStep';
 import { AudienceStep } from './_components/AudienceStep';
@@ -95,27 +95,36 @@ export default function NewCampaignWizard() {
         settings,
       });
 
-      // Best-effort follow-ups so the campaign lands set up to launch.
+      // The campaign now exists (the only hard requirement). Everything below is
+      // best-effort setup; we track exactly what lands so the closing toast tells
+      // the truth instead of always asserting success. Nothing here blocks nav.
+      const done: string[] = []; // sub-steps that succeeded
+      const failed: string[] = []; // sub-steps that didn't
+
+      // Knowledge source — optional; can be re-added later in Agents → Knowledge.
       if (state.sourceUri.trim()) {
         try {
           const s = await client.sources.create({ type: 'url', uri: state.sourceUri.trim() });
           await client.sources.parse(s.sourceId ?? s.id);
         } catch {
-          /* non-fatal — the source can be added later in Agents → Knowledge */
+          failed.push('knowledge source');
         }
       }
+
+      // AI agent — created as a DRAFT; must be published on the Agents page.
       if (state.attachAgent) {
         try {
           const a = await client.agents.create({ campaignId: created.id });
           await client.agents.updateConfig(a.id, { model: state.agentModel });
+          done.push('draft agent');
         } catch {
-          /* non-fatal — an agent can be configured later on the Agents page */
+          failed.push('agent setup');
         }
       }
 
-      // Generate starter copy, then a creative variant per format, then a draft
-      // publish plan per selected platform — so the campaign lands ready to review.
+      // Starter copy — falls back to the campaign name as the headline on failure.
       let copy = { headline: state.name, cta: 'Get a free quote' };
+      let copyOk = false;
       try {
         await client.campaigns.generate(created.id, {
           model: state.agentModel,
@@ -126,10 +135,14 @@ export default function NewCampaignWizard() {
           | { copy?: { headline?: string; offer?: string; cta?: string } }
           | undefined;
         if (snap?.copy?.headline) copy = { headline: snap.copy.headline, cta: snap.copy.cta ?? copy.cta };
+        copyOk = true;
       } catch {
-        /* generation is best-effort; fall back to the campaign name as the headline */
+        /* generation is best-effort; the fallback headline still lets us draft variants */
       }
+      if (copyOk) done.push('copy');
+      else failed.push('copy generation');
 
+      // One creative variant per selected format.
       let variantId: string | null = null;
       let variantCount = 0;
       for (const format of state.formats) {
@@ -138,10 +151,14 @@ export default function NewCampaignWizard() {
           variantId = variantId ?? v.id;
           variantCount++;
         } catch {
-          /* skip a format that fails validation */
+          /* skip a format that fails validation — counted as failed below */
         }
       }
+      const variantFails = state.formats.length - variantCount;
+      if (variantCount > 0) done.push(`${variantCount} creative${variantCount === 1 ? '' : 's'}`);
+      if (variantFails > 0) failed.push(`${variantFails} creative${variantFails === 1 ? '' : 's'}`);
 
+      // A draft publish plan per platform — only possible once we have a variant.
       let planCount = 0;
       if (variantId) {
         for (const platform of state.platforms) {
@@ -150,20 +167,30 @@ export default function NewCampaignWizard() {
               campaignId: created.id,
               variantId,
               platform,
-              accountId: `${platform}-primary`,
+              accountId: adAccountId(platform),
             });
             planCount++;
           } catch {
-            /* skip a platform we can't draft a plan for yet */
+            /* skip a platform we can't draft a plan for yet — counted below */
           }
         }
+        const planFails = state.platforms.length - planCount;
+        if (planCount > 0) done.push(`${planCount} channel plan${planCount === 1 ? '' : 's'}`);
+        if (planFails > 0) failed.push(`${planFails} channel plan${planFails === 1 ? '' : 's'}`);
+      } else if (state.platforms.length > 0) {
+        // No creative means no plan could even be attempted.
+        failed.push(
+          `${state.platforms.length} channel plan${state.platforms.length === 1 ? '' : 's'} (no creative to publish)`,
+        );
       }
 
-      toast.success(
-        planCount > 0
-          ? `Campaign created — ${variantCount} variant${variantCount === 1 ? '' : 's'} and ${planCount} publish plan${planCount === 1 ? '' : 's'} ready to review`
-          : 'Campaign created',
-      );
+      // Honest closing message — reflects what actually landed.
+      let message = 'Campaign created';
+      if (done.length) message += ` — ${done.join(' + ')} ready`;
+      if (failed.length) message += `; ${failed.join(', ')} failed — retry on the campaign page`;
+      if (failed.length) toast.toast(message, 'info');
+      else toast.success(message);
+
       router.push(`/campaigns/${created.id}`);
     } catch (e) {
       toast.error(e instanceof ApiClientError ? e.body.message : 'Could not create the campaign.');

@@ -69,6 +69,19 @@ export class PublishingController {
     return this.publish.pause(req.orgId, id);
   }
 
+  @Post('publish-plans/:id/resume')
+  @Roles('publisher')
+  resume(@Req() req: { orgId: string }, @Param('id') id: string) {
+    return this.publish.resume(req.orgId, id);
+  }
+
+  // Cancel/archive a non-live plan (mistaken or stuck) — removes it from the queue.
+  @Post('publish-plans/:id/cancel')
+  @Roles('creator')
+  cancel(@Req() req: { orgId: string }, @Param('id') id: string) {
+    return this.publish.cancel(req.orgId, id);
+  }
+
   // Creative-rejection recovery: clone the rejected variant into a fresh plan,
   // preserving the rejected plan + remote id + reason as evidence.
   @Post('publish-plans/:id/resubmit')

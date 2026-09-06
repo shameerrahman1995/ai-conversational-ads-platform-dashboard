@@ -48,6 +48,7 @@ export default function AnalyticsPage() {
         client.analytics.attribution(),
         client.experiments.list(),
         client.cost.status(),
+        client.campaigns.list(),
       ]),
     [client, reload],
   );
@@ -55,13 +56,16 @@ export default function AnalyticsPage() {
   const [experimentOpen, setExperimentOpen] = useState(false);
   const [budgetOpen, setBudgetOpen] = useState(false);
 
-  const [funnel, spend, attribution, experiments, budget] = data ?? [];
+  const [funnel, spend, attribution, experiments, budget, campaigns] = data ?? [];
 
   const stages = funnel?.stages ?? [];
   const firstCount = stages[0]?.count ?? 0;
   const meetings = stages.find((s) => s.key === 'meeting')?.count ?? 0;
 
   const providers = spend ? Object.entries(spend.byProvider) : [];
+
+  // Resolve experiment campaign IDs to human names (falls back to a short ID).
+  const campaignNameById = new Map((campaigns ?? []).map((c) => [c.id, campaignLabel(c)]));
 
   return (
     <div>
@@ -71,8 +75,9 @@ export default function AnalyticsPage() {
         actions={
           <>
             <span
-              className="chip chip-neutral"
-              title="Reporting window — fixed to the last 30 days"
+              className="row muted"
+              style={{ gap: '0.35rem', fontSize: 12.5, cursor: 'default' }}
+              title="Reporting window — fixed to the last 30 days (not adjustable yet)"
             >
               <Icon name="clock" size={12} /> Last 30 days
             </span>
@@ -80,6 +85,11 @@ export default function AnalyticsPage() {
               icon="download"
               variant="ghost"
               disabled={providers.length === 0}
+              title={
+                providers.length === 0
+                  ? 'Nothing to export yet — spend appears once a platform reports delivery.'
+                  : 'Download spend by platform as CSV'
+              }
               onClick={() => {
                 if (!spend) return;
                 exportSpendCsv(providers, spend.totals);
@@ -94,7 +104,12 @@ export default function AnalyticsPage() {
         }
       />
 
-      <DataState loading={loading} error={error} loadingLabel="Crunching the numbers…">
+      <DataState
+        loading={loading}
+        error={error}
+        loadingLabel="Crunching the numbers…"
+        onRetry={refetch}
+      >
         {/* KPI strip */}
         <div className="grid grid-kpi">
           <StatCard
@@ -316,8 +331,8 @@ export default function AnalyticsPage() {
         {/* Experiments + budget */}
         <div className="grid grid-hero analytics-mt">
           <Panel
-            title="Experiments"
-            note="A/B tests on creative and agent copy"
+            title="Experiment plans"
+            note="Plan A/B tests on creative & agent copy — measurement coming soon"
             actions={
               <Button
                 size="sm"
@@ -325,36 +340,62 @@ export default function AnalyticsPage() {
                 variant="ghost"
                 onClick={() => setExperimentOpen(true)}
               >
-                New experiment
+                New plan
               </Button>
             }
           >
             {experiments && experiments.length > 0 ? (
-              <div className="table-wrap">
-                <table className="table">
-                  <thead>
-                    <tr>
-                      <th>Hypothesis</th>
-                      <th>Status</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {experiments.map((exp) => (
-                      <tr key={exp.id}>
-                        <td>
-                          <div className="cell-strong">{exp.hypothesis}</div>
-                          <div className="cell-muted" style={{ fontSize: 12 }}>
-                            Campaign {exp.campaignId.slice(0, 10)}…
-                          </div>
-                        </td>
-                        <td>
-                          <StatusChip status={exp.status} />
-                        </td>
+              <>
+                <div
+                  className="row"
+                  style={{
+                    gap: '0.5rem',
+                    alignItems: 'flex-start',
+                    margin: '0.9rem 1.25rem',
+                    padding: '0.6rem 0.75rem',
+                    background: 'var(--color-info-soft)',
+                    border: '1px solid #cfe0fb',
+                    borderRadius: 'var(--radius-control)',
+                  }}
+                >
+                  <span style={{ color: 'var(--color-info)', flex: 'none', marginTop: 1 }}>
+                    <Icon name="shield" size={14} />
+                  </span>
+                  <span className="muted" style={{ fontSize: 12.5 }}>
+                    These are saved plans. ConvoAds records the hypothesis and campaign — arm/variant
+                    delivery and results measurement aren&apos;t live yet.
+                  </span>
+                </div>
+                <div className="table-wrap">
+                  <table className="table">
+                    <thead>
+                      <tr>
+                        <th>Hypothesis</th>
+                        <th>Campaign</th>
+                        <th>Status</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+                    </thead>
+                    <tbody>
+                      {experiments.map((exp) => (
+                        <tr key={exp.id}>
+                          <td>
+                            <div className="cell-strong">{exp.hypothesis}</div>
+                          </td>
+                          <td>
+                            <span className="cell-muted" style={{ fontSize: 13 }}>
+                              {campaignNameById.get(exp.campaignId) ??
+                                `Campaign ${exp.campaignId.slice(0, 10)}…`}
+                            </span>
+                          </td>
+                          <td>
+                            <StatusChip status={exp.status} />
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </>
             ) : (
               <EmptyState
                 icon="sparkles"
@@ -614,7 +655,7 @@ function NewExperimentModal({
     setBusy(true);
     try {
       await client.experiments.create({ campaignId, hypothesis: trimmed });
-      toast.success('Experiment created');
+      toast.success('Experiment plan saved');
       onCreated();
       onClose();
     } catch (e) {
@@ -630,21 +671,21 @@ function NewExperimentModal({
     <Modal
       open
       onClose={onClose}
-      title="Design an experiment"
+      title="Design an experiment plan"
       footer={
         <>
           <Button variant="ghost" onClick={onClose} disabled={busy}>
             Cancel
           </Button>
           <Button variant="primary" icon="plus" onClick={submit} disabled={!canSubmit}>
-            {busy ? 'Creating…' : 'Create experiment'}
+            {busy ? 'Saving…' : 'Save plan'}
           </Button>
         </>
       }
     >
       <p className="muted" style={{ margin: 0, fontSize: 13 }}>
-        Test a headline, offer, or agent opener against your control to see what lifts the
-        qualified-lead rate.
+        Capture what you want to test — a headline, offer, or agent opener against your control.
+        ConvoAds saves the plan today; arm delivery and results measurement aren&apos;t live yet.
       </p>
 
       <form

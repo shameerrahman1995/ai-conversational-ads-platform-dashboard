@@ -150,11 +150,13 @@ export function CreativeEditor({
   onClose,
   variant,
   onSaved,
+  advertiser = 'Demo Advertiser Co.',
 }: {
   open: boolean;
   onClose: () => void;
   variant: CreativeVariant | null;
   onSaved: () => void;
+  advertiser?: string;
 }) {
   const client = useApiClient();
   const toast = useToast();
@@ -689,7 +691,7 @@ export function CreativeEditor({
                     }}
                   />
                   <span style={{ fontSize: 11, fontWeight: 600, color: spec.textColor }}>
-                    Demo Advertiser Co.
+                    {advertiser}
                   </span>
                   <span
                     style={{

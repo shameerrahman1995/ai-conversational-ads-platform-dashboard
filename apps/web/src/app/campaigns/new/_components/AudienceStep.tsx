@@ -212,7 +212,7 @@ export function AudienceStep({ state, patch }: StepProps) {
               style={{ maxWidth: 100 }}
             />
             <span className="muted" style={{ fontSize: 12.5 }}>
-              {state.ageMax >= 65 ? '65 = 65+' : 'Homeowners, 18–65+'}
+              {state.ageMax >= 65 ? '65 = 65+' : 'Ages 18–65+'}
             </span>
           </div>
         </div>
@@ -294,11 +294,11 @@ export function AudienceStep({ state, patch }: StepProps) {
         <ChipInput
           values={state.interests}
           onChange={(interests) => patch({ interests })}
-          placeholder="e.g. roof repair, storm damage, HVAC replacement, home improvement"
+          placeholder="e.g. home improvement, small business software, fitness"
           ariaLabel="Add an interest or keyword"
         />
         <span className="muted" style={{ fontSize: 12.5 }}>
-          Signals the platforms use to find homeowners actively researching these services.
+          Signals the platforms use to find people actively researching these topics.
         </span>
       </div>
     </div>

@@ -245,6 +245,7 @@ export function DataState({
   loadingLabel = 'Loading…',
   emptyTitle = 'Nothing here yet',
   emptyHint,
+  onRetry,
   children,
 }: {
   loading: boolean;
@@ -253,6 +254,8 @@ export function DataState({
   loadingLabel?: string;
   emptyTitle?: string;
   emptyHint?: string;
+  /** When provided, the error state shows a "Try again" button that calls this. */
+  onRetry?: () => void;
   children: ReactNode;
 }) {
   if (loading) {
@@ -267,8 +270,15 @@ export function DataState({
     return (
       <EmptyState
         icon="alert"
-        title="Couldn't load this yet"
-        hint={`Make sure the API is running on :4000. (${error.message})`}
+        title="We couldn't load this"
+        hint="Something went wrong fetching your data. Check your connection and try again."
+        action={
+          onRetry ? (
+            <Button variant="primary" icon="refresh" onClick={onRetry}>
+              Try again
+            </Button>
+          ) : undefined
+        }
       />
     );
   }

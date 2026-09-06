@@ -57,8 +57,12 @@ export function ConnectorCard({
   const [manageOpen, setManageOpen] = useState(false);
   const [confirming, setConfirming] = useState(false);
 
-  const connected = !!connection;
   const status = connection?.status;
+  // A revoked/disconnected row is effectively "not connected" — treat it that way
+  // so the card offers a clear Reconnect path instead of dead-ending in Manage.
+  const isDeadRow = status === 'REVOKED' || status === 'DISCONNECTED';
+  const hasRow = !!connection;
+  const connected = hasRow && !isDeadRow;
   const displayName = displayNameOf(connection);
   const scopes = connection?.scopes ?? [];
   const scopeCount = scopes.length;
@@ -161,7 +165,7 @@ export function ConnectorCard({
             ) : null}
           </div>
         </div>
-        {connected && status ? (
+        {status ? (
           <StatusChip status={status} />
         ) : (
           <Chip tone="neutral">Not connected</Chip>
@@ -204,10 +208,26 @@ export function ConnectorCard({
                   Reauthorize
                 </Button>
               ) : null}
+              {status === 'DEGRADED' ? (
+                <Button
+                  variant="primary"
+                  size="sm"
+                  icon="play"
+                  onClick={testConnection}
+                  disabled={busy}
+                  title="Run a health check — this clears a degraded connection when the provider responds"
+                >
+                  {busy ? 'Testing…' : 'Test / Fix'}
+                </Button>
+              ) : null}
               <Button variant="ghost" size="sm" onClick={openManage} disabled={busy}>
                 Manage
               </Button>
             </>
+          ) : hasRow ? (
+            <Button variant="primary" size="sm" icon="refresh" onClick={connect} disabled={busy}>
+              {busy ? 'Reconnecting…' : 'Reconnect'}
+            </Button>
           ) : (
             <Button variant="primary" size="sm" onClick={connect} disabled={busy}>
               {busy ? 'Connecting…' : 'Connect'}

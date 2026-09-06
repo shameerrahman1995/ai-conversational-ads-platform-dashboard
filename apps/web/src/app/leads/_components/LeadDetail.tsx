@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import type {
+  Connection,
   ConsentRecord,
   DeliveryAttempt,
   LeadDetail as LeadDetailData,
@@ -13,7 +14,7 @@ import { Icon } from '@/components/Icon';
 import { Button, Chip, type Tone } from '@/components/ui';
 import { useApiClient } from '@/lib/api';
 import { useAsync } from '@/lib/useAsync';
-import { useToast } from '@/components/feedback';
+import { useToast, Modal } from '@/components/feedback';
 
 const usd = (n: number) => `$${n.toLocaleString('en-US', { maximumFractionDigits: 0 })}`;
 
@@ -44,6 +45,19 @@ const STAGES: { key: string; label: string }[] = [
   { key: 'lost', label: 'Lost' },
 ];
 
+/**
+ * CRM providers a lead can actually be delivered to (matches the `leads.deliver`
+ * signature). We only surface these when the org has a live connection for them.
+ */
+const CRM_PROVIDERS = [
+  { key: 'hubspot' as const, label: 'HubSpot' },
+  { key: 'zoho' as const, label: 'Zoho CRM' },
+];
+type CrmProvider = (typeof CRM_PROVIDERS)[number]['key'];
+
+/** Calendar providers that would power in-dashboard booking, once wired. */
+const CALENDAR_PROVIDERS = ['google_calendar', 'calendly'];
+
 /** Map a raw delivery-attempt status to a chip tone + label. */
 const DELIVERY_TONE: Record<string, Tone> = {
   accepted: 'success',
@@ -55,7 +69,7 @@ const DELIVERY_TONE: Record<string, Tone> = {
 function deliveryLabel(status: string): string {
   return status.charAt(0).toUpperCase() + status.slice(1);
 }
-const PROVIDER_LABEL: Record<string, string> = { hubspot: 'HubSpot', webhook: 'Webhook', zoho: 'Zoho' };
+const PROVIDER_LABEL: Record<string, string> = { hubspot: 'HubSpot', webhook: 'Webhook', zoho: 'Zoho CRM' };
 const providerName = (p: string) => PROVIDER_LABEL[p] ?? p.charAt(0).toUpperCase() + p.slice(1);
 
 /** Human labels for the consent types the agent records during a conversation. */
@@ -66,6 +80,70 @@ const CONSENT_LABEL: Record<string, string> = {
 };
 function consentLabel(type: string): string {
   return CONSENT_LABEL[type] ?? type.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+/* ---- Contact field presentation ------------------------------------ */
+/** Clean labels for the most common captured contact fields. */
+const FIELD_LABEL: Record<string, string> = {
+  name: 'Name',
+  full_name: 'Name',
+  first_name: 'First name',
+  last_name: 'Last name',
+  email: 'Email',
+  phone: 'Phone',
+  phone_number: 'Phone',
+  mobile: 'Mobile',
+  company: 'Company',
+  address: 'Address',
+  street: 'Address',
+  city: 'City',
+  state: 'State',
+  zip: 'ZIP',
+  zip_code: 'ZIP',
+  postal_code: 'ZIP',
+  service: 'Service needed',
+  service_type: 'Service needed',
+  budget: 'Budget',
+  timeline: 'Timeline',
+  notes: 'Notes',
+};
+/** Contact-identity fields float to the top; everything else keeps its order. */
+const FIELD_ORDER = [
+  'name',
+  'full_name',
+  'first_name',
+  'last_name',
+  'email',
+  'phone',
+  'phone_number',
+  'mobile',
+  'company',
+  'address',
+  'street',
+  'city',
+  'state',
+  'zip',
+  'zip_code',
+  'postal_code',
+];
+function fieldLabel(field: string): string {
+  const key = field.toLowerCase();
+  return FIELD_LABEL[key] ?? field.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+}
+function fieldRank(field: string): number {
+  const i = FIELD_ORDER.indexOf(field.toLowerCase());
+  return i === -1 ? FIELD_ORDER.length + 1 : i;
+}
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+function isEmailField(field: string, value: string): boolean {
+  return field.toLowerCase().includes('email') || EMAIL_RE.test(value.trim());
+}
+function isPhoneField(field: string, value: string): boolean {
+  const f = field.toLowerCase();
+  return (
+    (f.includes('phone') || f.includes('mobile') || f.includes('tel')) &&
+    /\d/.test(value)
+  );
 }
 
 function SectionLabel({ children }: { children: React.ReactNode }) {
@@ -102,9 +180,25 @@ export function LeadDetail({
   const score = lead.score ?? 0;
 
   // Real, decrypted detail from leads.get(). Falls back to empty while loading.
+  const fieldValues = detail?.fieldValues ?? [];
   const consentRecords: ConsentRecord[] = detail?.consentRecords ?? [];
   const transcript: TranscriptTurn[] = detail?.transcript ?? [];
   const detailPending = detailLoading && !detail;
+
+  // Contact fields, contact-identity first, then whatever else was captured.
+  const contactFields = [...fieldValues]
+    .map((f, i) => ({ ...f, i }))
+    .sort((a, b) => fieldRank(a.field) - fieldRank(b.field) || a.i - b.i);
+
+  // ---- Live connection state (which CRMs / calendars are usable) ---------
+  const { data: connectionsData } = useAsync(() => client.connections.list(), [client]);
+  const connections: Connection[] = connectionsData ?? [];
+  const connectedCrms = CRM_PROVIDERS.filter((p) =>
+    connections.some((c) => c.provider === p.key && c.status === 'CONNECTED'),
+  );
+  const hasCalendar = connections.some(
+    (c) => CALENDAR_PROVIDERS.includes(c.provider) && c.status === 'CONNECTED',
+  );
 
   // ---- Live CRM delivery state -------------------------------------------
   const [deliveriesReload, setDeliveriesReload] = useState(0);
@@ -116,24 +210,46 @@ export function LeadDetail({
   const sortedDeliveries = [...deliveries].sort(
     (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
   );
-  const accepted = deliveries.some((d) => d.status === 'accepted');
+  const acceptedDelivery = sortedDeliveries.find((d) => d.status === 'accepted');
+  const accepted = Boolean(acceptedDelivery);
   const failedOnly = deliveries.length > 0 && !accepted && deliveries.every((d) => d.status === 'failed');
   const synced = accepted || Boolean(lead.crmId);
 
+  // Which provider name to show in the CRM section: the one that actually
+  // accepted the lead, else the single connected CRM, else a generic label.
+  const displayProvider: string | null =
+    acceptedDelivery?.provider ?? (connectedCrms.length === 1 ? connectedCrms[0].key : null);
+  const displayProviderName = displayProvider ? providerName(displayProvider) : 'your CRM';
+
   const [delivering, setDelivering] = useState(false);
-  async function sendToCrm() {
+  const [deliverError, setDeliverError] = useState<string | null>(null);
+  const [crmModalOpen, setCrmModalOpen] = useState(false);
+
+  async function sendToCrm(provider: CrmProvider) {
+    setDeliverError(null);
     setDelivering(true);
     try {
-      await client.leads.deliver(lead.id, 'hubspot');
-      toast.success('Lead sent to HubSpot');
+      await client.leads.deliver(lead.id, provider);
+      toast.success(`Lead sent to ${providerName(provider)}`);
       setDeliveriesReload((n) => n + 1); // refetch CRM-delivery state
       onChanged(); // refetch the inbox list (crmId → Synced, KPI counts)
     } catch (e) {
-      toast.error(
-        e instanceof ApiClientError ? e.body.message : 'Could not send this lead to HubSpot',
-      );
+      const msg =
+        e instanceof ApiClientError
+          ? e.body.message
+          : `Could not send this lead to ${providerName(provider)}`;
+      setDeliverError(msg);
+      toast.error(msg);
     } finally {
       setDelivering(false);
+    }
+  }
+
+  function onSendClick() {
+    if (connectedCrms.length === 1) {
+      sendToCrm(connectedCrms[0].key);
+    } else if (connectedCrms.length > 1) {
+      setCrmModalOpen(true);
     }
   }
 
@@ -146,20 +262,57 @@ export function LeadDetail({
     if (pendingStage && lead.lifecycleStage === pendingStage) setPendingStage(null);
   }, [lead.lifecycleStage, pendingStage]);
 
-  async function changeStage(stage: string, label: string) {
-    if (stage === activeStage || stageBusy) return;
+  // "Won" deal value. The status API doesn't accept a revenue figure, so this
+  // is recorded in-view only (and clearly labelled as such) — no faked persistence.
+  const [wonModalOpen, setWonModalOpen] = useState(false);
+  const [wonAmount, setWonAmount] = useState('');
+  const [wonRevenue, setWonRevenue] = useState<number | null>(null);
+  const effectiveRevenue = wonRevenue ?? lead.revenue ?? null;
+
+  async function changeStage(stage: string, label: string): Promise<boolean> {
+    if (stage === activeStage || stageBusy) return false;
     setStageBusy(true);
     try {
       await client.leads.setStatus(lead.id, stage);
       setPendingStage(stage);
       toast.success(`Lead moved to ${label}`);
       onChanged();
+      return true;
     } catch (e) {
       toast.error(
         e instanceof ApiClientError ? e.body.message : 'Could not update the lead stage',
       );
+      return false;
     } finally {
       setStageBusy(false);
+    }
+  }
+
+  function onStageClick(stage: string, label: string) {
+    if (stage === activeStage || stageBusy) return;
+    if (stage === 'won') {
+      setWonAmount(effectiveRevenue != null ? String(effectiveRevenue) : '');
+      setWonModalOpen(true);
+      return;
+    }
+    changeStage(stage, label);
+  }
+
+  async function confirmWon() {
+    const trimmed = wonAmount.trim();
+    const amount = trimmed === '' ? null : Number(trimmed);
+    if (amount != null && (Number.isNaN(amount) || amount < 0)) {
+      toast.error('Enter a valid deal amount, or leave it blank.');
+      return;
+    }
+    setWonModalOpen(false);
+    const ok = await changeStage('won', 'Won');
+    if (ok && amount != null) {
+      setWonRevenue(amount);
+      toast.toast(
+        `Deal value ${usd(amount)} recorded in this view — the status API doesn't persist revenue yet.`,
+        'info',
+      );
     }
   }
 
@@ -218,6 +371,74 @@ export function LeadDetail({
 
       <hr className="divider" />
 
+      {/* Contact — who the lead actually is (captured field values) */}
+      <div className="card-pad stack" style={{ gap: '0.6rem' }}>
+        <div className="spread">
+          <SectionLabel>Contact</SectionLabel>
+          <span className="muted row" style={{ gap: '0.35rem', fontSize: 12 }}>
+            <Icon name="users" size={13} />
+            Captured in conversation
+          </span>
+        </div>
+        {detailPending ? (
+          <div className="muted" style={{ fontSize: 12 }}>
+            Loading contact details…
+          </div>
+        ) : contactFields.length > 0 ? (
+          <dl
+            style={{
+              display: 'grid',
+              gridTemplateColumns: 'minmax(0, 8.5rem) 1fr',
+              rowGap: '0.5rem',
+              columnGap: '0.9rem',
+              margin: 0,
+              fontSize: 13.5,
+            }}
+          >
+            {contactFields.map((f) => {
+              const value = (f.value ?? '').trim();
+              let rendered: React.ReactNode = value || '—';
+              if (value && isEmailField(f.field, value)) {
+                rendered = (
+                  <a href={`mailto:${value}`} style={{ color: 'var(--color-brand)' }}>
+                    {value}
+                  </a>
+                );
+              } else if (value && isPhoneField(f.field, value)) {
+                rendered = (
+                  <a href={`tel:${value.replace(/[^\d+]/g, '')}`} style={{ color: 'var(--color-brand)' }}>
+                    {value}
+                  </a>
+                );
+              }
+              return (
+                <div key={`${f.field}-${f.i}`} style={{ display: 'contents' }}>
+                  <dt className="muted" style={{ fontSize: 12.5 }}>
+                    {fieldLabel(f.field)}
+                  </dt>
+                  <dd
+                    style={{
+                      margin: 0,
+                      fontWeight: 500,
+                      color: 'var(--color-ink)',
+                      overflowWrap: 'anywhere',
+                    }}
+                  >
+                    {rendered}
+                  </dd>
+                </div>
+              );
+            })}
+          </dl>
+        ) : (
+          <div className="muted" style={{ fontSize: 12.5 }}>
+            No contact fields were captured for this lead.
+          </div>
+        )}
+      </div>
+
+      <hr className="divider" />
+
       {/* Pipeline stage */}
       <div className="card-pad stack" style={{ gap: '0.6rem' }}>
         <SectionLabel>Pipeline stage</SectionLabel>
@@ -228,7 +449,7 @@ export function LeadDetail({
               <button
                 key={s.key}
                 type="button"
-                onClick={() => changeStage(s.key, s.label)}
+                onClick={() => onStageClick(s.key, s.label)}
                 disabled={stageBusy || isActive}
                 aria-pressed={isActive}
                 className="chip"
@@ -246,9 +467,16 @@ export function LeadDetail({
             );
           })}
         </div>
-        <div className="muted" style={{ fontSize: 12.5 }}>
-          Stage syncs back to reporting and, once connected, to your CRM pipeline.
-        </div>
+        {activeStage === 'won' && effectiveRevenue != null ? (
+          <div className="muted" style={{ fontSize: 12.5 }}>
+            Deal value: <strong style={{ color: 'var(--color-ink)' }}>{usd(effectiveRevenue)}</strong>
+            {wonRevenue != null ? ' — recorded in this view (not synced to the API).' : '.'}
+          </div>
+        ) : (
+          <div className="muted" style={{ fontSize: 12.5 }}>
+            Stage syncs back to reporting and, once connected, to your CRM pipeline.
+          </div>
+        )}
       </div>
 
       <hr className="divider" />
@@ -293,7 +521,7 @@ export function LeadDetail({
         <div className="spread">
           <span className="row" style={{ gap: '0.5rem', fontWeight: 500 }}>
             <Icon name="link" size={15} />
-            HubSpot
+            {displayProvider ? providerName(displayProvider) : 'CRM'}
           </span>
           {synced ? (
             <Chip tone="success" dot>
@@ -306,6 +534,10 @@ export function LeadDetail({
           ) : failedOnly ? (
             <Chip tone="danger" dot>
               Delivery failed
+            </Chip>
+          ) : connectedCrms.length === 0 ? (
+            <Chip tone="neutral" dot>
+              No CRM connected
             </Chip>
           ) : lead.qualified ? (
             <Chip tone="warning" dot>
@@ -320,14 +552,26 @@ export function LeadDetail({
         <div className="muted" style={{ fontSize: 12.5 }}>
           {synced
             ? lead.crmId
-              ? `Contact ${lead.crmId} is mapped to your HubSpot pipeline.`
-              : 'This contact and transcript were accepted by HubSpot.'
-            : failedOnly
-              ? 'The last delivery to HubSpot failed — retry to push this contact again.'
-              : lead.qualified
-                ? `Qualified lead${lead.revenue ? ` worth ${usd(lead.revenue)}` : ''} — not yet pushed to your CRM.`
-                : 'Low-intent leads are held for review and not routed to sales automatically.'}
+              ? `Contact ${lead.crmId} is mapped to ${displayProviderName}.`
+              : `This contact and transcript were accepted by ${displayProviderName}.`
+            : connectedCrms.length === 0
+              ? 'No CRM is connected yet — connect one to push qualified leads to sales.'
+              : failedOnly
+                ? `The last delivery to ${displayProviderName} failed — retry to push this contact again.`
+                : lead.qualified
+                  ? `Qualified lead${lead.revenue ? ` worth ${usd(lead.revenue)}` : ''} — not yet pushed to your CRM.`
+                  : 'Low-intent leads are held for review and not routed to sales automatically.'}
         </div>
+
+        {deliverError ? (
+          <div
+            className="row"
+            style={{ gap: '0.4rem', alignItems: 'flex-start', fontSize: 12.5, color: 'var(--color-danger)' }}
+          >
+            <Icon name="alert" size={14} />
+            <span>{deliverError}</span>
+          </div>
+        ) : null}
 
         {/* Delivery log — live attempts */}
         <div className="stack" style={{ gap: '0.35rem', marginTop: '0.15rem' }}>
@@ -431,23 +675,133 @@ export function LeadDetail({
       <hr className="divider" />
 
       {/* Actions */}
-      <div className="card-pad row" style={{ gap: '0.6rem' }}>
-        <Button
-          variant="primary"
-          icon={synced ? 'check' : 'up-right'}
-          onClick={sendToCrm}
-          disabled={delivering || synced}
-        >
-          {synced ? 'In HubSpot' : delivering ? 'Sending…' : failedOnly ? 'Retry sync' : 'Send to CRM'}
-        </Button>
-        <Button
-          variant="ghost"
-          icon="clock"
-          onClick={() => toast.toast('Meeting booking opens the calendar connector', 'info')}
-        >
-          Book meeting
-        </Button>
+      <div className="card-pad stack" style={{ gap: '0.55rem' }}>
+        <div className="row" style={{ gap: '0.6rem', flexWrap: 'wrap' }}>
+          {synced ? (
+            <Button variant="primary" icon="check" disabled>
+              In {displayProvider ? providerName(displayProvider) : 'CRM'}
+            </Button>
+          ) : connectedCrms.length === 0 ? (
+            <a className="btn btn-primary" href="/connections" style={{ textDecoration: 'none' }}>
+              <Icon name="link" size={16} />
+              Connect a CRM
+            </a>
+          ) : (
+            <Button variant="primary" icon="up-right" onClick={onSendClick} disabled={delivering}>
+              {delivering
+                ? 'Sending…'
+                : failedOnly
+                  ? 'Retry sync'
+                  : connectedCrms.length === 1
+                    ? `Send to ${connectedCrms[0].label}`
+                    : 'Send to CRM'}
+            </Button>
+          )}
+
+          <Button
+            variant="ghost"
+            icon="clock"
+            disabled
+            title={
+              hasCalendar
+                ? "Calendar booking from the dashboard isn't available yet."
+                : 'Connect a calendar to enable booking.'
+            }
+          >
+            Book meeting
+          </Button>
+        </div>
+        <div className="muted" style={{ fontSize: 12 }}>
+          {hasCalendar ? (
+            "Calendar booking from the dashboard isn't available yet."
+          ) : (
+            <>
+              Connect a calendar to enable booking.{' '}
+              <a href="/connections" style={{ color: 'var(--color-brand)' }}>
+                Connect a calendar →
+              </a>
+            </>
+          )}
+        </div>
       </div>
+
+      {/* Provider chooser — only reached when 2+ CRMs are connected */}
+      <Modal
+        open={crmModalOpen}
+        onClose={() => setCrmModalOpen(false)}
+        title="Send lead to CRM"
+        width={420}
+      >
+        <div className="stack" style={{ gap: '0.6rem' }}>
+          <p className="muted" style={{ margin: 0, fontSize: 13 }}>
+            Choose which connected CRM to push this contact and transcript to.
+          </p>
+          {connectedCrms.map((p) => (
+            <button
+              key={p.key}
+              type="button"
+              className="btn"
+              style={{ justifyContent: 'space-between' }}
+              disabled={delivering}
+              onClick={() => {
+                setCrmModalOpen(false);
+                sendToCrm(p.key);
+              }}
+            >
+              <span className="row" style={{ gap: '0.5rem' }}>
+                <Icon name="link" size={15} />
+                {p.label}
+              </span>
+              <Icon name="up-right" size={15} />
+            </button>
+          ))}
+        </div>
+      </Modal>
+
+      {/* Won deal value prompt */}
+      <Modal
+        open={wonModalOpen}
+        onClose={() => setWonModalOpen(false)}
+        title="Mark lead as Won"
+        width={420}
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setWonModalOpen(false)}>
+              Cancel
+            </Button>
+            <Button variant="primary" icon="check" onClick={confirmWon} disabled={stageBusy}>
+              Mark as Won
+            </Button>
+          </>
+        }
+      >
+        <div className="stack" style={{ gap: '0.7rem' }}>
+          <p className="muted" style={{ margin: 0, fontSize: 13 }}>
+            Record the deal value for this won lead. This helps pipeline reporting.
+          </p>
+          <label className="field">
+            <span className="field-label">Deal value (USD)</span>
+            <input
+              className="input"
+              type="number"
+              min="0"
+              step="1"
+              inputMode="decimal"
+              placeholder="e.g. 12000"
+              value={wonAmount}
+              onChange={(e) => setWonAmount(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') confirmWon();
+              }}
+            />
+          </label>
+          <div className="muted" style={{ fontSize: 12 }}>
+            Note: the status API doesn&apos;t yet accept a revenue figure, so this value is recorded
+            in this view only — it is not persisted server-side. You can also leave it blank and just
+            move the lead to Won.
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 }

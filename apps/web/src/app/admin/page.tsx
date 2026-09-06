@@ -269,7 +269,7 @@ export default function AdminPage() {
                     </td>
                     <td style={{ textAlign: 'right' }}>
                       <Button variant="ghost" size="sm" onClick={() => setManageMember(m)}>
-                        Manage
+                        View
                       </Button>
                     </td>
                   </tr>
@@ -479,7 +479,12 @@ export default function AdminPage() {
         actions={inviteBtn}
       />
 
-      <DataState loading={loading} error={error} loadingLabel="Loading workspace settings…">
+      <DataState
+        loading={loading}
+        error={error}
+        loadingLabel="Loading workspace settings…"
+        onRetry={refetch}
+      >
         <Tabs items={tabs} />
       </DataState>
 
@@ -848,7 +853,10 @@ function ManageMemberModal({ member, onClose }: { member: OrgUser; onClose: () =
 
 function SecurityTab() {
   const client = useApiClient();
-  const { data, error, loading } = useAsync(() => client.audit.list(100), [client]);
+  const { role } = useOrg();
+  const isAdmin = role === 'admin';
+  const [reload, setReload] = useState(0);
+  const { data, error, loading } = useAsync(() => client.audit.list(100), [client, reload]);
 
   // Newest first — don't assume the API's ordering.
   const events = [...(data ?? [])].sort(
@@ -873,6 +881,7 @@ function SecurityTab() {
           loading={loading}
           error={error}
           isEmpty={events.length === 0}
+          onRetry={() => setReload((n) => n + 1)}
           loadingLabel="Loading audit trail…"
           emptyTitle="No audit events yet"
           emptyHint="Privileged actions — invites, approvals, publishes and connection changes — are recorded here as your team works."
@@ -956,7 +965,7 @@ function SecurityTab() {
           <PostureRow label="Human review for restricted verticals" state="on" />
           <PostureRow label="Explicit consent captured before chat" state="on" />
           <PostureRow label="Exportable audit log (CSV)" state="on" />
-          <PostureRow label="Single sign-on (SSO / SAML)" state="available" />
+          <PostureRow label="Single sign-on (SSO / SAML)" state="contact" />
         </Card>
 
         <Card className="card-pad stack" style={{ gap: '0.6rem' }}>
@@ -978,7 +987,229 @@ function SecurityTab() {
           </div>
         </Card>
       </div>
+
+      {isAdmin ? <DataRetentionControls /> : null}
     </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Data & retention controls (admin-only, operational)                 */
+/* Wires the live retention sweep + per-lead DSAR export/erase.         */
+/* ------------------------------------------------------------------ */
+
+function DataRetentionControls() {
+  const client = useApiClient();
+  const toast = useToast();
+
+  const [sweepConfirm, setSweepConfirm] = useState(false);
+  const [sweepBusy, setSweepBusy] = useState(false);
+
+  const [leadId, setLeadId] = useState('');
+  const [exportBusy, setExportBusy] = useState(false);
+  const [eraseConfirm, setEraseConfirm] = useState(false);
+  const [eraseBusy, setEraseBusy] = useState(false);
+
+  const trimmedLead = leadId.trim();
+  const hasLead = trimmedLead.length > 0;
+
+  async function runSweep() {
+    setSweepBusy(true);
+    try {
+      const res = (await client.retention.run()) as { deleted?: number; purged?: number };
+      const n =
+        typeof res.deleted === 'number'
+          ? res.deleted
+          : typeof res.purged === 'number'
+            ? res.purged
+            : null;
+      toast.success(
+        n != null
+          ? `Retention sweep complete — ${n} record${n === 1 ? '' : 's'} purged`
+          : 'Retention sweep complete',
+      );
+      setSweepConfirm(false);
+    } catch (e) {
+      toast.error(e instanceof ApiClientError ? e.body.message : 'Could not run the retention sweep');
+    } finally {
+      setSweepBusy(false);
+    }
+  }
+
+  async function exportLead() {
+    if (!hasLead) return;
+    setExportBusy(true);
+    try {
+      const data = await client.privacy.export(trimmedLead);
+      // Hand the operator the exported record as a JSON download (DSAR deliverable).
+      const url = URL.createObjectURL(
+        new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }),
+      );
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `convoads-dsar-export-${trimmedLead}.json`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      toast.success('Lead data exported');
+    } catch (e) {
+      toast.error(e instanceof ApiClientError ? e.body.message : 'Could not export this lead');
+    } finally {
+      setExportBusy(false);
+    }
+  }
+
+  async function eraseLead() {
+    if (!hasLead) return;
+    setEraseBusy(true);
+    try {
+      await client.privacy.erase(trimmedLead);
+      toast.success(`Erased data for lead ${trimmedLead}`);
+      setEraseConfirm(false);
+      setLeadId('');
+    } catch (e) {
+      toast.error(e instanceof ApiClientError ? e.body.message : 'Could not erase this lead');
+    } finally {
+      setEraseBusy(false);
+    }
+  }
+
+  return (
+    <Panel
+      title="Data & retention controls"
+      note="operational — admin only"
+      actions={
+        <Chip tone="brand" icon="shield">
+          Admin
+        </Chip>
+      }
+    >
+      <div className="card-pad stack" style={{ gap: '1.25rem' }}>
+        {/* Retention sweep */}
+        <div className="spread" style={{ gap: '1rem', alignItems: 'flex-start' }}>
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontWeight: 600, fontSize: 14 }}>Retention sweep</div>
+            <div className="muted" style={{ fontSize: 12.5, marginTop: 2, maxWidth: '62ch' }}>
+              Apply the workspace retention policy now — purges transcripts and lead records that are
+              past the 24-month window. Runs on a schedule automatically; use this to force it early.
+            </div>
+          </div>
+          {sweepConfirm ? (
+            <div className="row" style={{ gap: '0.4rem', flex: 'none' }}>
+              <Button variant="danger" size="sm" icon="check" onClick={runSweep} disabled={sweepBusy}>
+                {sweepBusy ? 'Running…' : 'Confirm sweep'}
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setSweepConfirm(false)}
+                disabled={sweepBusy}
+              >
+                Cancel
+              </Button>
+            </div>
+          ) : (
+            <Button
+              variant="ghost"
+              size="sm"
+              icon="refresh"
+              onClick={() => setSweepConfirm(true)}
+              style={{ flex: 'none' }}
+            >
+              Run retention sweep now
+            </Button>
+          )}
+        </div>
+
+        <hr className="divider" style={{ margin: 0 }} />
+
+        {/* DSAR — per-lead export / erase */}
+        <div className="stack" style={{ gap: '0.7rem' }}>
+          <div>
+            <div style={{ fontWeight: 600, fontSize: 14 }}>Data subject requests (DSAR)</div>
+            <div className="muted" style={{ fontSize: 12.5, marginTop: 2, maxWidth: '62ch' }}>
+              Export or erase one lead&apos;s personal data by lead ID. Export returns the record as a
+              JSON download; erase permanently deletes it and cannot be undone.
+            </div>
+          </div>
+
+          <div className="field" style={{ maxWidth: 420 }}>
+            <label className="field-label" htmlFor="dsar-lead-id">
+              Lead ID
+            </label>
+            <input
+              id="dsar-lead-id"
+              className="input"
+              placeholder="lead_…"
+              value={leadId}
+              onChange={(e) => {
+                setLeadId(e.target.value);
+                setEraseConfirm(false);
+              }}
+            />
+          </div>
+
+          {eraseConfirm ? (
+            <div
+              className="stack"
+              style={{
+                gap: '0.6rem',
+                border: '1px solid var(--color-danger-soft)',
+                background: 'var(--color-danger-soft)',
+                borderRadius: 8,
+                padding: '0.8rem',
+                maxWidth: 520,
+              }}
+            >
+              <div style={{ fontWeight: 600, fontSize: 13.5, color: 'var(--color-danger)' }}>
+                Erase all data for {trimmedLead}?
+              </div>
+              <div className="muted" style={{ fontSize: 12.5 }}>
+                This permanently deletes the lead&apos;s transcripts, consent records and PII. It
+                cannot be undone.
+              </div>
+              <div className="row" style={{ gap: '0.4rem' }}>
+                <Button variant="danger" size="sm" icon="x" onClick={eraseLead} disabled={eraseBusy}>
+                  {eraseBusy ? 'Erasing…' : 'Yes, erase permanently'}
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setEraseConfirm(false)}
+                  disabled={eraseBusy}
+                >
+                  Cancel
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <div className="row" style={{ gap: '0.4rem' }}>
+              <Button
+                variant="ghost"
+                size="sm"
+                icon="download"
+                onClick={exportLead}
+                disabled={!hasLead || exportBusy}
+                title={hasLead ? 'Download this lead’s data as JSON' : 'Enter a lead ID first'}
+              >
+                {exportBusy ? 'Exporting…' : 'Export data'}
+              </Button>
+              <Button
+                variant="danger"
+                size="sm"
+                icon="x"
+                onClick={() => setEraseConfirm(true)}
+                disabled={!hasLead || eraseBusy}
+                title={hasLead ? 'Permanently erase this lead’s data' : 'Enter a lead ID first'}
+              >
+                Erase data
+              </Button>
+            </div>
+          )}
+        </div>
+      </div>
+    </Panel>
   );
 }
 
@@ -1068,7 +1299,7 @@ function MiniStat({ label, value, hint }: { label: string; value: string; hint: 
   );
 }
 
-function PostureRow({ label, state }: { label: string; state: 'on' | 'available' }) {
+function PostureRow({ label, state }: { label: string; state: 'on' | 'contact' }) {
   return (
     <div className="spread" style={{ gap: '0.75rem' }}>
       <span style={{ fontSize: 13 }}>{label}</span>
@@ -1077,7 +1308,7 @@ function PostureRow({ label, state }: { label: string; state: 'on' | 'available'
           Enforced
         </Chip>
       ) : (
-        <Chip tone="neutral">Available</Chip>
+        <Chip tone="info">Contact sales</Chip>
       )}
     </div>
   );

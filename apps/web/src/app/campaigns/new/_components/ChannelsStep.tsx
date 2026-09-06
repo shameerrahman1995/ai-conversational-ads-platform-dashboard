@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { Icon } from '@/components/Icon';
 import { Chip } from '@/components/ui';
 import { PLATFORMS, FORMATS, type StepProps } from './types';
@@ -8,9 +9,14 @@ const FORMAT_LABEL: Record<string, string> = Object.fromEntries(
   FORMATS.map((f) => [f.key, f.label]),
 );
 
+const PLATFORM_LABEL: Record<string, string> = Object.fromEntries(
+  PLATFORMS.map((p) => [p.key, p.label]),
+);
+
 export function ChannelsStep({ state, patch, connectedProviders = [] }: StepProps) {
   const selected = state.platforms;
   const count = selected.length;
+  const unconnected = selected.filter((k) => !connectedProviders.includes(k));
 
   const toggle = (key: string) => {
     const next = selected.includes(key)
@@ -24,7 +30,7 @@ export function ChannelsStep({ state, patch, connectedProviders = [] }: StepProp
       <div>
         <h2 style={{ fontSize: 18 }}>Where should this campaign run?</h2>
         <p className="page-sub" style={{ marginTop: '0.25rem' }}>
-          Pick the ad platforms to reach roofing &amp; HVAC homeowners. You can run on several at once —
+          Pick the ad platforms to reach your audience. You can run on several at once —
           the AI agent qualifies every lead the same way, wherever it comes from.
         </p>
       </div>
@@ -114,6 +120,40 @@ export function ChannelsStep({ state, patch, connectedProviders = [] }: StepProp
           </span>
         ) : null}
       </div>
+
+      {unconnected.length ? (
+        <div
+          className="row"
+          style={{
+            gap: '0.6rem',
+            alignItems: 'flex-start',
+            padding: '0.85rem 1rem',
+            borderRadius: 'var(--radius-card)',
+            background: 'var(--color-warning-soft)',
+          }}
+        >
+          <Icon
+            name="alert"
+            size={16}
+            style={{ color: 'var(--color-warning)', flex: 'none', marginTop: 2 }}
+          />
+          <span style={{ fontSize: 13, color: 'var(--color-warning-ink)' }}>
+            {unconnected.length === 1
+              ? `${PLATFORM_LABEL[unconnected[0]] ?? unconnected[0]} isn't connected`
+              : `${unconnected.map((k) => PLATFORM_LABEL[k] ?? k).join(', ')} aren't connected`}
+            {' '}— you can still create the campaign, but{' '}
+            {unconnected.length === 1 ? 'it' : 'they'} can&apos;t publish until you connect{' '}
+            {unconnected.length === 1 ? 'it' : 'them'} in{' '}
+            <Link
+              href="/connections"
+              style={{ color: 'var(--color-warning-ink)', textDecoration: 'underline', fontWeight: 600 }}
+            >
+              Connections
+            </Link>
+            .
+          </span>
+        </div>
+      ) : null}
     </div>
   );
 }

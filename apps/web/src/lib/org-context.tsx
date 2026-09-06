@@ -17,6 +17,8 @@ export interface OrgContextValue {
   orgId: string;
   role: string;
   token: string | null;
+  /** True once localStorage has been read on the client (so guards don't act pre-hydration). */
+  ready: boolean;
   setOrg: (orgId: string) => void;
   setRole: (role: string) => void;
   /** Store a login JWT and adopt its org/role. */
@@ -56,12 +58,14 @@ export function OrgProvider({ children }: { children: ReactNode }) {
   const [orgId, setOrgState] = useState<string>(DEFAULT_ORG);
   const [role, setRoleState] = useState<string>(DEFAULT_ROLE);
   const [token, setTokenState] = useState<string | null>(null);
+  const [ready, setReady] = useState(false);
 
   useEffect(() => {
     setOrgState(readStored(ORG_KEY, DEFAULT_ORG));
     setRoleState(readStored(ROLE_KEY, DEFAULT_ROLE));
     const t = readStored(TOKEN_KEY, '');
     if (t) setTokenState(t);
+    setReady(true);
   }, []);
 
   const setOrg = (next: string) => {
@@ -87,7 +91,7 @@ export function OrgProvider({ children }: { children: ReactNode }) {
   };
 
   return (
-    <OrgContext.Provider value={{ orgId, role, token, setOrg, setRole, signIn, signOut }}>
+    <OrgContext.Provider value={{ orgId, role, token, ready, setOrg, setRole, signIn, signOut }}>
       {children}
     </OrgContext.Provider>
   );

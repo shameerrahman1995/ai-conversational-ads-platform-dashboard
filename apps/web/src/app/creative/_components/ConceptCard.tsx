@@ -89,15 +89,21 @@ export function ConceptCard({
   onRender,
   onEdit,
   onDelete,
+  onApprove,
   agentId,
   agentName,
+  campaignId,
+  advertiser = 'Demo Advertiser Co.',
 }: {
   variant: CreativeVariant;
   onRender?: (variant: CreativeVariant) => void | Promise<void>;
   onEdit?: () => void;
   onDelete?: () => void;
+  onApprove?: (variant: CreativeVariant) => void | Promise<void>;
   agentId?: string;
   agentName?: string;
+  campaignId?: string;
+  advertiser?: string;
 }) {
   const [previewOpen, setPreviewOpen] = useState(false);
   const { label, ratio, placement } = formatMeta(variant.format);
@@ -138,6 +144,23 @@ export function ConceptCard({
       await onRender(variant);
     } finally {
       setRendering(false);
+    }
+  }
+
+  const [approving, setApproving] = useState(false);
+  async function handleApprove() {
+    if (!onApprove || approving) return;
+    if (
+      !window.confirm(
+        'Mark this variant verified? Confirm every claim maps to an approved source — this clears it to publish.',
+      )
+    )
+      return;
+    setApproving(true);
+    try {
+      await onApprove(variant);
+    } finally {
+      setApproving(false);
     }
   }
 
@@ -345,7 +368,7 @@ export function ConceptCard({
               <div className="row" style={{ gap: '0.4rem' }}>
                 {sponsorLogo}
                 <span style={{ fontSize: 11, fontWeight: 600, color: sponsorColor }}>
-                  Demo Advertiser Co.
+                  {advertiser}
                 </span>
                 <span style={{ fontSize: 10, marginLeft: 'auto', color: sponsorSubColor }}>
                   Sponsored
@@ -465,6 +488,18 @@ export function ConceptCard({
             ? 'Every claim maps to an approved source — cleared to publish.'
             : 'Draft copy — claims still need a source before this can be approved.'}
         </div>
+        {onApprove && !sourceLinked ? (
+          <Button
+            variant="primary"
+            size="sm"
+            icon={approving ? 'refresh' : 'check-circle'}
+            onClick={handleApprove}
+            disabled={approving}
+            style={{ alignSelf: 'flex-start' }}
+          >
+            {approving ? 'Approving…' : 'Mark verified'}
+          </Button>
+        ) : null}
         {validation ? (
           <div className="row" style={{ gap: '0.4rem', fontSize: 12, color: 'var(--color-ink-3)' }}>
             <Icon name="doc" size={13} />
@@ -478,35 +513,61 @@ export function ConceptCard({
 
         {onRender || onEdit || onDelete ? (
           <div
-            className="spread"
-            style={{ marginTop: '0.15rem', paddingTop: '0.6rem', borderTop: '1px solid var(--color-line)' }}
+            style={{
+              marginTop: '0.15rem',
+              paddingTop: '0.6rem',
+              borderTop: '1px solid var(--color-line)',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '0.4rem',
+            }}
           >
-            <span className="muted" style={{ fontSize: 12 }}>
-              {onRender ? (rendered ? 'Placement assets built' : 'Not yet rendered') : 'Concept actions'}
-            </span>
-            <div className="row" style={{ gap: '0.4rem', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-              {onEdit ? (
-                <Button variant="ghost" size="sm" icon="settings" onClick={onEdit}>
-                  Customize
-                </Button>
-              ) : null}
-              {onDelete ? (
-                <Button variant="ghost" size="sm" icon="x" onClick={handleDelete}>
-                  Delete
-                </Button>
-              ) : null}
-              {onRender ? (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  icon={rendering ? 'refresh' : 'bolt'}
-                  onClick={handleRender}
-                  disabled={rendering}
-                >
-                  {rendering ? 'Rendering…' : rendered ? 'Re-render' : 'Render'}
-                </Button>
-              ) : null}
+            <div className="spread">
+              <span
+                className="row"
+                style={{ gap: '0.35rem', fontSize: 12, color: 'var(--color-ink-3)' }}
+              >
+                {onRender ? (
+                  <>
+                    <Icon name={rendered ? 'check-circle' : 'bolt'} size={13} />
+                    {rendered ? 'Placement assets built' : 'Not yet rendered'}
+                  </>
+                ) : (
+                  'Concept actions'
+                )}
+              </span>
+              <div className="row" style={{ gap: '0.4rem', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                {onEdit ? (
+                  <Button variant="ghost" size="sm" icon="settings" onClick={onEdit}>
+                    Customize
+                  </Button>
+                ) : null}
+                {onDelete ? (
+                  <Button variant="ghost" size="sm" icon="x" onClick={handleDelete}>
+                    Delete
+                  </Button>
+                ) : null}
+                {onRender ? (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    icon={rendering ? 'refresh' : 'bolt'}
+                    onClick={handleRender}
+                    disabled={rendering}
+                    title="Render builds the sized image assets for each placement and attaches a build manifest to this variant."
+                  >
+                    {rendering ? 'Rendering…' : rendered ? 'Re-render' : 'Render'}
+                  </Button>
+                ) : null}
+              </div>
             </div>
+            {onRender ? (
+              <span className="muted" style={{ fontSize: 11.5, lineHeight: 1.4 }}>
+                {rendered
+                  ? 'Sized placement assets and a build manifest are attached to this variant — re-render after edits.'
+                  : 'Render builds the sized placement assets from this concept and attaches a build manifest — the result is stored on the variant, not downloaded.'}
+              </span>
+            ) : null}
           </div>
         ) : null}
       </div>
@@ -517,6 +578,8 @@ export function ConceptCard({
         variant={variant}
         agentId={agentId}
         agentName={agentName}
+        campaignId={campaignId}
+        advertiser={advertiser}
       />
     </div>
   );

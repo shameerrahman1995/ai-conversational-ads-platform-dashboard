@@ -10,7 +10,7 @@ import {
 import { useApiClient } from '@/lib/api';
 import { useAsync } from '@/lib/useAsync';
 import { useToast } from '@/components/feedback';
-import { PageHeader, Button, Card, Chip, StatusChip, DataState } from '@/components/ui';
+import { PageHeader, Button, Card, Chip, StatusChip, DataState, EmptyState } from '@/components/ui';
 import { Tabs, RestrictedBanner, type TabDef } from './_components/primitives';
 import { isRestricted, type TabKey } from './_components/types';
 import { IdentityTab } from './_components/IdentityTab';
@@ -20,6 +20,8 @@ import { KnowledgeTab } from './_components/KnowledgeTab';
 import { ToolsTab } from './_components/ToolsTab';
 import { SimulatorTab } from './_components/SimulatorTab';
 import { TranscriptsTab } from './_components/TranscriptsTab';
+import { CreateAgentModal } from './_components/CreateAgentModal';
+import { PublishModal } from './_components/PublishModal';
 
 const TABS: TabDef[] = [
   { key: 'identity', label: 'Identity', icon: 'users' },
@@ -35,11 +37,13 @@ export default function AgentsPage() {
   const client = useApiClient();
   const toast = useToast();
 
-  // Roster + model catalog + knowledge sources (loaded once).
+  // Roster + model catalog + knowledge sources. `reloadKey` lets the error
+  // state offer a real retry (useAsync re-runs when its deps change).
+  const [reloadKey, setReloadKey] = useState(0);
   const { data, error, loading } = useAsync(
     () =>
       Promise.all([client.agents.list(), client.agents.models(), client.sources.list()]),
-    [client],
+    [client, reloadKey],
   );
   const [roster, catalog, sources] = data ?? [];
 
@@ -56,6 +60,9 @@ export default function AgentsPage() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [tab, setTab] = useState<TabKey>('identity');
   const [busy, setBusy] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const [createOpen, setCreateOpen] = useState(false);
+  const [publishOpen, setPublishOpen] = useState(false);
 
   const list = agents ?? [];
   const effectiveId = selectedId ?? list[0]?.id ?? null;
@@ -77,7 +84,19 @@ export default function AgentsPage() {
     }
   }, [detail.data]);
 
+  // Draft differs from the last saved snapshot (across every tab).
+  const isDirty = !!draft && !!saved && JSON.stringify(draft) !== JSON.stringify(saved);
+
+  // Select a different agent, warning first if the current draft has unsaved edits.
   function selectAgent(id: string) {
+    if (id === effectiveId) return;
+    if (
+      isDirty &&
+      typeof window !== 'undefined' &&
+      !window.confirm('You have unsaved changes on this agent. Switching will discard them. Continue?')
+    ) {
+      return;
+    }
     setSelectedId(id);
     setDraft(null);
     setSaved(null);
@@ -86,28 +105,37 @@ export default function AgentsPage() {
 
   const patch = (p: Partial<AgentSettings>) => setDraft((d) => (d ? { ...d, ...p } : d));
 
+  // Keep the rail + summary header chips in sync after a save/publish.
+  const applyToRoster = (id: string, settings: AgentSettings) =>
+    setAgents((prev) =>
+      prev?.map((a) =>
+        a.id === id
+          ? {
+              ...a,
+              name: settings.name,
+              model: settings.model,
+              persona: settings.persona,
+              tone: settings.tone,
+              voiceEnabled: settings.voice.enabled,
+              avatarEnabled: settings.avatar.enabled,
+            }
+          : a,
+      ) ?? prev,
+    );
+
   async function save(partial: Partial<AgentSettings>, message: string) {
     if (!effectiveId) return;
     setBusy(true);
     try {
       const res = await client.agents.updateConfig(effectiveId, partial);
-      setDraft(res.settings);
+      // Merge: adopt the server's canonical value for just the fields we saved,
+      // but preserve any unsaved edits the user made on other tabs.
+      const savedFields = Object.fromEntries(
+        (Object.keys(partial) as (keyof AgentSettings)[]).map((k) => [k, res.settings[k]]),
+      ) as Partial<AgentSettings>;
+      setDraft((d) => (d ? { ...d, ...savedFields } : res.settings));
       setSaved(res.settings);
-      setAgents((prev) =>
-        prev?.map((a) =>
-          a.id === effectiveId
-            ? {
-                ...a,
-                name: res.settings.name,
-                model: res.settings.model,
-                persona: res.settings.persona,
-                tone: res.settings.tone,
-                voiceEnabled: res.settings.voice.enabled,
-                avatarEnabled: res.settings.avatar.enabled,
-              }
-            : a,
-        ) ?? prev,
-      );
+      applyToRoster(effectiveId, res.settings);
       toast.success(message);
     } catch (e) {
       toast.error(e instanceof ApiClientError ? e.body.message : 'Something went wrong');
@@ -118,20 +146,52 @@ export default function AgentsPage() {
 
   const restricted = selected ? isRestricted(selected.vertical) : false;
 
-  async function publish() {
-    if (!selected) return;
-    if (restricted) {
-      toast.toast(`${selected.name} sent for human review — required before a healthcare agent goes live`, 'info');
-      return;
+  async function createAgent(campaignId: string) {
+    setCreating(true);
+    try {
+      const { id } = await client.agents.create({ campaignId });
+      // Refresh the roster so the new agent has a full summary, then select it.
+      const fresh = await client.agents.list();
+      setAgents(fresh);
+      setSelectedId(id);
+      setDraft(null);
+      setSaved(null);
+      setTab('identity');
+      setCreateOpen(false);
+      toast.success('Agent created — configure it, then publish when ready');
+    } catch (e) {
+      toast.error(e instanceof ApiClientError ? e.body.message : 'Could not create the agent');
+    } finally {
+      setCreating(false);
     }
+  }
+
+  // Confirmed from the publish modal. Optionally saves the full draft first so
+  // the latest edits go live instead of a stale saved config.
+  async function confirmPublish({ saveFirst }: { saveFirst: boolean }) {
+    if (!selected || !draft) return;
     setBusy(true);
     try {
-      const res = await client.agents.publish(selected.id);
-      // Flip the status chip in the rail + summary header (no reload API on useAsync).
-      setAgents((prev) =>
-        prev?.map((a) => (a.id === selected.id ? { ...a, status: res.status } : a)) ?? prev,
-      );
-      toast.success(`${selected.name} is live`);
+      if (saveFirst) {
+        const res = await client.agents.updateConfig(selected.id, draft);
+        setDraft(res.settings);
+        setSaved(res.settings);
+        applyToRoster(selected.id, res.settings);
+      }
+      if (restricted) {
+        // Honest no-op: there's no auto-publish for restricted verticals.
+        toast.toast(
+          `${selected.name} submitted for human review — required before a healthcare agent can go live`,
+          'info',
+        );
+      } else {
+        const res = await client.agents.publish(selected.id);
+        setAgents((prev) =>
+          prev?.map((a) => (a.id === selected.id ? { ...a, status: res.status } : a)) ?? prev,
+        );
+        toast.success(`${selected.name} is live`);
+      }
+      setPublishOpen(false);
     } catch (e) {
       toast.error(e instanceof ApiClientError ? e.body.message : 'Something went wrong');
     } finally {
@@ -146,10 +206,13 @@ export default function AgentsPage() {
         subtitle="Configure the post-click AI sales agent that greets every visitor, answers from approved facts, and books qualified leads."
         actions={
           <>
+            <Button variant="ghost" icon="plus" onClick={() => setCreateOpen(true)} disabled={creating}>
+              New agent
+            </Button>
             <Button
               variant="ghost"
               icon="publishing"
-              onClick={publish}
+              onClick={() => setPublishOpen(true)}
               disabled={!selected || busy}
             >
               Publish agent
@@ -169,12 +232,22 @@ export default function AgentsPage() {
       <DataState
         loading={loading}
         error={error}
-        isEmpty={list.length === 0}
+        isEmpty={false}
         loadingLabel="Loading your agents…"
-        emptyTitle="No agents yet"
-        emptyHint="Every campaign hosts its own AI sales agent. Launch a campaign to build your first one."
+        onRetry={() => setReloadKey((k) => k + 1)}
       >
-        {selected ? (
+        {list.length === 0 ? (
+          <EmptyState
+            icon="users"
+            title="No agents yet"
+            hint="An AI sales agent greets every visitor, answers from your approved facts, and books qualified leads. Create one on a campaign to get started."
+            action={
+              <Button variant="primary" icon="plus" onClick={() => setCreateOpen(true)}>
+                Create your first agent
+              </Button>
+            }
+          />
+        ) : selected ? (
           <div className="grid grid-rail-l" style={{ gap: '1rem' }}>
             <AgentRail agents={list} selectedId={selected.id} onSelect={selectAgent} />
 
@@ -225,6 +298,7 @@ export default function AgentsPage() {
                           tools={draft.tools}
                           saved={saved.tools}
                           busy={busy}
+                          hasPricingSource={(sourceList?.length ?? 0) > 0}
                           onChange={patch}
                           onSave={() => save({ tools: draft.tools }, 'Tool access saved')}
                         />
@@ -232,9 +306,10 @@ export default function AgentsPage() {
                       {tab === 'simulator' ? (
                         <SimulatorTab
                           agentId={selected.id}
-                          agentName={draft.name}
-                          disclosure={draft.disclosure}
-                          openingMessage={draft.openingMessage}
+                          agentName={saved.name}
+                          disclosure={saved.disclosure}
+                          openingMessage={saved.openingMessage}
+                          dirty={isDirty}
                         />
                       ) : null}
                     </>
@@ -258,6 +333,28 @@ export default function AgentsPage() {
           </div>
         ) : null}
       </DataState>
+
+      <CreateAgentModal
+        open={createOpen}
+        onClose={() => setCreateOpen(false)}
+        existingCampaignIds={new Set(list.map((a) => a.campaignId))}
+        creating={creating}
+        onCreate={createAgent}
+      />
+
+      {selected && draft ? (
+        <PublishModal
+          open={publishOpen}
+          onClose={() => setPublishOpen(false)}
+          agentName={selected.name}
+          draft={draft}
+          isDirty={isDirty}
+          restricted={restricted}
+          sources={sourceList ?? []}
+          busy={busy}
+          onConfirm={confirmPublish}
+        />
+      ) : null}
     </div>
   );
 }

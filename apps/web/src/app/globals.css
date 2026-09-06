@@ -196,11 +196,23 @@ main::-webkit-scrollbar-thumb:hover {
     cursor: pointer;
     flex: none;
   }
-  .topbar-search {
-    display: none;
-  }
   main.workspace-main {
     padding: 1.1rem 1rem 3rem;
+  }
+}
+
+/* Below ~720px the top bar shares its row with the hamburger — keep only the
+   search and drop the context pill + dev switcher so it doesn't overflow. */
+@media (max-width: 720px) {
+  .ctx {
+    display: none;
+  }
+  .topbar-orgswitcher {
+    display: none;
+  }
+  .topbar {
+    padding: 0 1rem;
+    gap: 0.6rem;
   }
 }
 .rail-brand {
@@ -304,6 +316,29 @@ main::-webkit-scrollbar-thumb:hover {
   font-weight: 600;
   flex: none;
 }
+.rail-signout {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  flex: none;
+  padding: 0.35rem 0.55rem;
+  border-radius: var(--radius-control);
+  border: 1px solid var(--color-rail-line);
+  background: transparent;
+  color: var(--color-rail-text);
+  font-family: var(--font-sans);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.rail-signout:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: #fff;
+}
+.rail-signout svg {
+  flex: none;
+}
 
 /* Workspace column */
 .workspace {
@@ -325,20 +360,142 @@ main::-webkit-scrollbar-thumb:hover {
   backdrop-filter: saturate(1.4) blur(8px);
   border-bottom: 1px solid var(--color-line);
 }
-.topbar-search {
+/* Global search (top bar) */
+.searchbar {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  max-width: 380px;
+}
+.searchbar-field {
   display: flex;
   align-items: center;
   gap: 0.5rem;
   height: 34px;
-  padding: 0 0.7rem;
-  min-width: 240px;
-  max-width: 360px;
-  flex: 1;
+  padding: 0 0.6rem;
   border: 1px solid var(--color-line);
   border-radius: var(--radius-control);
   background: var(--color-surface);
   color: var(--color-ink-3);
+}
+.searchbar-field:focus-within {
+  border-color: var(--color-brand);
+  box-shadow: 0 0 0 3px var(--color-brand-soft);
+}
+.searchbar-field > svg {
+  flex: none;
+}
+.searchbar-input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--color-ink);
+  font-family: var(--font-sans);
   font-size: 13px;
+}
+.searchbar-input::placeholder {
+  color: var(--color-ink-3);
+}
+.searchbar-input::-webkit-search-cancel-button,
+.searchbar-input::-webkit-search-decoration {
+  -webkit-appearance: none;
+  appearance: none;
+}
+.searchbar-clear {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border: none;
+  border-radius: 9999px;
+  background: transparent;
+  color: var(--color-ink-3);
+  cursor: pointer;
+}
+.searchbar-clear:hover {
+  background: var(--color-inset);
+  color: var(--color-ink);
+}
+.search-panel {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  z-index: 60;
+  max-height: 60vh;
+  overflow-y: auto;
+  padding: 0.35rem;
+  background: var(--color-surface);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-md);
+}
+.search-group {
+  padding: 0.5rem 0.55rem 0.25rem;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-ink-3);
+}
+.search-item {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.5rem 0.55rem;
+  border-radius: var(--radius-control);
+  color: var(--color-ink);
+  cursor: pointer;
+}
+.search-item--active {
+  background: var(--color-inset);
+}
+.search-item-ic {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  border-radius: 7px;
+  display: grid;
+  place-items: center;
+  background: var(--color-brand-soft);
+  color: var(--color-brand);
+}
+.search-item-main {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.search-item-label {
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.search-item-sub {
+  font-size: 11.5px;
+  color: var(--color-ink-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.search-item-kind {
+  flex: none;
+  font-size: 11px;
+  color: var(--color-ink-3);
+}
+.search-msg {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.75rem 0.6rem;
+  font-size: 13px;
+  color: var(--color-ink-3);
 }
 .topbar-actions {
   display: flex;

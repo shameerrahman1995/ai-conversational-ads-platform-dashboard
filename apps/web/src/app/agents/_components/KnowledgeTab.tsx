@@ -15,7 +15,7 @@ const prettyType = (t: string) => (t === 'url' ? 'Web page' : t === 'pdf' ? 'PDF
 
 const TYPES = [
   { id: 'url', label: 'Web page (URL)' },
-  { id: 'pdf', label: 'PDF document' },
+  { id: 'pdf', label: 'PDF (hosted URL)' },
   { id: 'feed', label: 'Product feed' },
 ] as const;
 
@@ -136,16 +136,21 @@ export function KnowledgeTab({
           <div style={{ fontSize: 13, color: 'var(--color-brand-ink)' }}>
             Add a product page, parse it, then approve the facts you trust. The agent may only
             answer from approved facts — otherwise it replies{' '}
-            <strong>&ldquo;Needs verification&rdquo;</strong> and offers a human.
+            <strong>&ldquo;Needs verification&rdquo;</strong> and offers a human. These sources are a{' '}
+            <strong>shared library across your whole organization</strong> — every agent draws from the
+            same approved facts.
           </div>
         </div>
       </div>
 
       <Card>
         <div className="panel-head">
-          <div className="row" style={{ gap: '0.6rem' }}>
+          <div className="row" style={{ gap: '0.6rem', flexWrap: 'wrap' }}>
             <span className="panel-title">Knowledge sources</span>
             <span className="panel-note">{approvedFactCount} approved facts</span>
+            <Chip tone="info" icon="database">
+              Shared org library
+            </Chip>
           </div>
           <Button size="sm" icon="plus" onClick={() => setOpen(true)}>
             Add source
@@ -278,19 +283,29 @@ export function KnowledgeTab({
           </div>
           <div className="field">
             <label className="field-label" htmlFor="src-uri">
-              {type === 'url' ? 'Page URL' : type === 'pdf' ? 'PDF location' : 'Feed URL'}
+              {type === 'url' ? 'Page URL' : type === 'pdf' ? 'PDF URL' : 'Feed URL'}
             </label>
             <input
               id="src-uri"
               className="input"
               value={uri}
-              placeholder="https://demoadvertiser.co/roof-repair"
+              placeholder={
+                type === 'pdf'
+                  ? 'https://demoadvertiser.co/pricing.pdf'
+                  : 'https://demoadvertiser.co/roof-repair'
+              }
               onChange={(e) => setUri(e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === 'Enter') add();
               }}
             />
             <span className="muted" style={{ fontSize: 12 }}>
+              {type === 'pdf' ? (
+                <>
+                  Paste a hosted, publicly reachable link to the PDF — local file upload isn&rsquo;t
+                  supported yet.{' '}
+                </>
+              ) : null}
               After adding, click <strong>Parse</strong> to pull candidate facts for review.
             </span>
           </div>

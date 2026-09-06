@@ -5,9 +5,9 @@ import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { useApiClient } from '@/lib/api';
 import { useAsync } from '@/lib/useAsync';
-import { useToast } from '@/components/feedback';
+import { useToast, Modal } from '@/components/feedback';
 import { ApiClientError } from '@acp/api-client';
-import type { CreativeVariant } from '@acp/api-client';
+import type { CreativeVariant, PublishPlan } from '@acp/api-client';
 import { Icon } from '@/components/Icon';
 import { AdPreviewModal } from '../../creative/_components/AdPreviewModal';
 import {
@@ -52,6 +52,38 @@ const formatLabel = (f: string) => {
   return ratio ? `${kind} · ${ratio}` : kind;
 };
 
+/* Human platform names + the set offered when adding a channel to this campaign. */
+const PLATFORM_LABEL: Record<string, string> = {
+  google_ads: 'Google Ads',
+  meta: 'Meta',
+  tiktok: 'TikTok',
+  microsoft: 'Microsoft Ads',
+  amazon_dsp: 'Amazon DSP',
+  linkedin: 'LinkedIn',
+  generic_export: 'Generic export',
+};
+const PUBLISH_PLATFORMS = [
+  'google_ads',
+  'meta',
+  'tiktok',
+  'microsoft',
+  'amazon_dsp',
+  'linkedin',
+  'generic_export',
+] as const;
+const platformLabel = (p: string) =>
+  PLATFORM_LABEL[p] ?? p.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+
+const money = (n: number) =>
+  n.toLocaleString('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    maximumFractionDigits: 0,
+  });
+
+/* What a single launch action is pending confirmation for. */
+type PendingLaunch = { kind: 'one'; planId: string } | { kind: 'all' };
+
 export default function CampaignDetailPage() {
   const params = useParams<{ id: string }>();
   const id = params.id;
@@ -61,7 +93,20 @@ export default function CampaignDetailPage() {
   const [reload, setReload] = useState(0);
   const [busy, setBusy] = useState(false);
   const [changingId, setChangingId] = useState<string | null>(null);
+  const [actingId, setActingId] = useState<string | null>(null);
   const [previewVariant, setPreviewVariant] = useState<CreativeVariant | null>(null);
+
+  // Confirmation gates.
+  const [pending, setPending] = useState<PendingLaunch | null>(null);
+  const [confirmRegen, setConfirmRegen] = useState(false);
+  const [cancelTarget, setCancelTarget] = useState<PublishPlan | null>(null);
+
+  // Inline "Add channel" modal (scoped to this campaign).
+  const [addOpen, setAddOpen] = useState(false);
+  const [acPlatform, setAcPlatform] = useState('');
+  const [acVariant, setAcVariant] = useState('');
+  const [acAccount, setAcAccount] = useState('');
+  const [acBusy, setAcBusy] = useState(false);
 
   const { data, error, loading } = useAsync(
     () =>
@@ -74,6 +119,9 @@ export default function CampaignDetailPage() {
       ]),
     [client, id, reload],
   );
+
+  // Budget is fetched on its own so a budget-endpoint hiccup never blanks the page.
+  const budget = useAsync(() => client.cost.status(), [client, reload]).data;
 
   const [campaigns, versions, variants, allPlans, agents] = data ?? [];
   const campaign = useMemo(
@@ -107,26 +155,84 @@ export default function CampaignDetailPage() {
 
   // Publish plans belonging to this campaign's variants = the launch surface.
   const variantIds = useMemo(() => new Set((variants ?? []).map((v) => v.id)), [variants]);
+  // Archived plans are dead history — never show them on the launch surface.
   const plans = useMemo(
-    () => (allPlans ?? []).filter((p) => variantIds.has(p.variantId)),
+    () =>
+      (allPlans ?? []).filter(
+        (p) => variantIds.has(p.variantId) && p.status !== 'ARCHIVED',
+      ),
     [allPlans, variantIds],
   );
   const liveCount = plans.filter((p) => p.status === 'LIVE').length;
   const readyCount = plans.filter((p) => p.status === 'READY_FOR_REVIEW').length;
 
-  async function approveAndPublish(planId: string) {
-    setBusy(true);
+  // Budget gate: block-worthy when the org is over budget or in its alert band.
+  const budgetBlocking = !!budget && budget.configured && (budget.overBudget || budget.alert);
+  // Launching into a draft agent or a strained budget needs an explicit "yes".
+  const needsLaunchConfirm = !agentLive || budgetBlocking;
+
+  /* One place for every single-plan row action: toast, reload, per-row spinner. */
+  async function runPlanAction(planId: string, successMsg: string, fn: () => Promise<unknown>) {
+    setActingId(planId);
     try {
+      await fn();
+      toast.success(successMsg);
+      setReload((n) => n + 1);
+    } catch (e) {
+      toast.error(
+        e instanceof ApiClientError ? e.body.message : "Couldn't complete that action",
+      );
+    } finally {
+      setActingId(null);
+    }
+  }
+
+  // READY_FOR_REVIEW → approve, push, then pull status back.
+  const runApprove = (planId: string) =>
+    runPlanAction(planId, 'Approved & published — live', async () => {
       await client.publishing.approve(planId);
       await client.publishing.execute(planId);
       await client.publishing.sync(planId);
-      toast.success('Approved & published — live');
-      setReload((n) => n + 1);
-    } catch (e) {
-      toast.error(e instanceof ApiClientError ? e.body.message : "Couldn't publish this plan");
-    } finally {
-      setBusy(false);
-    }
+    });
+
+  // APPROVED / VALIDATION_FAILED / PUBLISHING → re-push to the platform.
+  const publishNow = (planId: string) =>
+    runPlanAction(planId, 'Publishing — pushed to the platform', async () => {
+      await client.publishing.execute(planId);
+      await client.publishing.sync(planId);
+    });
+
+  const resubmitPlan = (planId: string) =>
+    runPlanAction(planId, 'Resubmitted for review', () => client.publishing.resubmit(planId));
+  const resumePlan = (planId: string) =>
+    runPlanAction(planId, 'Channel resumed', () => client.publishing.resume(planId));
+  const pausePlan = (planId: string) =>
+    runPlanAction(planId, 'Channel paused', () => client.publishing.pause(planId));
+
+  async function confirmCancel() {
+    if (!cancelTarget) return;
+    const target = cancelTarget;
+    await runPlanAction(target.id, 'Channel canceled', () =>
+      client.publishing.cancel(target.id),
+    );
+    setCancelTarget(null);
+  }
+
+  // Approve a single channel — confirm first if the agent is a draft or budget is strained.
+  function beginApprove(planId: string) {
+    if (needsLaunchConfirm) setPending({ kind: 'one', planId });
+    else runApprove(planId);
+  }
+  function beginLaunchAll() {
+    if (needsLaunchConfirm) setPending({ kind: 'all' });
+    else runLaunchAll();
+  }
+  function runPending() {
+    if (!pending) return;
+    const p = pending;
+    setPending(null);
+    if (p.kind === 'one') runApprove(p.planId);
+    else runLaunchAll();
   }
 
   async function changeVariant(planId: string, variantId: string) {
@@ -144,11 +250,12 @@ export default function CampaignDetailPage() {
     }
   }
 
-  async function launchAll() {
+  async function runLaunchAll() {
     const ready = plans.filter((p) => p.status === 'READY_FOR_REVIEW');
     if (ready.length === 0) return;
     setBusy(true);
     let ok = 0;
+    const failed: string[] = [];
     for (const p of ready) {
       try {
         await client.publishing.approve(p.id);
@@ -156,10 +263,21 @@ export default function CampaignDetailPage() {
         await client.publishing.sync(p.id);
         ok++;
       } catch {
-        /* keep going; a failed channel stays in review */
+        // Record the channel so the operator knows exactly what to retry.
+        failed.push(platformLabel(p.platform));
       }
     }
-    toast.success(ok > 0 ? `Launched ${ok} channel${ok === 1 ? '' : 's'}` : 'Nothing could be launched');
+    if (failed.length === 0) {
+      toast.success(`Launched all ${ok} channel${ok === 1 ? '' : 's'}`);
+    } else if (ok === 0) {
+      toast.error(`Couldn't launch — ${failed.join(', ')} failed. Retry on each row.`);
+    } else {
+      toast.error(
+        `Launched ${ok} of ${ready.length} — ${failed.join(', ')} failed, retry on ${
+          failed.length === 1 ? 'its' : 'their'
+        } row.`,
+      );
+    }
     setBusy(false);
     setReload((n) => n + 1);
   }
@@ -176,6 +294,37 @@ export default function CampaignDetailPage() {
       );
     } finally {
       setBusy(false);
+    }
+  }
+
+  // Regenerating over live channels forces a re-approval — make the operator confirm.
+  function beginGenerate() {
+    if (latest && liveCount > 0) setConfirmRegen(true);
+    else generate();
+  }
+
+  async function addChannel() {
+    if (!acPlatform || !acVariant || !acAccount.trim()) return;
+    setAcBusy(true);
+    try {
+      await client.publishing.createPlan({
+        campaignId: id,
+        variantId: acVariant,
+        platform: acPlatform,
+        accountId: acAccount.trim(),
+      });
+      toast.success('Channel added — in review');
+      setAddOpen(false);
+      setAcPlatform('');
+      setAcVariant('');
+      setAcAccount('');
+      setReload((n) => n + 1);
+    } catch (e) {
+      toast.error(
+        e instanceof ApiClientError ? e.body.message : "Couldn't add this channel",
+      );
+    } finally {
+      setAcBusy(false);
     }
   }
 
@@ -198,6 +347,7 @@ export default function CampaignDetailPage() {
       <DataState
         loading={loading}
         error={error}
+        onRetry={() => setReload((n) => n + 1)}
         loadingLabel="Loading campaign…"
       >
         {!campaign ? (
@@ -221,7 +371,7 @@ export default function CampaignDetailPage() {
                   <Button
                     variant="primary"
                     icon="sparkles"
-                    onClick={generate}
+                    onClick={beginGenerate}
                     disabled={busy}
                   >
                     {busy
@@ -331,15 +481,35 @@ export default function CampaignDetailPage() {
                 title="Launch"
                 note="review the creative + agent, then approve each channel"
                 actions={
-                  readyCount > 0 ? (
-                    <Button variant="primary" icon="publishing" onClick={launchAll} disabled={busy}>
-                      {busy ? 'Launching…' : `Approve & launch all (${readyCount})`}
+                  <>
+                    {budget && budget.configured ? (
+                      <Chip
+                        tone={
+                          budget.overBudget ? 'danger' : budget.alert ? 'warning' : 'neutral'
+                        }
+                        icon={budget.overBudget || budget.alert ? 'alert' : 'billing'}
+                      >
+                        {budget.overBudget
+                          ? 'Over ad budget'
+                          : budget.remaining != null
+                            ? `${money(budget.remaining)} budget left`
+                            : 'Budget set'}
+                      </Chip>
+                    ) : null}
+                    <Button variant="ghost" icon="plus" onClick={() => setAddOpen(true)}>
+                      Add channel
                     </Button>
-                  ) : plans.length === 0 ? (
-                    <Link href="/campaigns/new" className="btn btn-ghost">
-                      <Icon name="plus" size={16} /> Set up channels
-                    </Link>
-                  ) : undefined
+                    {readyCount > 0 ? (
+                      <Button
+                        variant="primary"
+                        icon="publishing"
+                        onClick={beginLaunchAll}
+                        disabled={busy}
+                      >
+                        {busy ? 'Launching…' : `Approve & launch all (${readyCount})`}
+                      </Button>
+                    ) : null}
+                  </>
                 }
               >
                 {/* Click-through agent — the conversation a click opens into. */}
@@ -436,6 +606,8 @@ export default function CampaignDetailPage() {
                         {plans.map((p) => {
                           const bound = variantById.get(p.variantId) ?? null;
                           const editable = p.status === 'READY_FOR_REVIEW';
+                          const acting = actingId === p.id;
+                          const canCancel = p.status !== 'LIVE' && p.status !== 'ARCHIVED';
                           return (
                             <tr key={p.id}>
                               <td>
@@ -486,7 +658,11 @@ export default function CampaignDetailPage() {
                               <td style={{ textAlign: 'right' }}>
                                 <div
                                   className="row"
-                                  style={{ gap: '0.4rem', justifyContent: 'flex-end' }}
+                                  style={{
+                                    gap: '0.4rem',
+                                    justifyContent: 'flex-end',
+                                    flexWrap: 'wrap',
+                                  }}
                                 >
                                   <Button
                                     size="sm"
@@ -497,27 +673,85 @@ export default function CampaignDetailPage() {
                                   >
                                     Preview
                                   </Button>
+
                                   {p.status === 'READY_FOR_REVIEW' ? (
                                     <Button
                                       size="sm"
                                       variant="primary"
                                       icon="check"
-                                      onClick={() => approveAndPublish(p.id)}
-                                      disabled={busy || changingId === p.id}
+                                      onClick={() => beginApprove(p.id)}
+                                      disabled={acting || changingId === p.id}
                                     >
-                                      Approve &amp; publish
+                                      {acting ? 'Publishing…' : 'Approve & publish'}
+                                    </Button>
+                                  ) : p.status === 'APPROVED' ||
+                                    p.status === 'VALIDATION_FAILED' ||
+                                    p.status === 'PUBLISHING' ? (
+                                    <Button
+                                      size="sm"
+                                      variant="primary"
+                                      icon="publishing"
+                                      onClick={() => publishNow(p.id)}
+                                      disabled={acting}
+                                    >
+                                      {acting
+                                        ? 'Working…'
+                                        : p.status === 'APPROVED'
+                                          ? 'Publish now'
+                                          : 'Retry'}
+                                    </Button>
+                                  ) : p.status === 'REJECTED' ? (
+                                    <Button
+                                      size="sm"
+                                      variant="ghost"
+                                      icon="refresh"
+                                      onClick={() => resubmitPlan(p.id)}
+                                      disabled={acting}
+                                    >
+                                      {acting ? 'Resubmitting…' : 'Resubmit'}
+                                    </Button>
+                                  ) : p.status === 'PAUSED' ? (
+                                    <Button
+                                      size="sm"
+                                      variant="primary"
+                                      icon="play"
+                                      onClick={() => resumePlan(p.id)}
+                                      disabled={acting}
+                                    >
+                                      {acting ? 'Resuming…' : 'Resume'}
                                     </Button>
                                   ) : p.status === 'IN_REVIEW' ? (
                                     <span className="muted" style={{ fontSize: 12.5 }}>
                                       Awaiting platform review
                                     </span>
                                   ) : p.status === 'LIVE' ? (
-                                    <Chip tone="success" dot>
-                                      Live
-                                    </Chip>
-                                  ) : (
-                                    <span className="cell-muted">—</span>
-                                  )}
+                                    <>
+                                      <Chip tone="success" dot>
+                                        Live
+                                      </Chip>
+                                      <Button
+                                        size="sm"
+                                        variant="ghost"
+                                        icon="pause"
+                                        onClick={() => pausePlan(p.id)}
+                                        disabled={acting}
+                                      >
+                                        {acting ? 'Pausing…' : 'Pause'}
+                                      </Button>
+                                    </>
+                                  ) : null}
+
+                                  {canCancel ? (
+                                    <Button
+                                      size="sm"
+                                      variant="ghost"
+                                      icon="x"
+                                      onClick={() => setCancelTarget(p)}
+                                      disabled={acting}
+                                    >
+                                      Cancel
+                                    </Button>
+                                  ) : null}
                                 </div>
                               </td>
                             </tr>
@@ -530,11 +764,16 @@ export default function CampaignDetailPage() {
                   <EmptyState
                     icon="publishing"
                     title="No channels set up yet"
-                    hint="Create the campaign through the setup wizard to draft a publish plan per platform, or add one in Publishing."
+                    hint="Add a channel to draft a publish plan for a platform on this campaign — it starts in review, and nothing serves until you approve it."
                     action={
-                      <Link href="/publishing" className="btn btn-primary">
-                        <Icon name="publishing" size={16} /> Go to Publishing
-                      </Link>
+                      <div className="row" style={{ gap: '0.5rem', flexWrap: 'wrap', justifyContent: 'center' }}>
+                        <Button variant="primary" icon="plus" onClick={() => setAddOpen(true)}>
+                          Add channel
+                        </Button>
+                        <Link href="/publishing" className="btn btn-ghost">
+                          <Icon name="publishing" size={16} /> Go to Publishing
+                        </Link>
+                      </div>
                     }
                   />
                 )}
@@ -603,7 +842,7 @@ export default function CampaignDetailPage() {
                       <Button
                         variant="primary"
                         icon="sparkles"
-                        onClick={generate}
+                        onClick={beginGenerate}
                         disabled={busy}
                       >
                         {busy ? 'Generating…' : 'Generate copy'}
@@ -721,6 +960,213 @@ export default function CampaignDetailPage() {
         agentId={agent?.id}
         agentName={agent?.name}
       />
+
+      {/* Launch confirmation — draft agent and/or strained budget. */}
+      <Modal
+        open={pending !== null}
+        onClose={() => (busy || actingId ? null : setPending(null))}
+        title={!agentLive ? 'Your AI agent is still a draft' : 'Launch over budget?'}
+        width={460}
+        footer={
+          <>
+            <Button
+              variant="ghost"
+              onClick={() => setPending(null)}
+              disabled={busy || actingId !== null}
+            >
+              Cancel
+            </Button>
+            {!agentLive ? (
+              <Link href="/agents" className="btn btn-ghost">
+                <Icon name="agents" size={16} /> Publish agent
+              </Link>
+            ) : null}
+            <Button
+              variant="primary"
+              icon="publishing"
+              onClick={runPending}
+              disabled={busy || actingId !== null}
+            >
+              Launch anyway
+            </Button>
+          </>
+        }
+      >
+        <div className="stack" style={{ gap: '0.6rem' }}>
+          {!agentLive ? (
+            <p style={{ margin: 0 }}>
+              Your AI agent is still a draft — visitors who click won&apos;t get a
+              conversation. Launch anyway?
+            </p>
+          ) : null}
+          {budgetBlocking ? (
+            <p style={{ margin: 0 }}>
+              {budget?.overBudget
+                ? 'This org is over its monthly ad budget.'
+                : 'This org is close to its monthly ad budget.'}{' '}
+              {budget?.remaining != null ? `${money(budget.remaining)} remaining. ` : ''}
+              Launch anyway?
+            </p>
+          ) : null}
+        </div>
+      </Modal>
+
+      {/* Regenerate confirmation — live channels must be re-approved. */}
+      <Modal
+        open={confirmRegen}
+        onClose={() => (busy ? null : setConfirmRegen(false))}
+        title="Regenerate copy?"
+        width={460}
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setConfirmRegen(false)} disabled={busy}>
+              Keep current copy
+            </Button>
+            <Button
+              variant="primary"
+              icon="sparkles"
+              onClick={() => {
+                setConfirmRegen(false);
+                generate();
+              }}
+              disabled={busy}
+            >
+              Regenerate
+            </Button>
+          </>
+        }
+      >
+        <p style={{ margin: 0 }}>
+          Regenerating creates a new copy version that live channels must be re-approved
+          against. {liveCount} live channel{liveCount === 1 ? '' : 's'} will need
+          re-approval before serving the new copy. Continue?
+        </p>
+      </Modal>
+
+      {/* Cancel a channel confirmation. */}
+      <Modal
+        open={cancelTarget !== null}
+        onClose={() => (actingId ? null : setCancelTarget(null))}
+        title="Cancel this channel?"
+        width={460}
+        footer={
+          <>
+            <Button
+              variant="ghost"
+              onClick={() => setCancelTarget(null)}
+              disabled={actingId !== null}
+            >
+              Keep it
+            </Button>
+            <Button
+              variant="danger"
+              icon="x"
+              onClick={confirmCancel}
+              disabled={actingId !== null}
+            >
+              {actingId !== null ? 'Canceling…' : 'Cancel channel'}
+            </Button>
+          </>
+        }
+      >
+        {cancelTarget ? (
+          <p style={{ margin: 0 }}>
+            Canceling stops <strong>{platformLabel(cancelTarget.platform)}</strong> from
+            launching. You&apos;d need to add the channel again to publish to it later.
+          </p>
+        ) : null}
+      </Modal>
+
+      {/* Add a channel to THIS campaign. */}
+      <Modal
+        open={addOpen}
+        onClose={() => (acBusy ? null : setAddOpen(false))}
+        title="Add a channel"
+        width={520}
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setAddOpen(false)} disabled={acBusy}>
+              Cancel
+            </Button>
+            <Button
+              variant="primary"
+              icon="publishing"
+              onClick={addChannel}
+              disabled={acBusy || !acPlatform || !acVariant || !acAccount.trim()}
+            >
+              {acBusy ? 'Adding…' : 'Add channel'}
+            </Button>
+          </>
+        }
+      >
+        <div className="stack" style={{ gap: '0.9rem' }}>
+          <p className="muted" style={{ fontSize: 13, margin: 0 }}>
+            Drafts a publish plan on this campaign. It starts in review — nothing serves
+            until you approve it below.
+          </p>
+
+          <div className="field">
+            <label className="field-label" htmlFor="ac-platform">
+              Platform
+            </label>
+            <select
+              id="ac-platform"
+              className="select"
+              value={acPlatform}
+              onChange={(e) => setAcPlatform(e.target.value)}
+            >
+              <option value="">Select a platform</option>
+              {PUBLISH_PLATFORMS.map((p) => (
+                <option key={p} value={p}>
+                  {platformLabel(p)}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="field">
+            <label className="field-label" htmlFor="ac-variant">
+              Creative variant
+            </label>
+            <select
+              id="ac-variant"
+              className="select"
+              value={acVariant}
+              onChange={(e) => setAcVariant(e.target.value)}
+              disabled={(variants ?? []).length === 0}
+            >
+              <option value="">
+                {(variants ?? []).length === 0
+                  ? 'No creative variants on this campaign yet'
+                  : 'Select a variant'}
+              </option>
+              {(variants ?? []).map((v) => (
+                <option key={v.id} value={v.id}>
+                  {(typeof v.spec.headline === 'string' ? v.spec.headline : 'Untitled')} ·{' '}
+                  {formatLabel(v.format)}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="field">
+            <label className="field-label" htmlFor="ac-account">
+              Ad account ID
+            </label>
+            <input
+              id="ac-account"
+              className="input"
+              placeholder="e.g. acct_g1"
+              value={acAccount}
+              onChange={(e) => setAcAccount(e.target.value)}
+            />
+          </div>
+
+          <div className="chip chip-info" style={{ alignSelf: 'flex-start' }}>
+            <Icon name="shield" size={12} /> Plans start in review — approve to go live
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 }

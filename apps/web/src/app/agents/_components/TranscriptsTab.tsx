@@ -8,17 +8,16 @@ export function TranscriptsTab() {
       <div className="panel-head">
         <div className="row" style={{ gap: '0.6rem' }}>
           <span className="panel-title">Recent conversations</span>
-          <span className="panel-note">last 7 days</span>
         </div>
-        <Chip tone="neutral" icon="filter">
-          All channels
+        <Chip tone="info" icon="clock">
+          Coming soon
         </Chip>
       </div>
       <div className="card-pad">
         <EmptyState
           icon="doc"
-          title="No transcripts yet"
-          hint="Live transcripts appear here once visitors chat with this published agent."
+          title="Transcripts are coming soon"
+          hint="Once this is live, every visitor conversation with the published agent will show up here — with grounding, tool calls, and consent records — so you can review and audit them."
         />
       </div>
     </Card>

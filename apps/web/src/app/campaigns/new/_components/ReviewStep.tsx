@@ -2,7 +2,7 @@
 
 import { Icon } from '@/components/Icon';
 import { Chip } from '@/components/ui';
-import { PLATFORMS, OBJECTIVES, FORMATS, type StepProps } from './types';
+import { PLATFORMS, OBJECTIVES, FORMATS, adAccountId, type StepProps } from './types';
 
 function labelFor<T extends { key: string; label: string }>(list: T[], key: string): string {
   return list.find((x) => x.key === key)?.label ?? key;
@@ -60,6 +60,21 @@ export function ReviewStep({ state, models }: StepProps) {
             <span className="muted">None selected</span>
           )}
         </Row>
+        {state.platforms.length ? (
+          <Row label="Ad accounts">
+            <span style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem', alignItems: 'flex-end' }}>
+              {state.platforms.map((p) => (
+                <span key={p} className="tnum" style={{ fontSize: 12.5 }}>
+                  {labelFor(PLATFORMS, p)}:{' '}
+                  <span className="muted">{adAccountId(p)}</span>
+                </span>
+              ))}
+              <span className="muted" style={{ fontSize: 11.5 }}>
+                Each channel publishes into your primary account. Change it per channel on the campaign page.
+              </span>
+            </span>
+          </Row>
+        ) : null}
         <Row label="Locations">{state.locations.length ? state.locations.join(', ') : 'Anywhere'}</Row>
         <Row label="Audience">
           Ages {state.ageMin}–{state.ageMax} · {state.genders.join(', ')} · {state.languages.join(', ')}
@@ -96,8 +111,9 @@ export function ReviewStep({ state, models }: StepProps) {
       >
         <Icon name="bell" size={16} style={{ color: 'var(--color-info)', flex: 'none', marginTop: 2 }} />
         <span style={{ fontSize: 13, color: 'var(--color-info-ink)' }}>
-          Creating the campaign saves it as a <strong>draft</strong>. Nothing spends until you generate
-          creative, and each ad is approved on the Publishing screen before it goes live.
+          Creating this campaign will generate ad copy, a creative per format, and a draft publish plan
+          per channel{state.attachAgent ? ', plus a draft AI agent' : ''}. Nothing spends until you
+          review and approve each channel on the Publishing screen.
         </span>
       </div>
     </div>

@@ -1,10 +1,11 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { LeadSummary } from '@acp/api-client';
 import { useApiClient } from '@/lib/api';
 import { useAsync } from '@/lib/useAsync';
 import { useToast } from '@/components/feedback';
+import { Icon } from '@/components/Icon';
 import {
   PageHeader,
   Button,
@@ -38,6 +39,16 @@ function qualChip(level: LeadSummary['qualificationLevel']) {
     </Chip>
   );
 }
+
+type SortDir = 'none' | 'asc' | 'desc';
+
+const LEVEL_LABEL: Record<string, string> = {
+  high: 'High intent',
+  medium: 'Medium',
+  low: 'Low',
+};
+const stageLabel = (s: string) =>
+  s.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
 
 /** Escape one CSV field: wrap in quotes when it contains a delimiter/quote/newline. */
 function csvCell(value: string | number | null | undefined): string {
@@ -82,8 +93,70 @@ export default function LeadsPage() {
   }, [data]);
   const firstLoad = loading && leads.length === 0;
 
+  // ---- Inbox filter / search / sort (client-side over leads.list()) ------
+  const [query, setQuery] = useState('');
+  const [filter, setFilter] = useState('all'); // 'all' | 'qualified' | 'qual:<level>' | 'stage:<stage>'
+  const [sortDir, setSortDir] = useState<SortDir>('none');
+
+  // Filter options are data-driven so we never show a chip that matches nothing.
+  const filterOptions = useMemo(() => {
+    const levels = Array.from(
+      new Set(leads.map((l) => l.qualificationLevel).filter(Boolean) as string[]),
+    );
+    const levelRank: Record<string, number> = { high: 0, medium: 1, low: 2 };
+    levels.sort((a, b) => (levelRank[a] ?? 9) - (levelRank[b] ?? 9));
+    const stages = Array.from(
+      new Set(leads.map((l) => l.lifecycleStage).filter(Boolean) as string[]),
+    ).sort();
+    return [
+      { key: 'all', label: 'All' },
+      { key: 'qualified', label: 'Qualified' },
+      ...levels.map((lvl) => ({ key: `qual:${lvl}`, label: LEVEL_LABEL[lvl] ?? lvl })),
+      ...stages.map((st) => ({ key: `stage:${st}`, label: stageLabel(st) })),
+    ];
+  }, [leads]);
+
+  // If the active filter no longer exists (data changed), fall back to All.
+  useEffect(() => {
+    if (!filterOptions.some((o) => o.key === filter)) setFilter('all');
+  }, [filterOptions, filter]);
+
+  const visibleLeads = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    let rows = leads.filter((l) => {
+      if (filter === 'qualified' && !l.qualified) return false;
+      if (filter.startsWith('qual:') && l.qualificationLevel !== filter.slice(5)) return false;
+      if (filter.startsWith('stage:') && l.lifecycleStage !== filter.slice(6)) return false;
+      if (q) {
+        // The list endpoint doesn't carry name/email (those live in the lead
+        // detail), so search covers the agent summary + id.
+        const hay = `${l.agentSummary ?? ''} ${l.id}`.toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+      return true;
+    });
+    if (sortDir !== 'none') {
+      rows = [...rows].sort((a, b) => {
+        const av = a.score ?? null;
+        const bv = b.score ?? null;
+        if (av == null && bv == null) return 0;
+        if (av == null) return 1; // nulls always last
+        if (bv == null) return -1;
+        return sortDir === 'asc' ? av - bv : bv - av;
+      });
+    }
+    return rows;
+  }, [leads, filter, query, sortDir]);
+
+  const filtersActive = filter !== 'all' || query.trim() !== '';
+
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const selected = leads.find((l) => l.id === selectedId) ?? leads[0] ?? null;
+  const selected =
+    visibleLeads.find((l) => l.id === selectedId) ?? visibleLeads[0] ?? null;
+
+  function toggleScoreSort() {
+    setSortDir((d) => (d === 'none' ? 'desc' : d === 'desc' ? 'asc' : 'none'));
+  }
 
   // Fetch the selected lead's full, decrypted detail (real consent records +
   // transcript). Keyed on the selection and the reload counter so an action
@@ -129,6 +202,7 @@ export default function LeadsPage() {
         loadingLabel="Loading your lead inbox…"
         emptyTitle="No leads captured yet"
         emptyHint="When a visitor chats with your AI agent after clicking an ad, qualified contacts will land here automatically."
+        onRetry={() => setReload((n) => n + 1)}
       >
         {/* KPI strip */}
         <div className="grid grid-kpi">
@@ -155,7 +229,7 @@ export default function LeadsPage() {
         >
           <Panel
             title="Inbox"
-            note="newest first"
+            note={filtersActive ? `${visibleLeads.length} of ${leads.length}` : 'newest first'}
             actions={
               qualified > 0 ? (
                 <Chip tone="success" dot>
@@ -164,19 +238,110 @@ export default function LeadsPage() {
               ) : undefined
             }
           >
+            {/* Filter / search toolbar */}
+            <div
+              className="stack"
+              style={{ gap: '0.6rem', padding: '0.85rem 1.25rem', borderBottom: '1px solid var(--color-line)' }}
+            >
+              <div style={{ position: 'relative' }}>
+                <span
+                  style={{
+                    position: 'absolute',
+                    left: 10,
+                    top: '50%',
+                    transform: 'translateY(-50%)',
+                    color: 'var(--color-ink-3)',
+                    display: 'inline-flex',
+                    pointerEvents: 'none',
+                  }}
+                >
+                  <Icon name="search" size={15} />
+                </span>
+                <input
+                  className="input"
+                  type="search"
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  placeholder="Search summary…"
+                  aria-label="Search leads by summary"
+                  style={{ paddingLeft: '2rem' }}
+                />
+              </div>
+              <div className="row" style={{ flexWrap: 'wrap', gap: '0.4rem' }}>
+                {filterOptions.map((o) => {
+                  const isActive = o.key === filter;
+                  return (
+                    <button
+                      key={o.key}
+                      type="button"
+                      onClick={() => setFilter(o.key)}
+                      aria-pressed={isActive}
+                      className="chip"
+                      style={{
+                        cursor: isActive ? 'default' : 'pointer',
+                        border: `1px solid ${isActive ? 'var(--color-brand)' : 'var(--color-line)'}`,
+                        background: isActive ? 'var(--color-brand)' : 'var(--color-surface)',
+                        color: isActive ? '#fff' : 'var(--color-ink-2)',
+                        fontWeight: isActive ? 600 : 500,
+                      }}
+                    >
+                      {o.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
             <div className="table-wrap">
               <table className="table">
                 <thead>
                   <tr>
                     <th>Lead</th>
                     <th>Qualification</th>
-                    <th className="cell-num">Score</th>
+                    <th
+                      className="cell-num"
+                      aria-sort={
+                        sortDir === 'none' ? 'none' : sortDir === 'asc' ? 'ascending' : 'descending'
+                      }
+                    >
+                      <button
+                        type="button"
+                        onClick={toggleScoreSort}
+                        title="Sort by score"
+                        style={{
+                          background: 'none',
+                          border: 'none',
+                          padding: 0,
+                          margin: 0,
+                          font: 'inherit',
+                          color: 'inherit',
+                          cursor: 'pointer',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: 3,
+                          marginLeft: 'auto',
+                        }}
+                      >
+                        Score
+                        <Icon
+                          name={sortDir === 'asc' ? 'up-right' : sortDir === 'desc' ? 'down-right' : 'chevron-down'}
+                          size={13}
+                        />
+                      </button>
+                    </th>
                     <th>Stage</th>
                     <th>CRM</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {leads.map((l) => {
+                  {visibleLeads.length === 0 ? (
+                    <tr>
+                      <td colSpan={5} className="cell-muted" style={{ textAlign: 'center', padding: '1.5rem' }}>
+                        No leads match your filters.
+                      </td>
+                    </tr>
+                  ) : null}
+                  {visibleLeads.map((l) => {
                     const isSel = selected?.id === l.id;
                     const cellStyle = isSel
                       ? { background: 'var(--color-brand-soft)' }

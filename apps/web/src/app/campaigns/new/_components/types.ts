@@ -45,6 +45,14 @@ export interface StepProps {
 
 const today = () => new Date().toISOString().slice(0, 10);
 
+/**
+ * The ad account a channel publishes into. Today this is assumed to be the
+ * org's primary account per platform (no per-campaign account picker yet);
+ * the Review step surfaces the value so the assumption stays visible, and
+ * launch() uses the same helper so the two can never drift.
+ */
+export const adAccountId = (platform: string): string => `${platform}-primary`;
+
 export const DEFAULT_WIZARD: WizardState = {
   objective: 'lead_generation',
   name: '',
@@ -91,10 +99,10 @@ export interface PlatformOption {
 export const PLATFORMS: PlatformOption[] = [
   { key: 'google_ads', label: 'Google Ads', description: 'Search + Performance Max for high-intent queries.', formats: ['image_1_1', 'image_16_9'] },
   { key: 'meta', label: 'Meta (Facebook / Instagram)', description: 'Feed + Stories lead forms into the AI agent.', formats: ['image_1_1', 'image_9_16', 'image_4_5'] },
-  { key: 'tiktok', label: 'TikTok', description: 'Vertical Spark Ads for storm-season demand.', formats: ['image_9_16'] },
-  { key: 'microsoft', label: 'Microsoft Advertising', description: 'Bing search for higher-value homeowners.', formats: ['image_1_1', 'image_16_9'] },
+  { key: 'tiktok', label: 'TikTok', description: 'Vertical Spark Ads for mobile-first discovery.', formats: ['image_9_16'] },
+  { key: 'microsoft', label: 'Microsoft Advertising', description: 'Bing search for higher-value customers.', formats: ['image_1_1', 'image_16_9'] },
   { key: 'amazon_dsp', label: 'Amazon DSP', description: 'Programmatic display retargeting.', formats: ['image_16_9', 'image_1_1'] },
-  { key: 'linkedin', label: 'LinkedIn', description: 'B2B lead forms for property managers.', formats: ['image_1_1', 'image_16_9'] },
+  { key: 'linkedin', label: 'LinkedIn', description: 'B2B lead forms for professional audiences.', formats: ['image_1_1', 'image_16_9'] },
 ];
 
 export const FORMATS: { key: string; label: string }[] = [
@@ -111,7 +119,7 @@ export const BID_STRATEGIES: { key: string; label: string }[] = [
   { key: 'manual_cpc', label: 'Manual CPC' },
 ];
 
-export const BRAND_VOICES = ['Confident & local', 'Warm & consultative', 'Straightforward', 'Urgent — storm season'];
+export const BRAND_VOICES = ['Confident & local', 'Warm & consultative', 'Straightforward', 'Urgent — limited time'];
 export const LANGUAGES = ['English', 'Spanish', 'French', 'German', 'Portuguese'];
 export const GENDERS = [
   { key: 'all', label: 'All' },

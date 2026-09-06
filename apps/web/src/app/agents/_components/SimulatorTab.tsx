@@ -21,11 +21,14 @@ export function SimulatorTab({
   agentName,
   disclosure,
   openingMessage,
+  dirty = false,
 }: {
   agentId: string;
   agentName: string;
   disclosure: string;
   openingMessage: string;
+  /** The draft has unsaved edits the simulator can't see yet. */
+  dirty?: boolean;
 }) {
   const client = useApiClient();
   const [messages, setMessages] = useState<Msg[]>([]);
@@ -78,12 +81,33 @@ export function SimulatorTab({
       <div className="panel-head">
         <div className="row" style={{ gap: '0.6rem' }}>
           <span className="panel-title">Simulator</span>
-          <span className="panel-note">live preview against your current config</span>
+          <span className="panel-note">tests your last saved config</span>
         </div>
         <Chip tone="brand" icon="sparkles">
           {agentName}
         </Chip>
       </div>
+
+      {dirty ? (
+        <div
+          className="row"
+          style={{
+            gap: '0.55rem',
+            alignItems: 'flex-start',
+            padding: '0.7rem 1.25rem',
+            background: 'var(--color-warning-soft)',
+            borderBottom: '1px solid var(--color-line)',
+            color: 'var(--color-warning-ink)',
+            fontSize: 12.5,
+          }}
+        >
+          <Icon name="alert" size={15} />
+          <span>
+            You have unsaved edits. The simulator runs against your <strong>last saved</strong>{' '}
+            config — save your latest changes to test them here.
+          </span>
+        </div>
+      ) : null}
 
       <div
         ref={scrollRef}

@@ -320,6 +320,40 @@ export class PublishService {
     return updated;
   }
 
+  /** Resume a paused plan back to LIVE (the counterpart to pause). */
+  async resume(orgId: string, planId: string) {
+    const plan = await this.requirePlan(orgId, planId);
+    if (plan.status !== 'PAUSED') {
+      throw new BadRequestException(`Only a paused plan can be resumed (status ${plan.status}).`);
+    }
+    // Stub connectors have no resume; a live adapter would re-enable the remote ad here.
+    if (plan.remoteId) {
+      const connector = this.registry.get(plan.platform) as { resume?: (i: { remoteId: string; secretRef: string }) => Promise<void> };
+      await connector.resume?.({ remoteId: plan.remoteId, secretRef: '' });
+    }
+    const updated = await this.prisma.publishJob.update({
+      where: { id: planId, orgId },
+      data: { status: 'LIVE' },
+    });
+    await this.audit.record({ orgId, action: 'publish.resumed', target: planId });
+    return updated;
+  }
+
+  /** Cancel/archive a non-live plan (remove it from the review queue). */
+  async cancel(orgId: string, planId: string) {
+    const plan = await this.requirePlan(orgId, planId);
+    if (plan.status === 'LIVE') {
+      throw new BadRequestException('Pause a live plan before cancelling it.');
+    }
+    if (plan.status === 'ARCHIVED') return plan;
+    const updated = await this.prisma.publishJob.update({
+      where: { id: planId, orgId },
+      data: { status: 'ARCHIVED' },
+    });
+    await this.audit.record({ orgId, action: 'publish.cancelled', target: planId });
+    return updated;
+  }
+
   /**
    * Swap the creative a plan will ship, allowed only while the plan is still in
    * review (before approval). This preserves the "what you approve is exactly what

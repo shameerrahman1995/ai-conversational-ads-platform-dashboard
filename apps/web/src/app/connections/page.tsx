@@ -196,7 +196,12 @@ export default function ConnectionsPage() {
         }
       />
 
-      <DataState loading={loading} error={error} loadingLabel="Loading your connections…">
+      <DataState
+        loading={loading}
+        error={error}
+        loadingLabel="Loading your connections…"
+        onRetry={refetch}
+      >
         {/* Summary row */}
         <div className="grid grid-kpi">
           <StatCard
@@ -296,12 +301,12 @@ export default function ConnectionsPage() {
               <div>
                 <h2 style={{ fontSize: 16, lineHeight: 1.2 }}>Webhooks</h2>
                 <div className="muted" style={{ fontSize: 12.5 }}>
-                  Send events to your own systems in real time
+                  Developer feature — endpoints are configured via the API, not the dashboard
                 </div>
               </div>
             </div>
-            <Chip tone={webhookConn ? 'success' : 'neutral'} dot={!!webhookConn}>
-              {webhookConn ? '1 endpoint active' : 'No endpoints yet'}
+            <Chip tone="info" icon="doc">
+              {webhookConn ? '1 endpoint active · via API' : 'Configured via API'}
             </Chip>
           </div>
           <Card className="card-pad">
@@ -314,7 +319,8 @@ export default function ConnectionsPage() {
                   <div style={{ fontWeight: 600, fontSize: 14.5 }}>{WEBHOOK.name}</div>
                   <div className="muted" style={{ fontSize: 13, marginTop: 2, maxWidth: '62ch' }}>
                     {WEBHOOK.blurb} Every request is signed with HMAC-SHA256 and failed deliveries
-                    retry with exponential backoff.
+                    retry with exponential backoff. Endpoints are created and rotated through the
+                    ConvoAds API — there is no add-endpoint form in the dashboard.
                   </div>
                 </div>
               </div>
