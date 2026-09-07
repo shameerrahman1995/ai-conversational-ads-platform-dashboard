@@ -48,21 +48,6 @@ const CATALOG: Category[] = [
         name: 'TikTok Ads',
         blurb: 'Short-form Spark Ads for mobile-first discovery.',
       },
-      {
-        key: 'microsoft',
-        name: 'Microsoft Advertising',
-        blurb: 'Bing search coverage for higher-value customers.',
-      },
-      {
-        key: 'amazon_dsp',
-        name: 'Amazon DSP',
-        blurb: 'Programmatic display retargeting across Amazon inventory.',
-      },
-      {
-        key: 'linkedin',
-        name: 'LinkedIn Ads',
-        blurb: 'Reach professional and B2B audiences with lead forms.',
-      },
     ],
   },
   {
