@@ -1,8 +1,9 @@
 'use client';
 
 import { useState } from 'react';
+import Link from 'next/link';
 import { Icon, type IconName } from '@/components/Icon';
-import { Button, Chip, StatusChip } from '@/components/ui';
+import { Button, Chip, StatusChip, type Tone } from '@/components/ui';
 import type { CreativeVariant } from '@acp/api-client';
 import { AdPreviewModal } from './AdPreviewModal';
 import { readSpec, type CreativeSpec } from './spec';
@@ -25,6 +26,67 @@ const MEDIA_META: Record<CreativeSpec['mediaType'], { label: string; icon: IconN
 
 /* Faux waveform heights (0–1) for the audio panel. */
 const WAVE = [0.4, 0.75, 0.5, 1, 0.6, 0.85, 0.45, 0.9, 0.55, 0.7, 0.35, 0.8];
+
+/* Human channel names for the publish platforms. */
+const PLATFORM_LABEL: Record<string, string> = {
+  google_ads: 'Google Ads',
+  meta: 'Meta',
+  tiktok: 'TikTok',
+  microsoft: 'Microsoft Ads',
+  amazon_dsp: 'Amazon DSP',
+  linkedin: 'LinkedIn',
+  generic_export: 'Generic export',
+};
+const platformLabel = (p: string) =>
+  PLATFORM_LABEL[p] ?? p.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+
+/** Compact, deduped channel list: "Meta", "Meta and Google Ads", or "3 channels". */
+function channelSummary(plans: { platform: string }[]): string {
+  const names = Array.from(new Set(plans.map((p) => platformLabel(p.platform))));
+  if (names.length === 0) return '';
+  if (names.length === 1) return names[0];
+  if (names.length === 2) return `${names[0]} and ${names[1]}`;
+  return `${names.length} channels`;
+}
+
+type UsagePlan = { platform: string; status: string };
+type UsageBadge = { tone: Tone; icon?: IconName; text: string };
+
+/**
+ * Summarize where a design is actually placed and its publish status, in
+ * priority order (live wins over in-review over ready over problem states).
+ * Copy stays honest: it says exactly what the channel state is.
+ */
+function usageBadge(usage: UsagePlan[]): UsageBadge {
+  if (usage.length === 0) {
+    return { tone: 'neutral', text: 'Not placed on a channel yet' };
+  }
+  const has = (...s: string[]) => usage.filter((u) => s.includes(u.status));
+
+  const live = has('LIVE');
+  if (live.length) return { tone: 'success', icon: 'globe', text: `Live on ${channelSummary(live)}` };
+
+  const reviewing = has('IN_REVIEW', 'PUBLISHING', 'APPROVED', 'SCHEDULED');
+  if (reviewing.length)
+    return { tone: 'info', icon: 'clock', text: `In review on ${channelSummary(reviewing)}` };
+
+  const ready = has('READY_FOR_REVIEW');
+  if (ready.length)
+    return { tone: 'brand', icon: 'publishing', text: `Ready to publish on ${channelSummary(ready)}` };
+
+  const rejected = has('REJECTED');
+  if (rejected.length)
+    return { tone: 'danger', icon: 'alert', text: `Rejected on ${channelSummary(rejected)}` };
+  const failed = has('VALIDATION_FAILED');
+  if (failed.length)
+    return { tone: 'danger', icon: 'alert', text: `Validation failed on ${channelSummary(failed)}` };
+  const paused = has('PAUSED');
+  if (paused.length)
+    return { tone: 'warning', icon: 'pause', text: `Paused on ${channelSummary(paused)}` };
+
+  // Plans exist but are still being set up (draft / generated).
+  return { tone: 'neutral', icon: 'publishing', text: `Drafted on ${channelSummary(usage)}` };
+}
 
 /** Turn an API format like `image_9_16` into a ratio label + numeric ratio. */
 function formatMeta(format: string): {
@@ -94,6 +156,7 @@ export function ConceptCard({
   agentName,
   campaignId,
   advertiser = 'Demo Advertiser Co.',
+  usage = [],
 }: {
   variant: CreativeVariant;
   onRender?: (variant: CreativeVariant) => void | Promise<void>;
@@ -104,6 +167,7 @@ export function ConceptCard({
   agentName?: string;
   campaignId?: string;
   advertiser?: string;
+  usage?: { platform: string; status: string }[];
 }) {
   const [previewOpen, setPreviewOpen] = useState(false);
   const { label, ratio, placement } = formatMeta(variant.format);
@@ -112,6 +176,10 @@ export function ConceptCard({
   const sourceLinked = variant.status.toLowerCase() === 'approved';
   const validation = manifestSummary(variant.manifest);
   const rendered = !!variant.manifest || variant.status.toLowerCase() === 'rendered';
+
+  // Where is this design actually placed, and what's its publish status?
+  const badge = usageBadge(usage);
+  const usageHref = campaignId && usage.length > 0 ? `/campaigns/${campaignId}` : null;
 
   // --- Media / colour resolution (drives the artboard) ---------------------
   const media = MEDIA_META[s.mediaType];
@@ -469,6 +537,30 @@ export function ConceptCard({
 
       {/* Footer: provenance + optional validation manifest line + actions */}
       <div style={{ padding: '0.85rem 1rem', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+        {/* Channel usage — where this design is placed, and its publish status */}
+        <div className="spread" style={{ gap: '0.5rem' }}>
+          <span className="muted" style={{ fontSize: 12, fontWeight: 500 }}>
+            Placement
+          </span>
+          {(() => {
+            const chip = (
+              <Chip tone={badge.tone} icon={badge.icon}>
+                {badge.text}
+              </Chip>
+            );
+            return usageHref ? (
+              <Link
+                href={usageHref}
+                title="Open this campaign's Launch panel"
+                style={{ textDecoration: 'none', display: 'inline-flex' }}
+              >
+                {chip}
+              </Link>
+            ) : (
+              chip
+            );
+          })()}
+        </div>
         <div className="spread">
           {sourceLinked ? (
             <Chip tone="success" icon="check-circle">

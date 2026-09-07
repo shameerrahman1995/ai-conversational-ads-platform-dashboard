@@ -8,7 +8,7 @@ import { Icon } from '@/components/Icon';
 import { PageHeader, Button, Card, Chip, StatusChip, DataState, EmptyState, Meter } from '@/components/ui';
 import { useToast } from '@/components/feedback';
 import { ApiClientError } from '@acp/api-client';
-import type { CampaignVersion, CreativeVariant, ModelOption } from '@acp/api-client';
+import type { CampaignVersion, CreativeVariant, ModelOption, PublishPlan } from '@acp/api-client';
 import { ConceptCard } from './_components/ConceptCard';
 import { AdaptiveAdModal } from './_components/AdaptiveAdModal';
 import { CreativeEditor } from './_components/CreativeEditor';
@@ -76,6 +76,14 @@ export default function CreativeStudioPage() {
   );
   const generation = latestGeneration(versions);
 
+  // Publish plans across all campaigns — tells us whether each design is
+  // actually placed on a channel and its publish status. Never let a hiccup
+  // here blank the studio, and refresh in step with generate/approve.
+  const { data: plans } = useAsync(
+    () => client.publishing.plans().catch(() => [] as PublishPlan[]),
+    [client, reload],
+  );
+
   // The hosted agent for this campaign powers the interactive post-click preview.
   const agent = (agents ?? []).find((a) => a.campaignId === activeId) ?? null;
 
@@ -84,6 +92,17 @@ export default function CreativeStudioPage() {
   const sourceLinked = list.filter((v) => v.status.toLowerCase() === 'approved').length;
   const pct = total ? (sourceLinked / total) * 100 : 0;
   const gridClass = total >= 3 ? 'grid-3' : 'grid-2';
+
+  // Map each of this campaign's variants to its live publish plans (ignoring
+  // archived ones) so every card can show where the design is actually placed.
+  const variantIds = new Set(list.map((v) => v.id));
+  const plansByVariant = new Map<string, PublishPlan[]>();
+  for (const p of plans ?? []) {
+    if (p.status === 'ARCHIVED' || !variantIds.has(p.variantId)) continue;
+    const bucket = plansByVariant.get(p.variantId);
+    if (bucket) bucket.push(p);
+    else plansByVariant.set(p.variantId, [p]);
+  }
 
   // Brand/advertiser identity for previews + generated copy. Sourced from the
   // selected campaign; the demo literal is only a last-resort fallback.
@@ -319,6 +338,7 @@ export default function CreativeStudioPage() {
                   agentName={agent?.name}
                   campaignId={activeId}
                   advertiser={advertiser}
+                  usage={plansByVariant.get(v.id) ?? []}
                 />
               ))}
             </div>
