@@ -17,6 +17,7 @@ import {
   EmptyState,
 } from '@/components/ui';
 import type { CampaignSummary } from '@acp/api-client';
+import { VERTICAL_LABEL } from '@/lib/taxonomy';
 
 /* Sentence-case an objective like "lead_generation" → "Lead generation". */
 const objectiveLabel = (s: string) =>
@@ -270,7 +271,7 @@ export default function CampaignsPage() {
                               </span>
                               {c.vertical ? (
                                 <Chip tone="warning" icon="shield">
-                                  Restricted: {c.vertical}
+                                  Restricted: {VERTICAL_LABEL[c.vertical] ?? c.vertical}
                                 </Chip>
                               ) : null}
                             </div>

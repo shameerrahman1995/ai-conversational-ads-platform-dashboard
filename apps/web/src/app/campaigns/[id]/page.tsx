@@ -10,6 +10,7 @@ import { ApiClientError } from '@acp/api-client';
 import type { CreativeVariant, PublishPlan, ModelOption } from '@acp/api-client';
 import { Icon } from '@/components/Icon';
 import { AdPreviewModal } from '../../creative/_components/AdPreviewModal';
+import { VERTICAL_LABEL } from '@/lib/taxonomy';
 import {
   PageHeader,
   Button,
@@ -270,6 +271,14 @@ export default function CampaignDetailPage() {
   // with no end date. Derive it so the End date / Ongoing rows read correctly.
   const scheduleEndDate = settingDate(settings?.schedule?.endDate);
   const scheduleOngoing = !scheduleEndDate;
+  // Wizard-captured channels + creative formats (settings fields are opaque JSON).
+  const channelsLabel = Array.isArray(settings?.platforms) && settings.platforms.length
+    ? settings.platforms.map((p) => platformLabel(String(p))).join(', ')
+    : null;
+  const rawFormats = settings?.creative?.formats;
+  const formatsLabel = Array.isArray(rawFormats) && rawFormats.length
+    ? rawFormats.map((f) => formatLabel(String(f))).join(', ')
+    : null;
 
   // Fast lookup so each launch row can show the exact creative it will ship.
   const variantById = useMemo(
@@ -553,7 +562,7 @@ export default function CampaignDetailPage() {
               </Chip>
               {campaign.vertical ? (
                 <Chip tone="warning" icon="shield">
-                  Restricted: {campaign.vertical}
+                  Restricted: {VERTICAL_LABEL[campaign.vertical] ?? campaign.vertical}
                 </Chip>
               ) : null}
               <span className="muted tnum" style={{ fontSize: 12.5 }}>
@@ -767,6 +776,8 @@ export default function CampaignDetailPage() {
                         label="Ongoing"
                         value={scheduleOngoing ? 'Ongoing (no end date)' : 'No'}
                       />
+                      <SettingField label="Channels" value={channelsLabel} />
+                      <SettingField label="Creative formats" value={formatsLabel} />
                     </div>
                   </div>
                 </Panel>

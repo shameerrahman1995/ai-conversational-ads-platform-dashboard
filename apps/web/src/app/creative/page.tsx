@@ -16,13 +16,11 @@ import type {
   ModelOption,
   PublishPlan,
 } from '@acp/api-client';
+import { isRestrictedVertical, VERTICAL_LABEL } from '@/lib/taxonomy';
 import { ConceptCard } from './_components/ConceptCard';
 import { AdaptiveAdModal } from './_components/AdaptiveAdModal';
 import { CreativeEditor } from './_components/CreativeEditor';
 import { NewVariantModal } from './_components/NewVariantModal';
-
-/** Verticals that always require a human in the loop before publishing. */
-const RESTRICTED = new Set(['healthcare', 'finance', 'legal', 'insurance', 'pharma']);
 
 /** The ad channels a design can be placed on, in menu order. */
 const PLATFORMS: { value: string; label: string }[] = [
@@ -138,10 +136,9 @@ export default function CreativeStudioPage() {
   const campaignName = campaign?.name?.trim() || (campaign ? titleCase(campaign.objective) : '');
   const advertiser = campaign?.name?.trim() || 'Demo Advertiser Co.';
   const campaignsEmpty = !campLoading && !campErr && (campaigns?.length ?? 0) === 0;
-  const restrictedLabel =
-    campaign?.vertical && RESTRICTED.has(campaign.vertical.toLowerCase())
-      ? titleCase(campaign.vertical)
-      : null;
+  const restrictedLabel = isRestrictedVertical(campaign?.vertical)
+    ? (VERTICAL_LABEL[campaign!.vertical!] ?? titleCase(campaign!.vertical!))
+    : null;
 
   /* ---- Actions ---------------------------------------------------- */
   const [adaptiveOpen, setAdaptiveOpen] = useState(false);
