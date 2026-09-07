@@ -1,5 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsIn, IsNumber, IsOptional, IsString, Max, Min } from 'class-validator';
+import { IsIn, IsInt, IsNumber, IsOptional, IsString, Max, Min } from 'class-validator';
 
 export class SetBudgetDto {
   @ApiProperty({ example: 500, description: '0 = unlimited' })
@@ -9,7 +9,7 @@ export class SetBudgetDto {
 
   @ApiProperty({ required: false, default: 80 })
   @IsOptional()
-  @IsNumber()
+  @IsInt()
   @Min(0)
   @Max(100)
   alertThresholdPct?: number;

@@ -643,7 +643,10 @@ function BudgetModal({
   const toast = useToast();
   const configured = !!budget?.configured && (budget?.limit ?? 0) > 0;
   const [limit, setLimit] = useState(configured ? String(budget?.limit ?? '') : '');
-  const [threshold, setThreshold] = useState('80');
+  // Repopulate the saved threshold so editing the cap alone doesn't reset it.
+  const [threshold, setThreshold] = useState(
+    budget?.alertThresholdPct != null ? String(budget.alertThresholdPct) : '80',
+  );
   const [busy, setBusy] = useState(false);
   const [touched, setTouched] = useState(false);
 
@@ -665,7 +668,8 @@ function BudgetModal({
     try {
       await client.cost.setBudget({
         monthlyLimitUsd: limitNum,
-        ...(thresholdNum !== undefined ? { alertThresholdPct: thresholdNum } : {}),
+        // Backend requires an integer 0–100; round any typed decimals.
+        ...(thresholdNum !== undefined ? { alertThresholdPct: Math.round(thresholdNum) } : {}),
       });
       toast.success('Budget updated');
       onSaved();
@@ -1016,17 +1020,17 @@ function DataRetentionControls() {
   async function runSweep() {
     setSweepBusy(true);
     try {
-      const res = (await client.retention.run()) as { deleted?: number; purged?: number };
-      const n =
-        typeof res.deleted === 'number'
-          ? res.deleted
-          : typeof res.purged === 'number'
-            ? res.purged
-            : null;
+      const res = (await client.retention.run()) as {
+        messagesRedacted?: number;
+        chunksDeleted?: number;
+      };
+      const messagesRedacted =
+        typeof res.messagesRedacted === 'number' ? res.messagesRedacted : 0;
+      const chunksDeleted = typeof res.chunksDeleted === 'number' ? res.chunksDeleted : 0;
       toast.success(
-        n != null
-          ? `Retention sweep complete — ${n} record${n === 1 ? '' : 's'} purged`
-          : 'Retention sweep complete',
+        `Retention sweep: ${messagesRedacted} message${
+          messagesRedacted === 1 ? '' : 's'
+        } redacted, ${chunksDeleted} chunk${chunksDeleted === 1 ? '' : 's'} deleted`,
       );
       setSweepConfirm(false);
     } catch (e) {

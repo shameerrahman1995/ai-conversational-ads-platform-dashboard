@@ -12,9 +12,34 @@ import { readSpec, ratioFor, MEDIA_TYPES, type CreativeSpec } from './spec';
 /* Helpers                                                             */
 /* ------------------------------------------------------------------ */
 
-const HEX6 = /^#[0-9a-fA-F]{6}$/;
+const HEX_FULL = /^#?[0-9a-fA-F]{6}$/;
+const HEX_SHORT = /^#?[0-9a-fA-F]{3}$/;
+
+/**
+ * Normalize a user-typed color to a canonical `#rrggbb` (lowercase). Accepts
+ * `#rrggbb`, `rrggbb`, `#rgb`, and `rgb`; returns null for anything else so the
+ * caller can reject it with a clear message rather than sending it to the API —
+ * PaletteDto's @Matches(hex) 400s on non-hex values.
+ */
+function normalizeHex(input: string): string | null {
+  const v = input.trim();
+  if (HEX_FULL.test(v)) return `#${v.replace(/^#/, '').toLowerCase()}`;
+  if (HEX_SHORT.test(v)) {
+    const h = v.replace(/^#/, '').toLowerCase();
+    return `#${h[0]}${h[0]}${h[1]}${h[1]}${h[2]}${h[2]}`;
+  }
+  return null;
+}
+
 /** A value the native <input type="color"> will accept (needs #rrggbb). */
-const safeColor = (v: string) => (HEX6.test(v.trim()) ? v.trim() : '#000000');
+const safeColor = (v: string) => normalizeHex(v) ?? '#000000';
+
+/** The three editable spec colors, with human labels for validation messages. */
+const COLOR_FIELDS: { key: 'bgColor' | 'textColor' | 'accentColor'; label: string }[] = [
+  { key: 'bgColor', label: 'Background' },
+  { key: 'textColor', label: 'Text' },
+  { key: 'accentColor', label: 'Accent' },
+];
 
 type MediaKind = 'image' | 'video' | 'audio';
 
@@ -101,6 +126,7 @@ function ColorField({
   onChange: (v: string) => void;
   disabled?: boolean;
 }) {
+  const valid = normalizeHex(value) !== null;
   return (
     <label className="field">
       <span className="field-label">{label}</span>
@@ -126,12 +152,27 @@ function ColorField({
           className="input"
           value={value}
           onChange={(e) => onChange(e.target.value)}
+          onBlur={() => {
+            // Snap a valid-but-loose value (missing #, shorthand) to canonical
+            // #rrggbb; leave an invalid value so the error shows and Save blocks.
+            const n = normalizeHex(value);
+            if (n && n !== value) onChange(n);
+          }}
           disabled={disabled}
           spellCheck={false}
           placeholder="#000000"
-          style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}
+          aria-invalid={!valid}
+          style={{
+            fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+            ...(valid ? {} : { borderColor: 'var(--color-danger)' }),
+          }}
         />
       </div>
+      {valid ? null : (
+        <span style={{ fontSize: 11, color: 'var(--color-danger)' }}>
+          Enter a hex color like #4f46e5.
+        </span>
+      )}
     </label>
   );
 }
@@ -183,11 +224,34 @@ export function CreativeEditor({
     setSpec((s) => ({ ...s, [key]: value }));
   }
 
+  /** Normalize the three spec colors to #hex. On the first invalid one, toast a
+   *  clear message and return null so we never persist / send a color the API
+   *  will 400 on. */
+  function normalizedColors():
+    | Pick<CreativeSpec, 'bgColor' | 'textColor' | 'accentColor'>
+    | null {
+    const out = {} as Pick<CreativeSpec, 'bgColor' | 'textColor' | 'accentColor'>;
+    for (const f of COLOR_FIELDS) {
+      const norm = normalizeHex(spec[f.key]);
+      if (!norm) {
+        toast.error(
+          `${f.label} color "${spec[f.key]}" isn't a valid hex — use a value like #4f46e5.`,
+        );
+        return null;
+      }
+      out[f.key] = norm;
+    }
+    return out;
+  }
+
   async function handleSave() {
     if (!variant || busy) return;
+    // Guard the colors before persisting — an invalid hex would 400 downstream.
+    const colors = normalizedColors();
+    if (!colors) return; // keep the dialog open so the user can fix it
     setBusy(true);
     try {
-      await client.creative.updateVariant(variant.id, { spec: { ...spec } });
+      await client.creative.updateVariant(variant.id, { spec: { ...spec, ...colors } });
       toast.success('Creative updated');
       onSaved();
     } catch (err) {
@@ -241,13 +305,17 @@ export function CreativeEditor({
       toast.error('Add a headline or prompt to generate an image.');
       return;
     }
+    // Normalize the palette first — generateImage 400s on a non-hex color.
+    const colors = normalizedColors();
+    if (!colors) return;
+    setSpec((prev) => ({ ...prev, ...colors })); // reflect canonical hex in the form
     setGenerating(true);
     try {
       const { url } = await client.creative.generateImage({
         prompt,
         format: variant.format,
         subhead: spec.subhead.trim() || undefined,
-        palette: { bg: spec.bgColor, accent: spec.accentColor, text: spec.textColor },
+        palette: { bg: colors.bgColor, accent: colors.accentColor, text: colors.textColor },
       });
       update('imageUrl', url);
       setFileName(null);

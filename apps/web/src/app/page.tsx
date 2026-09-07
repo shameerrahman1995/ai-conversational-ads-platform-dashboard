@@ -14,10 +14,29 @@ import {
   StatusChip,
   DataState,
 } from '@/components/ui';
+import type { LeadSummary } from '@acp/api-client';
 
 const usd = (n: number, max = 0) =>
   `$${n.toLocaleString('en-US', { maximumFractionDigits: max, minimumFractionDigits: max })}`;
 const num = (n: number) => n.toLocaleString('en-US');
+
+/**
+ * Best display name for a lead row: captured contact name (case-insensitive
+ * name/full_name/first_name(+last_name)), else email, else the AI summary,
+ * else a short id fallback.
+ */
+function leadDisplayName(l: LeadSummary): string {
+  const fields = l.fieldValues ?? [];
+  const get = (name: string) =>
+    fields.find((f) => f.field.trim().toLowerCase() === name)?.value?.trim() || '';
+  const combinedName = [get('first_name'), get('last_name')].filter(Boolean).join(' ').trim();
+  const contact = get('name') || get('full_name') || combinedName || get('email');
+  if (contact) return contact;
+  if (l.agentSummary) {
+    return l.agentSummary.slice(0, 42) + (l.agentSummary.length > 42 ? '…' : '');
+  }
+  return `Lead ${l.id.slice(0, 6)}`;
+}
 
 export default function OverviewPage() {
   const router = useRouter();
@@ -46,7 +65,7 @@ export default function OverviewPage() {
         subtitle="How conversations are turning into qualified pipeline across every connected channel."
         actions={
           <>
-            <Chip icon="clock">Last 30 days</Chip>
+            <Chip icon="clock">All time</Chip>
             <Button
               icon="plus"
               variant="primary"
@@ -65,13 +84,13 @@ export default function OverviewPage() {
             label="Qualified leads"
             value={num(attribution?.qualifiedLeads ?? 0)}
             icon="leads"
-            footNote="This period"
+            footNote="All time"
           />
           <StatCard
             label="Ad spend"
             value={usd(spend?.totals.spend ?? 0)}
             icon="billing"
-            footNote="Provider-reported, this period"
+            footNote="Provider-reported, all time"
           />
           <StatCard
             label="Cost / qualified lead"
@@ -127,7 +146,7 @@ export default function OverviewPage() {
 
           <Card className="card-pad stack" >
             <div>
-              <div className="stat-label">Pipeline this period</div>
+              <div className="stat-label">Pipeline to date</div>
               <div className="stat-value" style={{ marginTop: '0.35rem' }}>
                 {usd(attribution?.revenue ?? 0)}
               </div>
@@ -206,11 +225,7 @@ export default function OverviewPage() {
                   {(leads ?? []).slice(0, 5).map((l) => (
                     <tr key={l.id}>
                       <td>
-                        <div className="cell-strong">
-                          {l.agentSummary
-                            ? l.agentSummary.slice(0, 42) + (l.agentSummary.length > 42 ? '…' : '')
-                            : `Lead ${l.id.slice(0, 6)}`}
-                        </div>
+                        <div className="cell-strong">{leadDisplayName(l)}</div>
                         <div className="cell-muted" style={{ fontSize: 12 }}>
                           {l.qualified ? 'Qualified' : 'Unqualified'}
                           {l.revenue ? ` · ${usd(l.revenue)}` : ''}

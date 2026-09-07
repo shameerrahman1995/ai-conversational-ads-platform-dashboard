@@ -11,7 +11,7 @@ function deps(opts: { variant?: any; renderer?: any } = {}) {
         .fn()
         .mockResolvedValue('variant' in opts ? opts.variant : { id: 'v1', orgId: 'org_1', spec: {} }),
       findMany: vi.fn().mockResolvedValue([]),
-      update: vi.fn().mockResolvedValue({}),
+      update: vi.fn().mockImplementation(({ data }: any) => Promise.resolve({ id: 'v1', orgId: 'org_1', ...data })),
     },
   } as any;
   const audit = { record: vi.fn() } as any;

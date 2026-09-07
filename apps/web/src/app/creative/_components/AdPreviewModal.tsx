@@ -336,6 +336,20 @@ export function AdPreviewModal({
                     {s.subhead}
                   </div>
                 ) : null}
+                {s.body ? (
+                  <div
+                    style={{
+                      marginTop: 4,
+                      fontSize: 12,
+                      lineHeight: 1.4,
+                      color: copyColor,
+                      opacity: onDark ? 0.85 : 0.62,
+                      textShadow,
+                    }}
+                  >
+                    {s.body}
+                  </div>
+                ) : null}
               </div>
             </div>
 

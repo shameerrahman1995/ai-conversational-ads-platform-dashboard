@@ -77,9 +77,9 @@ export default function AnalyticsPage() {
             <span
               className="row muted"
               style={{ gap: '0.35rem', fontSize: 12.5, cursor: 'default' }}
-              title="Reporting window — fixed to the last 30 days (not adjustable yet)"
+              title="Reporting window — all-time totals for this account"
             >
-              <Icon name="clock" size={12} /> Last 30 days
+              <Icon name="clock" size={12} /> All time
             </span>
             <Button
               icon="download"
@@ -778,7 +778,10 @@ function SetBudgetModal({
   const toast = useToast();
   const configured = !!budget?.configured && (budget?.limit ?? 0) > 0;
   const [limit, setLimit] = useState(configured ? String(budget?.limit ?? '') : '');
-  const [threshold, setThreshold] = useState('80');
+  // Repopulate the saved threshold so editing the cap alone doesn't reset it.
+  const [threshold, setThreshold] = useState(
+    budget?.alertThresholdPct != null ? String(budget.alertThresholdPct) : '80',
+  );
   const [busy, setBusy] = useState(false);
   const [touched, setTouched] = useState(false);
 
@@ -800,7 +803,8 @@ function SetBudgetModal({
     try {
       await client.cost.setBudget({
         monthlyLimitUsd: limitNum,
-        ...(thresholdNum !== undefined ? { alertThresholdPct: thresholdNum } : {}),
+        // Backend requires an integer 0–100; round any typed decimals.
+        ...(thresholdNum !== undefined ? { alertThresholdPct: Math.round(thresholdNum) } : {}),
       });
       toast.success('Budget updated');
       onSaved();

@@ -105,7 +105,8 @@ export class ConnectionsService {
   }
 
   async list(orgId: string) {
-    return this.prisma.connection.findMany({ where: scopedWhere(orgId) });
+    // Never ship the secret reference to the client (blueprint §12/§17).
+    return this.prisma.connection.findMany({ where: scopedWhere(orgId), omit: { secretRef: true } });
   }
 
   async test(orgId: string, id: string) {
@@ -172,6 +173,7 @@ export class ConnectionsService {
     const updated = await this.prisma.connection.update({
       where: { id: conn.id, orgId },
       data: { status: to, ...extra },
+      omit: { secretRef: true },
     });
     await this.audit.record({ orgId, action, target: conn.id, metadata: { status: to } });
     return updated;

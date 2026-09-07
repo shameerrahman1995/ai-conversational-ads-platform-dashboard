@@ -158,6 +158,7 @@ export function ConceptCard({
   campaignId,
   advertiser = 'Demo Advertiser Co.',
   usage = [],
+  modelLabel,
 }: {
   variant: CreativeVariant;
   onRender?: (variant: CreativeVariant) => void | Promise<void>;
@@ -170,11 +171,27 @@ export function ConceptCard({
   campaignId?: string;
   advertiser?: string;
   usage?: { platform: string; status: string }[];
+  /** Maps a model id → human label via the page's models catalog. */
+  modelLabel?: (id?: string) => string;
 }) {
   const [previewOpen, setPreviewOpen] = useState(false);
   const { label, ratio, placement } = formatMeta(variant.format);
   const { w, h } = artboardSize(ratio);
   const s = readSpec(variant.spec);
+
+  // Per-variant copy provenance — the model + brand voice stamped on THIS
+  // variant's own spec by generateAdaptive (distinct from the campaign-level
+  // generation shown in the studio bar).
+  const variantModel = s.model ? (modelLabel ? modelLabel(s.model) : s.model) : null;
+  const copyByText =
+    variantModel && s.brandVoice
+      ? `Copy by ${variantModel} · ${s.brandVoice}`
+      : variantModel
+        ? `Copy by ${variantModel}`
+        : s.brandVoice
+          ? s.brandVoice
+          : null;
+
   const sourceLinked = variant.status.toLowerCase() === 'approved';
   const validation = manifestSummary(variant.manifest);
   const rendered = !!variant.manifest || variant.status.toLowerCase() === 'rendered';
@@ -203,6 +220,7 @@ export function ConceptCard({
 
   const headlineSize = Math.max(13, Math.min(22, Math.round(w / 9)));
   const subheadSize = Math.max(10, Math.min(13, Math.round(w / 16)));
+  const bodySize = Math.max(9, Math.min(12, Math.round(w / 18)));
   const ctaSize = Math.max(11, Math.min(14, Math.round(w / 15)));
   const textShadow = onDark ? '0 1px 8px rgba(0,0,0,0.45)' : 'none';
 
@@ -280,6 +298,23 @@ export function ConceptCard({
           }}
         >
           {s.subhead}
+        </div>
+      ) : null}
+      {s.body ? (
+        <div
+          style={{
+            fontSize: bodySize,
+            lineHeight: 1.35,
+            color: copyColor,
+            opacity: onDark ? 0.85 : 0.62,
+            textShadow,
+            overflow: 'hidden',
+            display: '-webkit-box',
+            WebkitLineClamp: 3,
+            WebkitBoxOrient: 'vertical',
+          }}
+        >
+          {s.body}
         </div>
       ) : null}
       <span
@@ -539,6 +574,14 @@ export function ConceptCard({
 
       {/* Footer: provenance + optional validation manifest line + actions */}
       <div style={{ padding: '0.85rem 1rem', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+        {/* Per-variant copy attribution — sourced from this variant's own spec */}
+        {copyByText ? (
+          <span style={{ alignSelf: 'flex-start' }}>
+            <Chip tone="brand" icon="sparkles">
+              {copyByText}
+            </Chip>
+          </span>
+        ) : null}
         {/* Channel usage — where this design is placed, and its publish status */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.45rem' }}>
           <div className="spread" style={{ gap: '0.5rem' }}>

@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useApiClient } from '@/lib/api';
 import { useAsync } from '@/lib/useAsync';
@@ -162,7 +163,12 @@ export default function CreativeStudioPage() {
     if (!activeId) return;
     setNvBusy(true);
     try {
-      await client.creative.createVariant(activeId, { format, spec: { headline, cta } });
+      // Hand-authored variants are copy-only: stamp mediaType:'none' so readSpec
+      // doesn't default them to 'image' and render them with placeholder art.
+      await client.creative.createVariant(activeId, {
+        format,
+        spec: { headline, cta, mediaType: 'none' },
+      });
       toast.success('New variant added');
       setNvOpen(false);
       setReload((n) => n + 1);
@@ -351,6 +357,54 @@ export default function CreativeStudioPage() {
                       </Chip>
                     ) : null}
                   </div>
+
+                  {/* Click-through agent — which hosted agent handles this
+                      campaign's post-click conversation. */}
+                  <div
+                    className="row"
+                    style={{ gap: '0.45rem', marginTop: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}
+                  >
+                    <Icon
+                      name="agents"
+                      size={14}
+                      style={{ color: 'var(--color-ink-3)', flex: 'none' }}
+                    />
+                    {agent ? (
+                      <>
+                        <span style={{ fontSize: 12.5, color: 'var(--color-ink-2)' }}>
+                          Click-through agent:{' '}
+                          <Link
+                            href="/agents"
+                            title="Manage this campaign's click-through agent"
+                            style={{ fontWeight: 600, color: 'var(--color-ink)' }}
+                          >
+                            {agent.name}
+                          </Link>
+                        </span>
+                        <span className="muted" style={{ fontSize: 12 }}>
+                          ·
+                        </span>
+                        <Chip tone="neutral" icon="sparkles">
+                          {modelLabel(agent.model)}
+                        </Chip>
+                        <span className="muted" style={{ fontSize: 12 }}>
+                          ·
+                        </span>
+                        <StatusChip status={agent.status.toUpperCase()} />
+                      </>
+                    ) : (
+                      <span style={{ fontSize: 12.5, color: 'var(--color-ink-2)' }}>
+                        No agent yet —{' '}
+                        <Link
+                          href="/agents"
+                          title="Add a click-through agent for this campaign"
+                          style={{ fontWeight: 600, color: 'var(--color-brand)' }}
+                        >
+                          Add one
+                        </Link>
+                      </span>
+                    )}
+                  </div>
                 </div>
               ) : null}
             </div>
@@ -419,6 +473,7 @@ export default function CreativeStudioPage() {
                   campaignId={activeId}
                   advertiser={advertiser}
                   usage={plansByVariant.get(v.id) ?? []}
+                  modelLabel={modelLabel}
                 />
               ))}
             </div>

@@ -21,13 +21,28 @@ export class IdentityService {
     return org;
   }
 
+  // Never ship credential material or internal columns to the client.
+  private static readonly SAFE_USER_SELECT = {
+    id: true,
+    orgId: true,
+    email: true,
+    name: true,
+    role: true,
+    status: true,
+    createdAt: true,
+  } as const;
+
   async listUsers(orgId: string) {
-    return this.prisma.user.findMany({ where: scopedWhere(orgId) });
+    return this.prisma.user.findMany({
+      where: scopedWhere(orgId),
+      select: IdentityService.SAFE_USER_SELECT,
+    });
   }
 
   async inviteUser(orgId: string, email: string, role: UserRole) {
     const user = await this.prisma.user.create({
       data: { orgId, email, role, status: 'invited' },
+      select: IdentityService.SAFE_USER_SELECT,
     });
     await this.audit.record({
       orgId,

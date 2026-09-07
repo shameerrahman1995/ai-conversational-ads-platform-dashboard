@@ -8,6 +8,7 @@ export interface BudgetStatus {
   configured: boolean; // false = no budget row; callers decide policy (no silent "unlimited")
   monthToDate: number;
   limit: number;
+  alertThresholdPct: number; // the saved alert threshold, so the UI can round-trip it
   remaining: number | null; // null = unlimited (limit 0 or unconfigured)
   remainingPct: number | null;
   overBudget: boolean;
@@ -34,7 +35,9 @@ export class BudgetService {
       create: { orgId, monthlyLimitUsd, alertThresholdPct },
     });
     await this.audit.record({ orgId, action: 'budget.set', metadata: { monthlyLimitUsd } });
-    return budget;
+    // Return the same shape as GET so the client can bind the response directly
+    // (previously returned the raw Budget row, whose keys don't match BudgetStatus).
+    return this.getStatus(orgId);
   }
 
   async recordUsage(
@@ -87,6 +90,7 @@ export class BudgetService {
       configured: budget !== null,
       monthToDate,
       limit,
+      alertThresholdPct: thresholdPct,
       remaining,
       remainingPct,
       overBudget,

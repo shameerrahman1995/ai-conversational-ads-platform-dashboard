@@ -34,6 +34,7 @@ describe('ConnectionsService', () => {
     expect(d.prisma.connection.update).toHaveBeenCalledWith({
       where: { id: 'cn1', orgId: 'org_1' },
       data: { status: 'AUTHORIZING' },
+      omit: { secretRef: true },
     });
     expect(out.authUrl).toContain('google_ads');
   });
@@ -44,6 +45,7 @@ describe('ConnectionsService', () => {
     expect(d.prisma.connection.update).toHaveBeenCalledWith({
       where: { id: 'cn1', orgId: 'org_1' },
       data: { status: 'CONNECTED', secretRef: 'sref', scopes: ['ads'] },
+      omit: { secretRef: true },
     });
   });
 
@@ -65,6 +67,7 @@ describe('ConnectionsService', () => {
     expect(d.prisma.connection.update).toHaveBeenCalledWith({
       where: { id: 'cn1', orgId: 'org_1' },
       data: { status: 'REVOKED', secretRef: null },
+      omit: { secretRef: true },
     });
   });
 
@@ -75,6 +78,7 @@ describe('ConnectionsService', () => {
     expect(d.prisma.connection.update).toHaveBeenCalledWith({
       where: { id: 'cn1', orgId: 'org_1' },
       data: { status: 'CONNECTED' },
+      omit: { secretRef: true },
     });
   });
 });

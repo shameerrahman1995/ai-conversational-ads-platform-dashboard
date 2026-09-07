@@ -30,6 +30,49 @@ function timeAgo(iso: string): string {
 
 const truncate = (s: string, n: number) => (s.length > n ? `${s.slice(0, n).trimEnd()}…` : s);
 
+/* ---- Captured contact fields (name/email) from list rows ---------------- */
+/** First non-empty value among the given field names (case-insensitive exact match). */
+function pickField(lead: LeadSummary, names: string[]): string | null {
+  const fields = lead.fieldValues;
+  if (!fields?.length) return null;
+  for (const name of names) {
+    const hit = fields.find(
+      (f) => f.field.toLowerCase() === name && (f.value ?? '').trim() !== '',
+    );
+    if (hit) return hit.value.trim();
+  }
+  return null;
+}
+
+/** The lead's captured email, if one is present. */
+function leadEmail(lead: LeadSummary): string | null {
+  const fields = lead.fieldValues;
+  if (!fields?.length) return null;
+  const hit = fields.find(
+    (f) => f.field.toLowerCase().includes('email') && (f.value ?? '').trim() !== '',
+  );
+  return hit ? hit.value.trim() : null;
+}
+
+/** Just the captured personal name (no email fallback), if any. */
+function contactName(lead: LeadSummary): string | null {
+  const single = pickField(lead, ['name', 'full_name', 'fullname']);
+  if (single) return single;
+  const combined = [pickField(lead, ['first_name']), pickField(lead, ['last_name'])]
+    .filter(Boolean)
+    .join(' ')
+    .trim();
+  return combined || null;
+}
+
+/**
+ * Best human label for a lead from its captured contact fields:
+ * a name-ish field, else the email, else null.
+ */
+function leadName(lead: LeadSummary): string | null {
+  return contactName(lead) ?? leadEmail(lead);
+}
+
 function qualChip(level: LeadSummary['qualificationLevel']) {
   if (!level) return <span className="cell-muted">—</span>;
   const tone = level === 'high' ? 'success' : level === 'medium' ? 'warning' : 'neutral';
@@ -57,8 +100,10 @@ function csvCell(value: string | number | null | undefined): string {
 }
 
 function exportLeadsCsv(rows: LeadSummary[]): void {
-  const header = ['Lead', 'Score', 'Qualification', 'Stage', 'Qualified', 'Revenue', 'CRM contact', 'Captured'];
+  const header = ['Name', 'Email', 'Summary', 'Score', 'Qualification', 'Stage', 'Qualified', 'Revenue', 'CRM contact', 'Captured'];
   const lines = rows.map((l) => [
+    contactName(l) ?? '',
+    leadEmail(l) ?? '',
     l.agentSummary ?? `Lead ${l.id.slice(0, 8)}`,
     l.score ?? '',
     l.qualificationLevel ?? '',
@@ -128,9 +173,10 @@ export default function LeadsPage() {
       if (filter.startsWith('qual:') && l.qualificationLevel !== filter.slice(5)) return false;
       if (filter.startsWith('stage:') && l.lifecycleStage !== filter.slice(6)) return false;
       if (q) {
-        // The list endpoint doesn't carry name/email (those live in the lead
-        // detail), so search covers the agent summary + id.
-        const hay = `${l.agentSummary ?? ''} ${l.id}`.toLowerCase();
+        // Search covers the agent summary, id, and the captured contact fields
+        // (name/email/…) that now ride along on each list row.
+        const fieldHay = (l.fieldValues ?? []).map((f) => f.value).join(' ');
+        const hay = `${l.agentSummary ?? ''} ${l.id} ${fieldHay}`.toLowerCase();
         if (!hay.includes(q)) return false;
       }
       return true;
@@ -173,7 +219,11 @@ export default function LeadsPage() {
   const avgScore = scored.length
     ? Math.round(scored.reduce((s, l) => s + (l.score ?? 0), 0) / scored.length)
     : 0;
-  const pipeline = leads.reduce((s, l) => s + (l.revenue ?? 0), 0);
+  // Pipeline revenue is reported "from qualified leads", so only sum those
+  // (keeps the KPI label and the math in agreement).
+  const pipeline = leads
+    .filter((l) => l.qualified)
+    .reduce((s, l) => s + (l.revenue ?? 0), 0);
 
   return (
     <div>
@@ -262,8 +312,8 @@ export default function LeadsPage() {
                   type="search"
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
-                  placeholder="Search summary…"
-                  aria-label="Search leads by summary"
+                  placeholder="Search name, email or summary…"
+                  aria-label="Search leads by name, email or summary"
                   style={{ paddingLeft: '2rem' }}
                 />
               </div>
@@ -346,6 +396,16 @@ export default function LeadsPage() {
                     const cellStyle = isSel
                       ? { background: 'var(--color-brand-soft)' }
                       : undefined;
+                    // Prefer the captured name; fall back to the AI summary, then a short id.
+                    const name = leadName(l);
+                    const primary =
+                      name ?? (l.agentSummary ? truncate(l.agentSummary, 40) : `Lead ${l.id.slice(0, 6)}`);
+                    // When a name leads, the AI summary becomes the secondary line;
+                    // otherwise keep the capture time there.
+                    const secondary =
+                      name && l.agentSummary
+                        ? truncate(l.agentSummary, 44)
+                        : `Captured ${timeAgo(l.createdAt)}`;
                     return (
                       <tr
                         key={l.id}
@@ -354,11 +414,9 @@ export default function LeadsPage() {
                         aria-selected={isSel}
                       >
                         <td style={{ ...cellStyle, boxShadow: isSel ? 'inset 3px 0 0 var(--color-brand)' : undefined }}>
-                          <div className="cell-strong">
-                            {l.agentSummary ? truncate(l.agentSummary, 40) : `Lead ${l.id.slice(0, 6)}`}
-                          </div>
+                          <div className="cell-strong">{primary}</div>
                           <div className="cell-muted" style={{ fontSize: 12 }}>
-                            Captured {timeAgo(l.createdAt)}
+                            {secondary}
                           </div>
                         </td>
                         <td style={cellStyle}>{qualChip(l.qualificationLevel)}</td>

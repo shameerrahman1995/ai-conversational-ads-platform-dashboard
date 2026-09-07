@@ -29,14 +29,27 @@ const dateLabel = (iso: string) =>
     year: 'numeric',
   });
 
-type FilterKey = 'all' | 'DRAFT' | 'READY_FOR_REVIEW' | 'LIVE' | 'PAUSED';
+type FilterKey =
+  | 'all'
+  | 'DRAFT'
+  | 'GENERATED'
+  | 'READY_FOR_REVIEW'
+  | 'IN_REVIEW'
+  | 'LIVE'
+  | 'PAUSED'
+  | 'REJECTED'
+  | 'ARCHIVED';
 
 const FILTERS: { key: FilterKey; label: string }[] = [
   { key: 'all', label: 'All' },
   { key: 'DRAFT', label: 'Draft' },
+  { key: 'GENERATED', label: 'Generated' },
   { key: 'READY_FOR_REVIEW', label: 'Ready for review' },
+  { key: 'IN_REVIEW', label: 'In review' },
   { key: 'LIVE', label: 'Live' },
   { key: 'PAUSED', label: 'Paused' },
+  { key: 'REJECTED', label: 'Rejected' },
+  { key: 'ARCHIVED', label: 'Archived' },
 ];
 
 export default function CampaignsPage() {
@@ -55,16 +68,26 @@ export default function CampaignsPage() {
     const by = (status: CampaignSummary['status']) =>
       campaigns.filter((c) => c.status === status).length;
     return {
-      all: campaigns.length,
+      // "All" and the Total count exclude archived campaigns.
+      all: campaigns.filter((c) => c.status !== 'ARCHIVED').length,
       DRAFT: by('DRAFT'),
+      GENERATED: by('GENERATED'),
       READY_FOR_REVIEW: by('READY_FOR_REVIEW'),
+      IN_REVIEW: by('IN_REVIEW'),
       LIVE: by('LIVE'),
       PAUSED: by('PAUSED'),
+      REJECTED: by('REJECTED'),
+      ARCHIVED: by('ARCHIVED'),
     };
   }, [campaigns]);
 
   const filtered =
-    filter === 'all' ? campaigns : campaigns.filter((c) => c.status === filter);
+    filter === 'all'
+      ? campaigns.filter((c) => c.status !== 'ARCHIVED')
+      : campaigns.filter((c) => c.status === filter);
+
+  // Denominator for the "N of M shown" hint: active pool by default, archived pool when viewing archived.
+  const viewTotal = filter === 'ARCHIVED' ? counts.ARCHIVED : counts.all;
 
   const reviewQueue = campaigns.filter((c) => c.status === 'READY_FOR_REVIEW');
 
@@ -113,7 +136,7 @@ export default function CampaignsPage() {
                 label="Total campaigns"
                 value={counts.all}
                 icon="campaigns"
-                footNote="Across every objective"
+                footNote="Active — excludes archived"
               />
               <StatCard
                 label="Live"
@@ -218,7 +241,7 @@ export default function CampaignsPage() {
                     })}
                   </div>
                   <span className="muted tnum" style={{ fontSize: 12.5 }}>
-                    {filtered.length} of {campaigns.length} shown
+                    {filtered.length} of {viewTotal} shown
                   </span>
                 </div>
 

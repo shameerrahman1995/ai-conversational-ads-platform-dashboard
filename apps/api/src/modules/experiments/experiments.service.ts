@@ -23,7 +23,9 @@ export class ExperimentsService {
   ) {}
 
   async create(orgId: string, campaignId: string, hypothesis: string, arms: ArmInput[]) {
-    if (arms.length < 2) throw new BadRequestException('An experiment needs at least two arms');
+    // Allow saving a plan with no arms yet (measurement is added later); only a
+    // single arm is invalid — a real test needs at least two.
+    if (arms.length === 1) throw new BadRequestException('An experiment needs at least two arms');
     // Prevent cross-tenant reference: the campaign must belong to the caller's org.
     const campaign = await this.prisma.campaign.findFirst({
       where: scopedWhere(orgId, { id: campaignId }),

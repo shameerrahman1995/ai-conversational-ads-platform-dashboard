@@ -67,6 +67,23 @@ const TONE_PRESETS = [
   'Direct & professional',
 ];
 
+/**
+ * Coerce a numeric-input value into a valid, in-range number. An empty or
+ * non-numeric entry (e.g. the field cleared to '') falls back to `fallback`
+ * instead of producing NaN — the backend (`normalizeSettings`) snaps NaN /
+ * out-of-range values back to its own default on reload, which looks to the
+ * user like a spurious "reset". The result is clamped to [min, max] so a bad
+ * entry is prevented up front rather than silently corrected later. For
+ * maxTokens we pass the backend's true floor (1) so partial typing (e.g. "5"
+ * on the way to "512") isn't yanked upward on every keystroke; the input's
+ * `min`/`step` attributes still guide the spinner to the recommended range.
+ */
+function clampNumber(raw: string, min: number, max: number, fallback: number): number {
+  const n = Number(raw);
+  if (raw.trim() === '' || !Number.isFinite(n)) return fallback;
+  return Math.min(max, Math.max(min, n));
+}
+
 export function IdentityTab({
   settings,
   saved,
@@ -254,7 +271,9 @@ export function IdentityTab({
                 max={1}
                 step={0.05}
                 value={settings.temperature}
-                onChange={(e) => onChange({ temperature: Number(e.target.value) })}
+                onChange={(e) =>
+                  onChange({ temperature: clampNumber(e.target.value, 0, 1, settings.temperature) })
+                }
                 style={{ width: '100%', accentColor: 'var(--color-brand)' }}
               />
               <div className="spread muted" style={{ fontSize: 11.5 }}>
@@ -272,10 +291,14 @@ export function IdentityTab({
                 type="number"
                 className="input"
                 min={128}
-                max={4096}
+                max={8192}
                 step={128}
                 value={settings.maxTokens}
-                onChange={(e) => onChange({ maxTokens: Number(e.target.value) })}
+                onChange={(e) =>
+                  onChange({
+                    maxTokens: Math.round(clampNumber(e.target.value, 1, 8192, settings.maxTokens)),
+                  })
+                }
               />
               <span className="muted" style={{ fontSize: 12 }}>
                 Caps reply length. ~1,024 keeps answers tight and on-topic.

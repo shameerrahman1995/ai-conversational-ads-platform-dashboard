@@ -37,7 +37,10 @@ export interface CampaignSummary {
   version: number;
   name?: string | null;
   vertical?: string | null;
+  /** Wizard-captured audience/budget/schedule/creative/agent config (JSON blob). */
+  settings?: Record<string, unknown> | null;
   createdAt: string;
+  updatedAt?: string;
 }
 
 export interface CampaignVersion {
@@ -46,6 +49,12 @@ export interface CampaignVersion {
   version: number;
   snapshot: unknown;
   createdAt: string;
+}
+
+export interface LeadFieldValue {
+  field: string;
+  value: string;
+  source?: string;
 }
 
 export interface LeadSummary {
@@ -58,6 +67,8 @@ export interface LeadSummary {
   revenue?: number | null;
   crmId: string | null;
   conversationId?: string | null;
+  /** Captured contact fields (name/email/phone…), decrypted, included on list rows. */
+  fieldValues?: LeadFieldValue[];
   createdAt: string;
 }
 
@@ -186,6 +197,7 @@ export interface BudgetStatus {
   configured: boolean;
   monthToDate: number;
   limit: number;
+  alertThresholdPct: number;
   remaining: number | null;
   remainingPct: number | null;
   overBudget: boolean;
@@ -286,7 +298,10 @@ export function createApiClient(opts: ClientOptions) {
       }))) as ApiError;
       throw new ApiClientError(res.status, body);
     }
-    return (await res.json()) as T;
+    // Some endpoints return 204 / an empty body on success; res.json() would throw
+    // on those even though the call succeeded. Tolerate an empty body.
+    const text = await res.text();
+    return (text ? JSON.parse(text) : undefined) as T;
   }
 
   return {
@@ -392,8 +407,15 @@ export function createApiClient(opts: ClientOptions) {
       plans: () => request<PublishPlan[]>('/v1/publish-plans'),
       capabilities: (platform: string, accountId: string) =>
         request<Record<string, unknown>>(`/v1/publish/capabilities${qs({ platform, accountId })}`),
+      // Returns the created plan nested under `.plan`, plus validation/policy context.
       createPlan: (body: { campaignId: string; variantId: string; platform: string; accountId: string }) =>
-        request<Record<string, unknown>>('/v1/publish-plans', {
+        request<{
+          plan: PublishPlan;
+          validation?: unknown;
+          capabilities?: unknown;
+          snapshotId?: string | null;
+          policy?: unknown;
+        }>('/v1/publish-plans', {
           method: 'POST',
           body: JSON.stringify(body),
         }),
@@ -440,7 +462,7 @@ export function createApiClient(opts: ClientOptions) {
         request<Record<string, unknown>>(`/v1/connections/${provider}/authorize/start`, {
           method: 'POST',
         }),
-      authorizeComplete: (provider: string, body: Record<string, unknown> = {}) =>
+      authorizeComplete: (provider: string, body: { code: string }) =>
         request<Connection>(`/v1/connections/${provider}/authorize/complete`, {
           method: 'POST',
           body: JSON.stringify(body),
@@ -496,8 +518,8 @@ export function createApiClient(opts: ClientOptions) {
 
     sources: {
       list: () => request<SourceSummary[]>('/v1/sources'),
-      create: (body: { type: string; uri: string }) =>
-        request<SourceSummary & { sourceId: string }>('/v1/sources', {
+      create: (body: { type: string; uri: string; filename?: string; contentType?: string }) =>
+        request<SourceSummary & { sourceId: string; uploadUrl?: string }>('/v1/sources', {
           method: 'POST',
           body: JSON.stringify(body),
         }),

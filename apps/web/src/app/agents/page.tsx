@@ -5,6 +5,7 @@ import {
   ApiClientError,
   type AgentSettings,
   type AgentSummary,
+  type ModelOption,
   type SourceSummary,
 } from '@acp/api-client';
 import { useApiClient } from '@/lib/api';
@@ -293,6 +294,7 @@ export default function AgentsPage() {
               <AgentSummary
                 agent={selected}
                 draft={draft}
+                models={catalog?.models ?? []}
                 sourceCount={sourceList?.length ?? 0}
               />
 
@@ -498,15 +500,21 @@ function AgentRail({
 function AgentSummary({
   agent,
   draft,
+  models,
   sourceCount,
 }: {
   agent: AgentSummary;
   draft: AgentSettings | null;
+  models: ModelOption[];
   sourceCount: number;
 }) {
   const name = draft?.name ?? agent.name;
   const persona = draft?.persona ?? agent.persona;
   const tone = draft?.tone ?? agent.tone;
+  // Show the human-readable model name from the catalog; fall back to the raw
+  // id if the model isn't in the catalog (e.g. a legacy/unknown id).
+  const modelId = draft?.model ?? agent.model;
+  const modelLabel = models.find((m) => m.id === modelId)?.label ?? modelId;
   const enabledTools = draft ? Object.values(draft.tools).filter(Boolean).length : 0;
   return (
     <Card className="card-pad">
@@ -544,7 +552,7 @@ function AgentSummary({
 
         <div className="row" style={{ gap: '0.4rem', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
           <Chip tone="neutral" icon="sparkles">
-            {draft?.model ?? agent.model}
+            {modelLabel}
           </Chip>
           <Chip tone="info" icon="database">
             {sourceCount} knowledge {sourceCount === 1 ? 'source' : 'sources'}

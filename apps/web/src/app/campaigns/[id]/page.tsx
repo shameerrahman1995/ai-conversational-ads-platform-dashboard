@@ -34,6 +34,39 @@ interface CopySnapshot {
   generation?: { model?: string; brandVoice?: string };
 }
 
+/*
+ * Wizard-captured campaign config (`campaign.settings`). The API types this as an
+ * opaque JSON blob, so every field is best-effort — treat all of them as optional
+ * and unknown, and guard at the point of use.
+ */
+interface CampaignSettings {
+  platforms?: unknown;
+  audience?: {
+    locations?: unknown;
+    ageMin?: unknown;
+    ageMax?: unknown;
+    gender?: unknown;
+    languages?: unknown;
+    interests?: unknown;
+  } | null;
+  budget?: {
+    type?: unknown;
+    amount?: unknown;
+    currency?: unknown;
+    bidStrategy?: unknown;
+  } | null;
+  schedule?: {
+    startDate?: unknown;
+    endDate?: unknown;
+    ongoing?: unknown;
+  } | null;
+  creative?: {
+    formats?: unknown;
+    brandVoice?: unknown;
+  } | null;
+  agent?: Record<string, unknown> | null;
+}
+
 const objectiveLabel = (s: string) =>
   s.replace(/_/g, ' ').replace(/^\w/, (c) => c.toUpperCase());
 
@@ -80,6 +113,61 @@ const money = (n: number) =>
     currency: 'USD',
     maximumFractionDigits: 0,
   });
+
+/* ---- `campaign.settings` guards (every field is best-effort/unknown) ---- */
+
+/* Coerce an unknown value into a "a, b, c" string, dropping non-string entries. */
+const settingList = (v: unknown): string | null => {
+  if (!Array.isArray(v)) return null;
+  const items = v.filter((x): x is string => typeof x === 'string' && x.trim() !== '');
+  return items.length ? items.join(', ') : null;
+};
+
+/* Currency-aware money formatting for the wizard's ad budget. */
+const settingMoney = (amount: unknown, currency: unknown): string | null => {
+  const n = typeof amount === 'number' ? amount : Number(amount);
+  if (!Number.isFinite(n)) return null;
+  const cur = typeof currency === 'string' && currency.trim() ? currency.trim() : 'USD';
+  try {
+    return n.toLocaleString('en-US', {
+      style: 'currency',
+      currency: cur,
+      maximumFractionDigits: 0,
+    });
+  } catch {
+    // Invalid ISO currency code — fall back to a plain number + code.
+    return `${n.toLocaleString('en-US')} ${cur}`;
+  }
+};
+
+/* Format an unknown ISO-ish date string, or null if it isn't a valid date. */
+const settingDate = (v: unknown): string | null => {
+  if (typeof v !== 'string' || !v) return null;
+  const d = new Date(v);
+  return Number.isNaN(d.getTime()) ? null : dateLabel(v);
+};
+
+/* An unknown string → title-cased label (e.g. "lowest_cost" → "Lowest cost"). */
+const settingLabel = (v: unknown): string | null =>
+  typeof v === 'string' && v.trim() ? objectiveLabel(v.trim()) : null;
+
+/* An unknown currency code → upper-cased code, or null. */
+const settingUpper = (v: unknown): string | null =>
+  typeof v === 'string' && v.trim() ? v.trim().toUpperCase() : null;
+
+/* An unknown boolean → "Yes"/"No", or null when it isn't a boolean. */
+const settingBool = (v: unknown): string | null =>
+  typeof v === 'boolean' ? (v ? 'Yes' : 'No') : null;
+
+/* Age range from ageMin/ageMax → "25–54", "18+", "up to 54", or null. */
+const settingAgeRange = (min: unknown, max: unknown): string | null => {
+  const lo = typeof min === 'number' && Number.isFinite(min) ? min : null;
+  const hi = typeof max === 'number' && Number.isFinite(max) ? max : null;
+  if (lo != null && hi != null) return `${lo}–${hi}`;
+  if (lo != null) return `${lo}+`;
+  if (hi != null) return `Up to ${hi}`;
+  return null;
+};
 
 /* Tier badge styling for the agent model catalog. */
 const TIER_TONE: Record<ModelOption['tier'], 'brand' | 'info' | 'neutral'> = {
@@ -139,12 +227,17 @@ export default function CampaignDetailPage() {
   // Budget is fetched on its own so a budget-endpoint hiccup never blanks the page.
   const budget = useAsync(() => client.cost.status(), [client, reload]).data;
 
-  // Model catalog — only fetched when the "Change model" modal is opened.
-  const modelsAsync = useAsync(
-    () => (modelOpen ? client.agents.models() : Promise.resolve(null)),
-    [client, modelOpen],
-  );
+  // Model catalog — loaded up-front so the agent banner (and the "Change model"
+  // modal) can render human labels for model ids, not the raw "claude-sonnet-5".
+  const modelsAsync = useAsync(() => client.agents.models(), [client]);
   const modelOptions = modelsAsync.data?.models ?? [];
+  // id → human label, e.g. "claude-sonnet-5" → "Claude Sonnet 5".
+  const modelLabelById = useMemo(
+    () => new Map(modelOptions.map((m) => [m.id, m.label] as const)),
+    [modelOptions],
+  );
+  const labelForModel = (modelId?: string | null) =>
+    (modelId ? modelLabelById.get(modelId) : undefined) ?? modelId ?? '';
 
   const [campaigns, versions, variants, allPlans, agents] = data ?? [];
   const campaign = useMemo(
@@ -159,8 +252,15 @@ export default function CampaignDetailPage() {
   );
   const agentLive = agent?.status === 'live';
   // Human label for the model the agent runs today (falls back to the raw id).
-  const currentModelLabel =
-    modelOptions.find((m) => m.id === agent?.model)?.label ?? agent?.model ?? '';
+  const currentModelLabel = labelForModel(agent?.model);
+
+  // Wizard-captured audience/budget/schedule/creative config (best-effort blob).
+  const settings = (campaign?.settings ?? null) as CampaignSettings | null;
+  // Brand voice fed into copy generation so new snapshots record it.
+  const brandVoice =
+    typeof settings?.creative?.brandVoice === 'string'
+      ? settings.creative.brandVoice
+      : undefined;
 
   // Fast lookup so each launch row can show the exact creative it will ship.
   const variantById = useMemo(
@@ -329,7 +429,12 @@ export default function CampaignDetailPage() {
   async function generate() {
     setBusy(true);
     try {
-      const res = await client.campaigns.generate(id);
+      // Record which model + brand voice produced the snapshot so version
+      // history can show them (previously omitted → "Model" column was "—").
+      const res = await client.campaigns.generate(id, {
+        model: agent?.model,
+        brandVoice,
+      });
       toast.success(`Copy generated — version ${res.version}`);
       setReload((n) => n + 1);
     } catch (e) {
@@ -519,6 +624,151 @@ export default function CampaignDetailPage() {
               />
             </div>
 
+            {/* Targeting & budget — read-only view of the wizard's setup */}
+            {settings ? (
+              <div style={{ marginTop: '1rem' }}>
+                <Panel
+                  title="Targeting & budget"
+                  note="captured in the campaign wizard"
+                  actions={
+                    <Chip tone="neutral" icon="shield">
+                      Read-only
+                    </Chip>
+                  }
+                >
+                  <div
+                    className="card-pad grid"
+                    style={{
+                      gap: '1.5rem',
+                      gridTemplateColumns:
+                        'repeat(auto-fit, minmax(220px, 1fr))',
+                    }}
+                  >
+                    {/* Audience */}
+                    <div className="stack" style={{ gap: '0.75rem' }}>
+                      <div
+                        className="row"
+                        style={{ gap: '0.5rem', alignItems: 'center' }}
+                      >
+                        <span
+                          className="stat-ic"
+                          style={{
+                            background: 'var(--color-brand-soft)',
+                            color: 'var(--color-brand)',
+                          }}
+                        >
+                          <Icon name="users" size={15} />
+                        </span>
+                        <span className="cell-strong" style={{ fontSize: 13.5 }}>
+                          Audience
+                        </span>
+                      </div>
+                      <SettingField
+                        label="Locations"
+                        value={settingList(settings.audience?.locations)}
+                      />
+                      <SettingField
+                        label="Age range"
+                        value={settingAgeRange(
+                          settings.audience?.ageMin,
+                          settings.audience?.ageMax,
+                        )}
+                      />
+                      <SettingField
+                        label="Gender"
+                        value={settingLabel(settings.audience?.gender)}
+                      />
+                      <SettingField
+                        label="Languages"
+                        value={settingList(settings.audience?.languages)}
+                      />
+                      <SettingField
+                        label="Interests"
+                        value={settingList(settings.audience?.interests)}
+                      />
+                    </div>
+
+                    {/* Budget */}
+                    <div className="stack" style={{ gap: '0.75rem' }}>
+                      <div
+                        className="row"
+                        style={{ gap: '0.5rem', alignItems: 'center' }}
+                      >
+                        <span
+                          className="stat-ic"
+                          style={{
+                            background: 'var(--color-brand-soft)',
+                            color: 'var(--color-brand)',
+                          }}
+                        >
+                          <Icon name="billing" size={15} />
+                        </span>
+                        <span className="cell-strong" style={{ fontSize: 13.5 }}>
+                          Ad budget
+                        </span>
+                      </div>
+                      <SettingField
+                        label="Type"
+                        value={settingLabel(settings.budget?.type)}
+                      />
+                      <SettingField
+                        label="Amount"
+                        value={settingMoney(
+                          settings.budget?.amount,
+                          settings.budget?.currency,
+                        )}
+                      />
+                      <SettingField
+                        label="Currency"
+                        value={settingUpper(settings.budget?.currency)}
+                      />
+                      <SettingField
+                        label="Bid strategy"
+                        value={settingLabel(settings.budget?.bidStrategy)}
+                      />
+                    </div>
+
+                    {/* Schedule */}
+                    <div className="stack" style={{ gap: '0.75rem' }}>
+                      <div
+                        className="row"
+                        style={{ gap: '0.5rem', alignItems: 'center' }}
+                      >
+                        <span
+                          className="stat-ic"
+                          style={{
+                            background: 'var(--color-brand-soft)',
+                            color: 'var(--color-brand)',
+                          }}
+                        >
+                          <Icon name="clock" size={15} />
+                        </span>
+                        <span className="cell-strong" style={{ fontSize: 13.5 }}>
+                          Schedule
+                        </span>
+                      </div>
+                      <SettingField
+                        label="Start date"
+                        value={settingDate(settings.schedule?.startDate)}
+                      />
+                      <SettingField
+                        label="End date"
+                        value={
+                          settings.schedule?.ongoing === true
+                            ? 'Ongoing'
+                            : settingDate(settings.schedule?.endDate)
+                        }
+                      />
+                      <SettingField
+                        label="Ongoing"
+                        value={settingBool(settings.schedule?.ongoing)}
+                      />
+                    </div>
+                  </div>
+                </Panel>
+              </div>
+            ) : null}
+
             {/* Launch cockpit — approve each channel to go live */}
             <div style={{ marginTop: '1rem' }}>
               <Panel
@@ -534,10 +784,10 @@ export default function CampaignDetailPage() {
                         icon={budget.overBudget || budget.alert ? 'alert' : 'billing'}
                       >
                         {budget.overBudget
-                          ? 'Over ad budget'
+                          ? 'Over AI usage budget'
                           : budget.remaining != null
-                            ? `${money(budget.remaining)} budget left`
-                            : 'Budget set'}
+                            ? `${money(budget.remaining)} AI usage left`
+                            : 'AI usage budget set'}
                       </Chip>
                     ) : null}
                     <Button variant="ghost" icon="plus" onClick={() => setAddOpen(true)}>
@@ -582,7 +832,7 @@ export default function CampaignDetailPage() {
                             Click-through agent: {agent.name}
                           </div>
                           <div className="cell-muted" style={{ fontSize: 12 }}>
-                            {agent.model}
+                            {labelForModel(agent.model)}
                             {agent.voiceEnabled ? ' · voice on' : ''} — handles the
                             conversation after someone clicks
                           </div>
@@ -664,7 +914,7 @@ export default function CampaignDetailPage() {
                             <tr key={p.id}>
                               <td>
                                 <Chip tone="brand" icon="globe">
-                                  {p.platform.replace(/_/g, ' ')}
+                                  {platformLabel(p.platform)}
                                 </Chip>
                                 <div
                                   className="cell-muted"
@@ -848,6 +1098,35 @@ export default function CampaignDetailPage() {
                     <CopyBlock label="Headline" value={copy.headline} />
                     <CopyBlock label="Offer" value={copy.offer} />
                     <CopyBlock label="Call to action" value={copy.cta} />
+
+                    {Array.isArray(copy.proofPoints) &&
+                    copy.proofPoints.filter((p) => typeof p === 'string' && p.trim())
+                      .length ? (
+                      <div>
+                        <div
+                          className="field-label"
+                          style={{ marginBottom: '0.4rem' }}
+                        >
+                          Proof points
+                        </div>
+                        <ul
+                          className="stack"
+                          style={{
+                            gap: '0.35rem',
+                            margin: 0,
+                            paddingLeft: '1.1rem',
+                          }}
+                        >
+                          {copy.proofPoints
+                            .filter((p) => typeof p === 'string' && p.trim())
+                            .map((p, i) => (
+                              <li key={i} style={{ fontSize: 13.5 }}>
+                                {p}
+                              </li>
+                            ))}
+                        </ul>
+                      </div>
+                    ) : null}
 
                     <hr className="divider" />
                     <div>
@@ -1054,8 +1333,8 @@ export default function CampaignDetailPage() {
           {budgetBlocking ? (
             <p style={{ margin: 0 }}>
               {budget?.overBudget
-                ? 'This org is over its monthly ad budget.'
-                : 'This org is close to its monthly ad budget.'}{' '}
+                ? 'This org is over its monthly AI usage budget.'
+                : 'This org is close to its monthly AI usage budget.'}{' '}
               {budget?.remaining != null ? `${money(budget.remaining)} remaining. ` : ''}
               Launch anyway?
             </p>
@@ -1357,6 +1636,26 @@ function CopyBlock({ label, value }: { label: string; value?: string }) {
         {label}
       </div>
       <div style={{ fontSize: 15, fontWeight: 500 }}>
+        {value ? value : <span className="muted">—</span>}
+      </div>
+    </div>
+  );
+}
+
+/* A single read-only label/value row for the Targeting & budget panel. */
+function SettingField({
+  label,
+  value,
+}: {
+  label: string;
+  value?: string | null;
+}) {
+  return (
+    <div>
+      <div className="field-label" style={{ marginBottom: '0.2rem' }}>
+        {label}
+      </div>
+      <div style={{ fontSize: 13.5 }}>
         {value ? value : <span className="muted">—</span>}
       </div>
     </div>

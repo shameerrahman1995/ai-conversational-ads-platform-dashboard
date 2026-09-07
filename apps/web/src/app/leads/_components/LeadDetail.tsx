@@ -63,11 +63,19 @@ const DELIVERY_TONE: Record<string, Tone> = {
   accepted: 'success',
   queued: 'info',
   pending: 'info',
+  sent: 'info',
   failed: 'danger',
   rejected: 'danger',
+  dead_letter: 'danger',
+};
+/** Delivery statuses that are terminal and did not succeed. */
+const TERMINAL_FAILURE = new Set(['failed', 'dead_letter']);
+/** Statuses whose default title-case label reads poorly and need a custom one. */
+const DELIVERY_LABEL: Record<string, string> = {
+  dead_letter: 'Dead-lettered',
 };
 function deliveryLabel(status: string): string {
-  return status.charAt(0).toUpperCase() + status.slice(1);
+  return DELIVERY_LABEL[status] ?? status.charAt(0).toUpperCase() + status.slice(1);
 }
 const PROVIDER_LABEL: Record<string, string> = { hubspot: 'HubSpot', webhook: 'Webhook', zoho: 'Zoho CRM' };
 const providerName = (p: string) => PROVIDER_LABEL[p] ?? p.charAt(0).toUpperCase() + p.slice(1);
@@ -212,7 +220,8 @@ export function LeadDetail({
   );
   const acceptedDelivery = sortedDeliveries.find((d) => d.status === 'accepted');
   const accepted = Boolean(acceptedDelivery);
-  const failedOnly = deliveries.length > 0 && !accepted && deliveries.every((d) => d.status === 'failed');
+  const failedOnly =
+    deliveries.length > 0 && !accepted && deliveries.every((d) => TERMINAL_FAILURE.has(d.status));
   const synced = accepted || Boolean(lead.crmId);
 
   // Which provider name to show in the CRM section: the one that actually

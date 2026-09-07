@@ -1,4 +1,5 @@
 import { Inject, Injectable, NotFoundException } from '@nestjs/common';
+import { Prisma } from '@acp/db';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuditService } from '../../common/audit/audit.service';
 import { scopedWhere } from '../../common/tenant/scoped-where';
@@ -156,9 +157,17 @@ export class CreativeService {
     const mergedSpec = patch.spec
       ? { ...(variant.spec as Record<string, unknown>), ...patch.spec }
       : (variant.spec as Record<string, unknown>);
+    // Editing the creative invalidates prior review/render: if the copy changed and
+    // the caller didn't set an explicit status, drop back to draft and clear the
+    // stale manifest so approved/rendered badges can't lie about un-reviewed copy.
+    const invalidates = patch.spec && !patch.status;
     const updated = await this.prisma.creativeVariant.update({
       where: { id: variantId, orgId },
-      data: { spec: mergedSpec as never, ...(patch.status ? { status: patch.status } : {}) },
+      data: {
+        spec: mergedSpec as never,
+        ...(patch.status ? { status: patch.status } : {}),
+        ...(invalidates ? { status: 'draft', manifest: Prisma.DbNull } : {}),
+      },
     });
     await this.audit.record({ orgId, action: 'variant.updated', target: variantId });
     return updated;
@@ -185,7 +194,7 @@ export class CreativeService {
     const manifest = { outputs, validation };
     const status = validation.ok ? 'rendered' : 'validation_failed';
 
-    await this.prisma.creativeVariant.update({
+    const updated = await this.prisma.creativeVariant.update({
       where: { id: variantId, orgId },
       data: { manifest: manifest as never, status },
     });
@@ -195,7 +204,9 @@ export class CreativeService {
       target: variantId,
       metadata: { status, issues: validation.issues.length },
     });
-    return { status, manifest };
+    // Return the full updated variant (not just {status,manifest}) so the client's
+    // CreativeVariant type is satisfied and the card can rebind every field.
+    return updated;
   }
 
   async listVariants(orgId: string, campaignId: string) {
