@@ -6,9 +6,15 @@ import { useApiClient } from '@/lib/api';
 import { useAsync } from '@/lib/useAsync';
 import { Icon } from '@/components/Icon';
 import { PageHeader, Button, Card, Chip, StatusChip, DataState, EmptyState, Meter } from '@/components/ui';
-import { useToast } from '@/components/feedback';
+import { Modal, useToast } from '@/components/feedback';
 import { ApiClientError } from '@acp/api-client';
-import type { CampaignVersion, CreativeVariant, ModelOption, PublishPlan } from '@acp/api-client';
+import type {
+  CampaignVersion,
+  Connection,
+  CreativeVariant,
+  ModelOption,
+  PublishPlan,
+} from '@acp/api-client';
 import { ConceptCard } from './_components/ConceptCard';
 import { AdaptiveAdModal } from './_components/AdaptiveAdModal';
 import { CreativeEditor } from './_components/CreativeEditor';
@@ -16,6 +22,18 @@ import { NewVariantModal } from './_components/NewVariantModal';
 
 /** Verticals that always require a human in the loop before publishing. */
 const RESTRICTED = new Set(['healthcare', 'finance', 'legal', 'insurance', 'pharma']);
+
+/** The ad channels a design can be placed on, in menu order. */
+const PLATFORMS: { value: string; label: string }[] = [
+  { value: 'google_ads', label: 'Google Ads' },
+  { value: 'meta', label: 'Meta' },
+  { value: 'tiktok', label: 'TikTok' },
+  { value: 'microsoft', label: 'Microsoft Ads' },
+  { value: 'amazon_dsp', label: 'Amazon DSP' },
+  { value: 'linkedin', label: 'LinkedIn' },
+  { value: 'generic_export', label: 'Generic export' },
+];
+const platformLabel = (p: string) => PLATFORMS.find((x) => x.value === p)?.label ?? p;
 
 const titleCase = (s: string) => s.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
 
@@ -82,6 +100,16 @@ export default function CreativeStudioPage() {
   const { data: plans } = useAsync(
     () => client.publishing.plans().catch(() => [] as PublishPlan[]),
     [client, reload],
+  );
+
+  // Which ad channels are actually connected — a nicety in the Place modal.
+  // Never block placing on a not-connected channel; this is guidance only.
+  const { data: connections } = useAsync(
+    () => client.connections.list().catch(() => [] as Connection[]),
+    [client, reload],
+  );
+  const connectedSet = new Set(
+    (connections ?? []).filter((c) => c.status === 'CONNECTED').map((c) => c.provider),
   );
 
   // The hosted agent for this campaign powers the interactive post-click preview.
@@ -164,6 +192,57 @@ export default function CreativeStudioPage() {
       setReload((n) => n + 1);
     } catch (e) {
       toast.error(errMessage(e, 'Could not approve this variant.'));
+    }
+  }
+
+  // --- Place on a channel --------------------------------------------------
+  // Create a publish plan (one design → one channel) straight from the studio,
+  // so the user never has to detour to the campaign Launch panel to place a
+  // design. The server runs its restricted-vertical policy gate on submit.
+  const [placeVariant, setPlaceVariant] = useState<CreativeVariant | null>(null);
+  const [placePlatform, setPlacePlatform] = useState(PLATFORMS[0].value);
+  const [placeAccount, setPlaceAccount] = useState(`${PLATFORMS[0].value}-primary`);
+  const [accountTouched, setAccountTouched] = useState(false);
+  const [placeBusy, setPlaceBusy] = useState(false);
+
+  function openPlace(variant: CreativeVariant) {
+    setPlaceVariant(variant);
+    setPlacePlatform(PLATFORMS[0].value);
+    setPlaceAccount(`${PLATFORMS[0].value}-primary`);
+    setAccountTouched(false);
+    setPlaceBusy(false);
+  }
+
+  function closePlace() {
+    if (placeBusy) return;
+    setPlaceVariant(null);
+  }
+
+  // Keep the account id in step with the chosen channel until the user edits it.
+  function changePlacePlatform(p: string) {
+    setPlacePlatform(p);
+    if (!accountTouched) setPlaceAccount(`${p}-primary`);
+  }
+
+  async function handlePlace() {
+    if (!placeVariant || !activeId || placeBusy) return;
+    const accountId = placeAccount.trim() || `${placePlatform}-primary`;
+    setPlaceBusy(true);
+    try {
+      await client.publishing.createPlan({
+        campaignId: activeId,
+        variantId: placeVariant.id,
+        platform: placePlatform,
+        accountId,
+      });
+      toast.success(`Placed on ${platformLabel(placePlatform)}`);
+      setReload((n) => n + 1);
+      setPlaceVariant(null);
+    } catch (e) {
+      // Keep the modal open so the user can adjust (e.g. a policy block).
+      toast.error(errMessage(e, 'Could not place this design on that channel.'));
+    } finally {
+      setPlaceBusy(false);
     }
   }
 
@@ -334,6 +413,7 @@ export default function CreativeStudioPage() {
                   onEdit={() => setEditorVariant(v)}
                   onDelete={() => handleDelete(v)}
                   onApprove={handleApprove}
+                  onPlace={openPlace}
                   agentId={agent?.id}
                   agentName={agent?.name}
                   campaignId={activeId}
@@ -404,6 +484,102 @@ export default function CreativeStudioPage() {
         campaignName={campaignName}
         onCreate={handleCreateVariant}
       />
+
+      {/* Place a design onto an ad channel without leaving the studio. */}
+      <Modal
+        open={placeVariant !== null}
+        onClose={closePlace}
+        title="Place on a channel"
+        footer={
+          <>
+            <Button variant="ghost" onClick={closePlace} disabled={placeBusy}>
+              Cancel
+            </Button>
+            <Button
+              variant="primary"
+              icon={placeBusy ? 'refresh' : 'publishing'}
+              onClick={handlePlace}
+              disabled={placeBusy}
+            >
+              {placeBusy ? 'Placing…' : `Place on ${platformLabel(placePlatform)}`}
+            </Button>
+          </>
+        }
+      >
+        <div
+          className="row"
+          style={{
+            gap: '0.4rem',
+            fontSize: 12.5,
+            color: 'var(--color-ink-2)',
+            marginBottom: '0.25rem',
+          }}
+        >
+          <Icon name="creative" size={13} />
+          <span>
+            Placing design{' '}
+            <strong className="tnum">#{placeVariant ? placeVariant.id.slice(-6) : ''}</strong>
+            {campaignName ? (
+              <>
+                {' '}
+                from <strong>{campaignName}</strong>
+              </>
+            ) : null}
+          </span>
+        </div>
+
+        <label className="field">
+          <span className="field-label">Channel</span>
+          <select
+            className="select"
+            value={placePlatform}
+            onChange={(e) => changePlacePlatform(e.target.value)}
+            disabled={placeBusy}
+          >
+            {PLATFORMS.map((p) => (
+              <option key={p.value} value={p.value}>
+                {p.label}
+                {connectedSet.has(p.value) ? ' · connected' : ''}
+              </option>
+            ))}
+          </select>
+          <span className="row" style={{ gap: '0.45rem', marginTop: '0.15rem', flexWrap: 'wrap' }}>
+            {connectedSet.has(placePlatform) ? (
+              <Chip tone="success" icon="check-circle">
+                Connected
+              </Chip>
+            ) : (
+              <Chip tone="neutral" icon="alert">
+                Not connected
+              </Chip>
+            )}
+            <span className="muted" style={{ fontSize: 12 }}>
+              {connectedSet.has(placePlatform)
+                ? 'This channel is connected and ready.'
+                : "You can still place it — it'll go live once this channel is connected."}
+            </span>
+          </span>
+        </label>
+
+        <label className="field">
+          <span className="field-label">Ad account id</span>
+          <input
+            className="input"
+            value={placeAccount}
+            onChange={(e) => {
+              setPlaceAccount(e.target.value);
+              setAccountTouched(true);
+            }}
+            placeholder={`${placePlatform}-primary`}
+            disabled={placeBusy}
+          />
+        </label>
+
+        <p className="muted" style={{ fontSize: 12.5, lineHeight: 1.5, margin: 0 }}>
+          This creates a publish plan for one design on one channel. Restricted verticals still go
+          through human review before anything goes live.
+        </p>
+      </Modal>
     </div>
   );
 }

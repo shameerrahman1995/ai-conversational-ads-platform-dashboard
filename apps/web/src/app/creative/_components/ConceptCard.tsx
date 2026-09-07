@@ -59,7 +59,7 @@ type UsageBadge = { tone: Tone; icon?: IconName; text: string };
  */
 function usageBadge(usage: UsagePlan[]): UsageBadge {
   if (usage.length === 0) {
-    return { tone: 'neutral', text: 'Not placed on a channel yet' };
+    return { tone: 'neutral', text: 'Not on a channel yet' };
   }
   const has = (...s: string[]) => usage.filter((u) => s.includes(u.status));
 
@@ -152,6 +152,7 @@ export function ConceptCard({
   onEdit,
   onDelete,
   onApprove,
+  onPlace,
   agentId,
   agentName,
   campaignId,
@@ -163,6 +164,7 @@ export function ConceptCard({
   onEdit?: () => void;
   onDelete?: () => void;
   onApprove?: (variant: CreativeVariant) => void | Promise<void>;
+  onPlace?: (variant: CreativeVariant) => void;
   agentId?: string;
   agentName?: string;
   campaignId?: string;
@@ -538,28 +540,42 @@ export function ConceptCard({
       {/* Footer: provenance + optional validation manifest line + actions */}
       <div style={{ padding: '0.85rem 1rem', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
         {/* Channel usage — where this design is placed, and its publish status */}
-        <div className="spread" style={{ gap: '0.5rem' }}>
-          <span className="muted" style={{ fontSize: 12, fontWeight: 500 }}>
-            Placement
-          </span>
-          {(() => {
-            const chip = (
-              <Chip tone={badge.tone} icon={badge.icon}>
-                {badge.text}
-              </Chip>
-            );
-            return usageHref ? (
-              <Link
-                href={usageHref}
-                title="Open this campaign's Launch panel"
-                style={{ textDecoration: 'none', display: 'inline-flex' }}
-              >
-                {chip}
-              </Link>
-            ) : (
-              chip
-            );
-          })()}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.45rem' }}>
+          <div className="spread" style={{ gap: '0.5rem' }}>
+            <span className="muted" style={{ fontSize: 12, fontWeight: 500 }}>
+              Channel
+            </span>
+            {(() => {
+              const chip = (
+                <Chip tone={badge.tone} icon={badge.icon}>
+                  {badge.text}
+                </Chip>
+              );
+              return usageHref ? (
+                <Link
+                  href={usageHref}
+                  title="Open this campaign's Launch panel"
+                  style={{ textDecoration: 'none', display: 'inline-flex' }}
+                >
+                  {chip}
+                </Link>
+              ) : (
+                chip
+              );
+            })()}
+          </div>
+          {onPlace ? (
+            <Button
+              variant="ghost"
+              size="sm"
+              icon="publishing"
+              onClick={() => onPlace(variant)}
+              style={{ alignSelf: 'flex-start' }}
+              title="Place this design on an ad channel without leaving Creative Studio"
+            >
+              Place on a channel
+            </Button>
+          ) : null}
         </div>
         <div className="spread">
           {sourceLinked ? (
