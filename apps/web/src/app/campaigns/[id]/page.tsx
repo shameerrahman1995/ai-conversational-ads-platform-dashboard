@@ -7,7 +7,7 @@ import { useApiClient } from '@/lib/api';
 import { useAsync } from '@/lib/useAsync';
 import { useToast, Modal } from '@/components/feedback';
 import { ApiClientError } from '@acp/api-client';
-import type { CreativeVariant, PublishPlan } from '@acp/api-client';
+import type { CreativeVariant, PublishPlan, ModelOption } from '@acp/api-client';
 import { Icon } from '@/components/Icon';
 import { AdPreviewModal } from '../../creative/_components/AdPreviewModal';
 import {
@@ -81,6 +81,18 @@ const money = (n: number) =>
     maximumFractionDigits: 0,
   });
 
+/* Tier badge styling for the agent model catalog. */
+const TIER_TONE: Record<ModelOption['tier'], 'brand' | 'info' | 'neutral'> = {
+  frontier: 'brand',
+  balanced: 'info',
+  fast: 'neutral',
+};
+const TIER_LABEL: Record<ModelOption['tier'], string> = {
+  frontier: 'Frontier',
+  balanced: 'Balanced',
+  fast: 'Fast',
+};
+
 /* What a single launch action is pending confirmation for. */
 type PendingLaunch = { kind: 'one'; planId: string } | { kind: 'all' };
 
@@ -108,6 +120,10 @@ export default function CampaignDetailPage() {
   const [acAccount, setAcAccount] = useState('');
   const [acBusy, setAcBusy] = useState(false);
 
+  // Inline "Change model" modal — the catalog is fetched lazily on open.
+  const [modelOpen, setModelOpen] = useState(false);
+  const [savingModel, setSavingModel] = useState<string | null>(null);
+
   const { data, error, loading } = useAsync(
     () =>
       Promise.all([
@@ -123,6 +139,13 @@ export default function CampaignDetailPage() {
   // Budget is fetched on its own so a budget-endpoint hiccup never blanks the page.
   const budget = useAsync(() => client.cost.status(), [client, reload]).data;
 
+  // Model catalog — only fetched when the "Change model" modal is opened.
+  const modelsAsync = useAsync(
+    () => (modelOpen ? client.agents.models() : Promise.resolve(null)),
+    [client, modelOpen],
+  );
+  const modelOptions = modelsAsync.data?.models ?? [];
+
   const [campaigns, versions, variants, allPlans, agents] = data ?? [];
   const campaign = useMemo(
     () => (campaigns ?? []).find((c) => c.id === id),
@@ -135,6 +158,9 @@ export default function CampaignDetailPage() {
     [agents, id],
   );
   const agentLive = agent?.status === 'live';
+  // Human label for the model the agent runs today (falls back to the raw id).
+  const currentModelLabel =
+    modelOptions.find((m) => m.id === agent?.model)?.label ?? agent?.model ?? '';
 
   // Fast lookup so each launch row can show the exact creative it will ship.
   const variantById = useMemo(
@@ -247,6 +273,24 @@ export default function CampaignDetailPage() {
       );
     } finally {
       setChangingId(null);
+    }
+  }
+
+  // Swap the click-through agent's model straight from the Launch panel.
+  async function changeModel(model: string, label: string) {
+    if (!agent) return;
+    setSavingModel(model);
+    try {
+      await client.agents.updateConfig(agent.id, { model });
+      toast.success(`Model updated to ${label}`);
+      setReload((n) => n + 1);
+      setModelOpen(false);
+    } catch (e) {
+      toast.error(
+        e instanceof ApiClientError ? e.body.message : "Couldn't update the model",
+      );
+    } finally {
+      setSavingModel(null);
     }
   }
 
@@ -554,6 +598,14 @@ export default function CampaignDetailPage() {
                             Draft — publish before launch
                           </Chip>
                         )}
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          icon="sparkles"
+                          onClick={() => setModelOpen(true)}
+                        >
+                          Change model
+                        </Button>
                         <Link href="/agents" className="btn btn-ghost btn-sm">
                           {agentLive ? 'Manage agent' : 'Publish agent'}
                         </Link>
@@ -1166,6 +1218,133 @@ export default function CampaignDetailPage() {
             <Icon name="shield" size={12} /> Plans start in review — approve to go live
           </div>
         </div>
+      </Modal>
+
+      {/* Change the click-through agent's model — right from the Launch panel. */}
+      <Modal
+        open={modelOpen}
+        onClose={() => (savingModel ? null : setModelOpen(false))}
+        title="Change the agent's model"
+        width={540}
+        footer={
+          <Button
+            variant="ghost"
+            onClick={() => setModelOpen(false)}
+            disabled={savingModel !== null}
+          >
+            Close
+          </Button>
+        }
+      >
+        {agent ? (
+          <div className="stack" style={{ gap: '0.9rem' }}>
+            <p className="muted" style={{ fontSize: 13, margin: 0 }}>
+              Pick the model that powers <strong>{agent.name}</strong>
+              {currentModelLabel ? (
+                <>
+                  {' '}
+                  — running <strong>{currentModelLabel}</strong> today
+                </>
+              ) : null}
+              .
+            </p>
+
+            {agentLive ? (
+              <div
+                className="card card-pad row"
+                style={{
+                  gap: '0.6rem',
+                  alignItems: 'flex-start',
+                  background: 'var(--color-info-soft)',
+                }}
+              >
+                <span style={{ color: 'var(--color-info)', flexShrink: 0 }}>
+                  <Icon name="alert" size={15} />
+                </span>
+                <span style={{ fontSize: 12.5 }}>
+                  This agent is live. The change saves immediately and takes effect for
+                  new conversations; chats already in progress keep the current model. If
+                  your runtime serves a published snapshot, re-publish the agent on the
+                  Agents page to roll it out.
+                </span>
+              </div>
+            ) : null}
+
+            {modelsAsync.loading ? (
+              <p className="muted" style={{ fontSize: 13, margin: 0 }}>
+                Loading models…
+              </p>
+            ) : modelsAsync.error ? (
+              <p style={{ margin: 0, fontSize: 13, color: 'var(--color-danger)' }}>
+                Couldn&apos;t load the model list. Close and open this again to retry.
+              </p>
+            ) : modelOptions.length === 0 ? (
+              <p className="muted" style={{ fontSize: 13, margin: 0 }}>
+                No models are available right now.
+              </p>
+            ) : (
+              <div className="stack" style={{ gap: '0.5rem' }}>
+                {modelOptions.map((m) => {
+                  const current = m.id === agent.model;
+                  const saving = savingModel === m.id;
+                  return (
+                    <button
+                      key={m.id}
+                      type="button"
+                      className="card card-pad spread"
+                      onClick={() => {
+                        if (!current) changeModel(m.id, m.label);
+                      }}
+                      disabled={savingModel !== null}
+                      style={{
+                        gap: '0.75rem',
+                        alignItems: 'flex-start',
+                        textAlign: 'left',
+                        width: '100%',
+                        font: 'inherit',
+                        color: 'inherit',
+                        cursor:
+                          current || savingModel !== null ? 'default' : 'pointer',
+                        borderColor: current ? 'var(--color-brand)' : undefined,
+                      }}
+                    >
+                      <div>
+                        <div
+                          className="row"
+                          style={{ gap: '0.5rem', alignItems: 'center' }}
+                        >
+                          <span className="cell-strong" style={{ fontSize: 13.5 }}>
+                            {m.label}
+                          </span>
+                          <Chip tone={TIER_TONE[m.tier]}>{TIER_LABEL[m.tier]}</Chip>
+                        </div>
+                        <div
+                          className="cell-muted"
+                          style={{ fontSize: 12, marginTop: '0.2rem' }}
+                        >
+                          {m.description}
+                        </div>
+                      </div>
+                      {current ? (
+                        <Chip tone="success" icon="check-circle">
+                          Current
+                        </Chip>
+                      ) : saving ? (
+                        <span className="muted" style={{ fontSize: 12.5 }}>
+                          Saving…
+                        </span>
+                      ) : (
+                        <span className="cell-muted" style={{ flexShrink: 0 }}>
+                          <Icon name="chevron-right" size={16} />
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        ) : null}
       </Modal>
     </div>
   );

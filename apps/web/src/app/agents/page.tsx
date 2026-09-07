@@ -21,6 +21,7 @@ import { ToolsTab } from './_components/ToolsTab';
 import { SimulatorTab } from './_components/SimulatorTab';
 import { TranscriptsTab } from './_components/TranscriptsTab';
 import { CreateAgentModal } from './_components/CreateAgentModal';
+import { CopyAgentModal } from './_components/CopyAgentModal';
 import { PublishModal } from './_components/PublishModal';
 
 const TABS: TabDef[] = [
@@ -62,6 +63,7 @@ export default function AgentsPage() {
   const [busy, setBusy] = useState(false);
   const [creating, setCreating] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
+  const [copyOpen, setCopyOpen] = useState(false);
   const [publishOpen, setPublishOpen] = useState(false);
 
   const list = agents ?? [];
@@ -166,6 +168,34 @@ export default function AgentsPage() {
     }
   }
 
+  // Adopt another agent's full configuration into the selected agent. Agents are
+  // one-per-campaign, so we can't move/share the source — we COPY its settings
+  // into this campaign's agent, deliberately keeping this agent's own name.
+  async function copyFromAgent(sourceId: string, sourceName: string) {
+    if (!selected) return;
+    setBusy(true);
+    try {
+      const src = await client.agents.get(sourceId);
+      // Adopt the source's behaviour, but preserve THIS agent's display name.
+      const res = await client.agents.updateConfig(selected.id, {
+        ...src.settings,
+        name: selected.name ?? draft?.name ?? src.settings.name,
+      });
+      // Refresh the selected agent's data so every tab shows the adopted config.
+      setDraft(res.settings);
+      setSaved(res.settings);
+      applyToRoster(selected.id, res.settings);
+      setCopyOpen(false);
+      toast.success(`Copied setup from ${sourceName}`);
+    } catch (e) {
+      toast.error(
+        e instanceof ApiClientError ? e.body.message : 'Could not copy the configuration',
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
   // Confirmed from the publish modal. Optionally saves the full draft first so
   // the latest edits go live instead of a stale saved config.
   async function confirmPublish({ saveFirst }: { saveFirst: boolean }) {
@@ -208,6 +238,14 @@ export default function AgentsPage() {
           <>
             <Button variant="ghost" icon="plus" onClick={() => setCreateOpen(true)} disabled={creating}>
               New agent
+            </Button>
+            <Button
+              variant="ghost"
+              icon="download"
+              onClick={() => setCopyOpen(true)}
+              disabled={!selected || busy}
+            >
+              Copy from agent
             </Button>
             <Button
               variant="ghost"
@@ -341,6 +379,17 @@ export default function AgentsPage() {
         creating={creating}
         onCreate={createAgent}
       />
+
+      {selected ? (
+        <CopyAgentModal
+          open={copyOpen}
+          onClose={() => setCopyOpen(false)}
+          targetId={selected.id}
+          targetName={selected.name}
+          busy={busy}
+          onConfirm={copyFromAgent}
+        />
+      ) : null}
 
       {selected && draft ? (
         <PublishModal
