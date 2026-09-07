@@ -31,8 +31,12 @@ export class IngestionService {
     });
     await this.audit.record({ orgId, action: 'source.registered', target: source.id });
 
-    if (input.type !== 'url') {
-      const key = `sources/${orgId}/${source.id}/${input.filename ?? 'upload'}`;
+    // Only provision an upload asset when a file is actually being uploaded
+    // (filename present). A pdf/feed given by URL is a URI source like any other —
+    // creating an asset for it would orphan an empty, unscanned record and make
+    // parsing require a file that never arrives.
+    if (input.type !== 'url' && input.filename) {
+      const key = `sources/${orgId}/${source.id}/${input.filename}`;
       await this.prisma.asset.create({
         data: {
           orgId,

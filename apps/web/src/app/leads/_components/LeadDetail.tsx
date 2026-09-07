@@ -184,7 +184,10 @@ export function LeadDetail({
   const client = useApiClient();
   const toast = useToast();
 
-  const level = (lead.qualificationLevel ?? 'low') as Level;
+  // Only assert an intent level when the lead was actually scored; a null
+  // qualification is genuinely unknown, not "low".
+  const level = (lead.qualificationLevel ?? null) as Level | null;
+  const accentColor = level ? levelColor[level] : 'var(--color-ink-3)';
   const score = lead.score ?? 0;
 
   // Real, decrypted detail from leads.get(). Falls back to empty while loading.
@@ -330,9 +333,15 @@ export function LeadDetail({
       {/* Score header */}
       <div className="card-pad stack" style={{ gap: '0.9rem' }}>
         <div className="spread">
-          <Chip tone={levelTone[level]} dot>
-            {level} intent
-          </Chip>
+          {level ? (
+            <Chip tone={levelTone[level]} dot>
+              {level} intent
+            </Chip>
+          ) : (
+            <Chip tone="neutral" dot>
+              Unscored
+            </Chip>
+          )}
           <span className="muted" style={{ fontSize: 12.5 }}>
             Captured {timeAgo(lead.createdAt)}
           </span>
@@ -346,7 +355,7 @@ export function LeadDetail({
               fontWeight: 600,
               lineHeight: 1,
               letterSpacing: '-0.02em',
-              color: levelColor[level],
+              color: accentColor,
               fontVariantNumeric: 'tabular-nums',
             }}
           >
@@ -368,7 +377,7 @@ export function LeadDetail({
               height: '100%',
               width: `${Math.max(2, Math.min(100, score))}%`,
               borderRadius: 9999,
-              background: levelColor[level],
+              background: accentColor,
             }}
           />
         </div>

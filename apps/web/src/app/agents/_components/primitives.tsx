@@ -258,7 +258,7 @@ export function DisclosureNote({ children }: { children: ReactNode }) {
 }
 
 /* ---- Amber "restricted vertical" review banner -------------------- */
-export function RestrictedBanner() {
+export function RestrictedBanner({ verticalLabel = 'Restricted-vertical' }: { verticalLabel?: string }) {
   return (
     <div
       className="card-pad row"
@@ -276,8 +276,8 @@ export function RestrictedBanner() {
           Restricted vertical — human review required
         </div>
         <div style={{ fontSize: 13, color: 'var(--color-warning-ink)' }}>
-          Healthcare agents can&apos;t go live until a reviewer approves the persona, disclosure, and
-          guardrails. Changes save to draft and stay unpublished until then.
+          {verticalLabel} agents can&apos;t go live until a reviewer approves the persona, disclosure,
+          and guardrails. Changes save to draft and stay unpublished until then.
         </div>
       </div>
     </div>

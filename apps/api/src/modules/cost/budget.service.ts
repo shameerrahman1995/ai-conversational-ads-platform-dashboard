@@ -29,7 +29,7 @@ export class BudgetService {
   ) {}
 
   async setBudget(orgId: string, monthlyLimitUsd: number, alertThresholdPct = 80) {
-    const budget = await this.prisma.budget.upsert({
+    await this.prisma.budget.upsert({
       where: { orgId },
       update: { monthlyLimitUsd, alertThresholdPct },
       create: { orgId, monthlyLimitUsd, alertThresholdPct },

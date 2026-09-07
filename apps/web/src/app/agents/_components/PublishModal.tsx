@@ -74,6 +74,7 @@ export function PublishModal({
   draft,
   isDirty,
   restricted,
+  verticalLabel = 'restricted-vertical',
   sources,
   busy,
   onConfirm,
@@ -84,6 +85,7 @@ export function PublishModal({
   draft: AgentSettings;
   isDirty: boolean;
   restricted: boolean;
+  verticalLabel?: string;
   sources: SourceSummary[];
   busy: boolean;
   onConfirm: (opts: { saveFirst: boolean }) => void;
@@ -190,7 +192,7 @@ export function PublishModal({
 
         {restricted ? (
           <Note tone="info">
-            This is a restricted (healthcare) vertical. It <strong>won&apos;t go live automatically</strong>
+            This is a restricted ({verticalLabel}) vertical. It <strong>won&apos;t go live automatically</strong>
             — submitting sends the persona, disclosure, and guardrails to a human reviewer. The agent
             stays in draft until a reviewer approves it.
           </Note>

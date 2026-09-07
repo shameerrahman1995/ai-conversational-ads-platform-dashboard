@@ -161,7 +161,11 @@ export default function ConnectionsPage() {
   const totalCount = allProviders.length;
   const connectedCount = connections.filter((c) => c.status === 'CONNECTED').length;
   const attentionCount = connections.filter(
-    (c) => c.status === 'DEGRADED' || c.status === 'REAUTH_REQUIRED',
+    (c) =>
+      c.status === 'DEGRADED' ||
+      c.status === 'REAUTH_REQUIRED' ||
+      c.status === 'REVOKED' ||
+      c.status === 'DISCONNECTED',
   ).length;
   const linkedProviders = new Set(connections.map((c) => c.provider));
   const availableCount = totalCount - linkedProviders.size;
@@ -214,7 +218,7 @@ export default function ConnectionsPage() {
             label="Needs attention"
             value={attentionCount}
             icon="alert"
-            footNote="Re-auth required or degraded"
+            footNote="Degraded, re-auth, revoked or disconnected"
           />
           <StatCard
             label="Available to connect"
@@ -306,7 +310,7 @@ export default function ConnectionsPage() {
               </div>
             </div>
             <Chip tone="info" icon="doc">
-              {webhookConn ? '1 endpoint active · via API' : 'Configured via API'}
+              Configured via API
             </Chip>
           </div>
           <Card className="card-pad">

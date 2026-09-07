@@ -130,12 +130,16 @@ export default function OverviewPage() {
                         <span className="tnum" style={{ fontWeight: 600 }}>
                           {num(s.count)}
                         </span>
-                        <span className="muted tnum" style={{ fontSize: 12, minWidth: 48, textAlign: 'right' }}>
+                        <span
+                          className="muted tnum"
+                          style={{ fontSize: 12, minWidth: 48, textAlign: 'right' }}
+                          title={i === 0 ? 'Top of funnel' : 'Conversion from the previous step'}
+                        >
                           {i === 0 ? '100%' : `${(s.conversionFromPrev * 100).toFixed(1)}%`}
                         </span>
                       </span>
                     </div>
-                    <div className="meter">
+                    <div className="meter" title="Bar width: share of top-of-funnel">
                       <div className="meter-fill" style={{ width: `${Math.max(pct, 1.5)}%` }} />
                     </div>
                   </div>

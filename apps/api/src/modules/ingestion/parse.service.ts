@@ -35,12 +35,15 @@ export class ParseService {
     });
 
     try {
-      // File sources must pass a malware scan before we ever read them.
-      if (src.type !== 'url') {
-        const asset = await this.prisma.asset.findFirst({
-          where: scopedWhere(orgId, { sourceDocId: sourceId }),
-        });
-        if (!asset) throw new Error('No uploaded asset to scan');
+      // An actually-uploaded file must pass a malware scan before we read it.
+      // A pdf/feed registered by URL has no asset — it's parsed as a URI fetch.
+      const asset =
+        src.type !== 'url'
+          ? await this.prisma.asset.findFirst({
+              where: scopedWhere(orgId, { sourceDocId: sourceId }),
+            })
+          : null;
+      if (asset) {
         const { clean } = await this.scanner.scan(asset.storageKey);
         if (!clean) throw new Error('Malware scan failed');
         await this.prisma.asset.update({

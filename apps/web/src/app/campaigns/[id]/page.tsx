@@ -45,7 +45,7 @@ interface CampaignSettings {
     locations?: unknown;
     ageMin?: unknown;
     ageMax?: unknown;
-    gender?: unknown;
+    genders?: unknown;
     languages?: unknown;
     interests?: unknown;
   } | null;
@@ -58,7 +58,6 @@ interface CampaignSettings {
   schedule?: {
     startDate?: unknown;
     endDate?: unknown;
-    ongoing?: unknown;
   } | null;
   creative?: {
     formats?: unknown;
@@ -155,9 +154,14 @@ const settingLabel = (v: unknown): string | null =>
 const settingUpper = (v: unknown): string | null =>
   typeof v === 'string' && v.trim() ? v.trim().toUpperCase() : null;
 
-/* An unknown boolean → "Yes"/"No", or null when it isn't a boolean. */
-const settingBool = (v: unknown): string | null =>
-  typeof v === 'boolean' ? (v ? 'Yes' : 'No') : null;
+/* Gender list from the wizard (a string[] like ['all']) → "All", "Male, Female", or null. */
+const settingGenders = (v: unknown): string | null => {
+  if (!Array.isArray(v)) return null;
+  const items = v.filter((x): x is string => typeof x === 'string' && x.trim() !== '');
+  if (!items.length) return null;
+  if (items.some((g) => g.trim().toLowerCase() === 'all')) return 'All';
+  return items.map((g) => objectiveLabel(g.trim())).join(', ');
+};
 
 /* Age range from ageMin/ageMax → "25–54", "18+", "up to 54", or null. */
 const settingAgeRange = (min: unknown, max: unknown): string | null => {
@@ -262,6 +266,11 @@ export default function CampaignDetailPage() {
       ? settings.creative.brandVoice
       : undefined;
 
+  // The wizard omits an explicit `ongoing` flag — a continuous campaign is simply one
+  // with no end date. Derive it so the End date / Ongoing rows read correctly.
+  const scheduleEndDate = settingDate(settings?.schedule?.endDate);
+  const scheduleOngoing = !scheduleEndDate;
+
   // Fast lookup so each launch row can show the exact creative it will ship.
   const variantById = useMemo(
     () => new Map((variants ?? []).map((v) => [v.id, v] as const)),
@@ -277,7 +286,6 @@ export default function CampaignDetailPage() {
   const snap = latest?.snapshot as CopySnapshot | undefined;
   const copy = snap?.copy;
   const claims = snap?.claims ?? [];
-  const supported = claims.filter((c) => c.supported).length;
 
   // Publish plans belonging to this campaign's variants = the launch surface.
   const variantIds = useMemo(() => new Set((variants ?? []).map((v) => v.id)), [variants]);
@@ -676,7 +684,7 @@ export default function CampaignDetailPage() {
                       />
                       <SettingField
                         label="Gender"
-                        value={settingLabel(settings.audience?.gender)}
+                        value={settingGenders(settings.audience?.genders)}
                       />
                       <SettingField
                         label="Languages"
@@ -753,15 +761,11 @@ export default function CampaignDetailPage() {
                       />
                       <SettingField
                         label="End date"
-                        value={
-                          settings.schedule?.ongoing === true
-                            ? 'Ongoing'
-                            : settingDate(settings.schedule?.endDate)
-                        }
+                        value={scheduleEndDate ?? 'Ongoing (no end date)'}
                       />
                       <SettingField
                         label="Ongoing"
-                        value={settingBool(settings.schedule?.ongoing)}
+                        value={scheduleOngoing ? 'Ongoing (no end date)' : 'No'}
                       />
                     </div>
                   </div>
@@ -1088,7 +1092,7 @@ export default function CampaignDetailPage() {
                 title="Generated ad copy"
                 note={
                   snap?.generation?.model
-                    ? `${snap.generation.model}${snap.generation.brandVoice ? ` · ${snap.generation.brandVoice}` : ''}`
+                    ? `${labelForModel(snap.generation.model)}${snap.generation.brandVoice ? ` · ${snap.generation.brandVoice}` : ''}`
                     : undefined
                 }
                 actions={<Chip tone="brand" icon="sparkles">AI-written</Chip>}
@@ -1256,7 +1260,9 @@ export default function CampaignDetailPage() {
                                 v{ver.version}
                               </td>
                               <td className="cell-muted">
-                                {vs?.generation?.model ?? '—'}
+                                {vs?.generation?.model
+                                  ? labelForModel(vs.generation.model)
+                                  : '—'}
                               </td>
                               <td className="cell-muted tnum">
                                 {vc.length ? `${vSup}/${vc.length}` : '—'}

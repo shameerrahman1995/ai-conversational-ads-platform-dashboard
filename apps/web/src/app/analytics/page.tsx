@@ -116,7 +116,7 @@ export default function AnalyticsPage() {
             label="Ad spend"
             value={usd(spend?.totals.spend ?? 0)}
             icon="billing"
-            footNote="Provider-reported, this period"
+            footNote="Provider-reported, all time"
           />
           <StatCard
             label="Qualified leads"
@@ -139,9 +139,11 @@ export default function AnalyticsPage() {
             value={attribution?.roas != null ? `${attribution.roas.toFixed(2)}×` : '—'}
             icon="up-right"
             footNote={
-              attribution?.roas != null && attribution.roas >= 1
-                ? 'Revenue ÷ spend · above 1.00× break-even'
-                : 'Revenue ÷ spend · below 1.00× break-even'
+              attribution?.roas == null
+                ? 'Revenue ÷ spend'
+                : attribution.roas >= 1
+                  ? 'Revenue ÷ spend · above 1.00× break-even'
+                  : 'Revenue ÷ spend · below 1.00× break-even'
             }
           />
         </div>
@@ -279,7 +281,7 @@ export default function AnalyticsPage() {
         {/* Spend by platform */}
         <Panel
           title="Spend by platform"
-          note="Provider-reported delivery, this period"
+          note="Provider-reported delivery, all time"
           className="analytics-mt"
           actions={<Chip tone="neutral">{providers.length} platforms</Chip>}
         >

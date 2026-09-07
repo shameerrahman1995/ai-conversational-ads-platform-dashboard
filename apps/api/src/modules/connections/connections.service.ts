@@ -136,6 +136,7 @@ export class ConnectionsService {
     const updated = await this.prisma.connection.update({
       where: { id, orgId },
       data: { secretRef: result.secretRef, scopes: result.scopes },
+      omit: { secretRef: true },
     });
     await this.audit.record({ orgId, action: 'connection.rotated', target: id });
     return updated;

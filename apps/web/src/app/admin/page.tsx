@@ -6,7 +6,7 @@ import { useAsync } from '@/lib/useAsync';
 import { useOrg } from '@/lib/org-context';
 import { Icon } from '@/components/Icon';
 import { useToast, Modal } from '@/components/feedback';
-import { ApiClientError, type OrgUser, type BudgetStatus, type AuditEvent } from '@acp/api-client';
+import { ApiClientError, type OrgUser, type BudgetStatus } from '@acp/api-client';
 import {
   PageHeader,
   Button,
@@ -28,8 +28,11 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 /* Current signed-in operator (dev auth stub sends role=admin for this user). */
 const CURRENT_EMAIL = 'srahman@hodos360.ai';
 
-/* Representative, stable facts for the demo tenant (no org GET endpoint). */
-const ORG = {
+/* Illustrative company profile only. There is no org GET endpoint and no stored
+   org/billing record yet, so these are placeholder sample values shown for layout
+   — they are clearly labelled "Sample" in the UI and never presented as the
+   tenant's real data. The live workspace identity is the orgId from org-context. */
+const SAMPLE_ORG = {
   name: 'Demo Advertiser Co.',
   legalName: 'Demo Advertiser Co., LLC',
   industry: 'Roofing & HVAC',
@@ -120,15 +123,37 @@ export default function AdminPage() {
             DA
           </span>
           <div style={{ minWidth: 0 }}>
-            <div className="row" style={{ gap: '0.55rem', flexWrap: 'wrap' }}>
+            <div className="row" style={{ gap: '0.55rem', flexWrap: 'wrap', alignItems: 'center' }}>
               <span style={{ fontFamily: 'var(--font-display)', fontWeight: 600, fontSize: 18 }}>
-                {ORG.name}
+                {SAMPLE_ORG.name}
               </span>
-              <Chip tone="brand">Growth plan</Chip>
+              <Chip tone="neutral">Sample data</Chip>
             </div>
             <div className="muted" style={{ fontSize: 13, marginTop: '0.15rem' }}>
-              {ORG.industry} advertiser · {ORG.region}
+              {SAMPLE_ORG.industry} advertiser · {SAMPLE_ORG.region}
             </div>
+          </div>
+        </div>
+
+        <div
+          className="row"
+          style={{
+            gap: '0.6rem',
+            alignItems: 'flex-start',
+            padding: '0.7rem 0.9rem',
+            marginTop: '1rem',
+            background: 'var(--color-surface-2)',
+            border: '1px solid var(--color-line)',
+            borderRadius: 'var(--radius-control)',
+          }}
+        >
+          <span style={{ color: 'var(--color-ink-3)', flex: 'none', marginTop: 1 }}>
+            <Icon name="doc" size={15} />
+          </span>
+          <div className="muted" style={{ fontSize: 12.5 }}>
+            This workspace isn&apos;t connected to a billing or organization record yet. The company
+            profile below is <strong>sample data</strong> shown for layout — only the workspace ID and
+            member counts are live.
           </div>
         </div>
 
@@ -142,30 +167,35 @@ export default function AdminPage() {
             margin: 0,
           }}
         >
-          <Fact label="Legal name" value={ORG.legalName} />
           <Fact
-            label="Plan"
+            label="Workspace ID"
+            value={<span className="tnum" style={{ fontFamily: 'ui-monospace, monospace' }}>{orgId}</span>}
+          />
+          <Fact
+            label="Members"
             value={
               <span className="row" style={{ gap: '0.4rem' }}>
-                Growth <span className="muted" style={{ fontWeight: 400 }}>· billed monthly</span>
+                {total}{' '}
+                <span className="muted" style={{ fontWeight: 400 }}>
+                  · {activeCount} active
+                </span>
               </span>
             }
           />
-          <Fact label="Region" value={ORG.region} />
-          <Fact label="Industry" value={ORG.industry} />
+          <Fact label="Legal name" value={SAMPLE_ORG.legalName} sample />
+          <Fact label="Region" value={SAMPLE_ORG.region} sample />
+          <Fact label="Industry" value={SAMPLE_ORG.industry} sample />
+          <Fact label="Created" value={SAMPLE_ORG.created} sample />
           <Fact
-            label="Tenant ID"
-            value={<span className="tnum" style={{ fontFamily: 'ui-monospace, monospace' }}>{orgId}</span>}
+            label="Signed in as"
+            value={(() => {
+              const me = members.find((m) => m.email === CURRENT_EMAIL);
+              if (!me) return CURRENT_EMAIL;
+              return me.name ? `${me.name} (${me.email})` : me.email;
+            })()}
           />
-          <Fact label="Created" value={ORG.created} />
           <Fact
-            label="Primary admin"
-            value={
-              members.find((m) => m.email === CURRENT_EMAIL)?.name ?? 'S. Rahman'
-            }
-          />
-          <Fact
-            label="Compliance"
+            label="Compliance policy"
             value={
               <Chip tone="success" icon="shield">
                 Human review enforced
@@ -347,16 +377,9 @@ export default function AdminPage() {
         title="Billing & AI budget"
         note="AI model usage this billing period"
         actions={
-          <span className="row" style={{ gap: '0.6rem' }}>
-            <Chip tone="brand">Growth plan</Chip>
-            <Button
-              size="sm"
-              icon="settings"
-              onClick={() => setBudgetOpen(true)}
-            >
-              {configured && limit > 0 ? 'Edit budget' : 'Set monthly cap'}
-            </Button>
-          </span>
+          <Button size="sm" icon="settings" onClick={() => setBudgetOpen(true)}>
+            {configured && limit > 0 ? 'Edit budget' : 'Set monthly cap'}
+          </Button>
         }
       >
         <div className="card-pad stack" style={{ gap: '1.25rem' }}>
@@ -387,7 +410,6 @@ export default function AdminPage() {
           </div>
 
           <div className="row" style={{ gap: '0.5rem', flexWrap: 'wrap' }}>
-            <Chip tone="brand">Growth plan</Chip>
             <Chip tone="neutral" icon="bolt">
               {cap(budget?.tier ?? 'standard')} model tier
             </Chip>
@@ -468,7 +490,7 @@ export default function AdminPage() {
       content: membersTab,
     },
     { id: 'billing', label: 'Billing', icon: 'billing', content: billingTab },
-    { id: 'security', label: 'Security & audit', icon: 'shield', content: <SecurityTab /> },
+    { id: 'security', label: 'Security & audit', icon: 'shield', content: <SecurityTab users={members} /> },
   ];
 
   return (
@@ -567,8 +589,8 @@ function InviteMemberModal({
       }
     >
       <p className="muted" style={{ margin: 0, fontSize: 13 }}>
-        They&apos;ll receive an email invitation to join {`Demo Advertiser Co.`} and appear as
-        “Invited” until they sign in for the first time.
+        They&apos;ll receive an email invitation to join this workspace and appear as “Invited” until
+        they sign in for the first time.
       </p>
 
       <form
@@ -855,12 +877,15 @@ function ManageMemberModal({ member, onClose }: { member: OrgUser; onClose: () =
 /* Security & audit (live audit log)                                   */
 /* ------------------------------------------------------------------ */
 
-function SecurityTab() {
+function SecurityTab({ users }: { users: OrgUser[] }) {
   const client = useApiClient();
   const { role } = useOrg();
   const isAdmin = role === 'admin';
   const [reload, setReload] = useState(0);
   const { data, error, loading } = useAsync(() => client.audit.list(100), [client, reload]);
+
+  // Resolve opaque actor ids to real members for the audit "Actor" column.
+  const userById = new Map(users.map((u) => [u.id, u]));
 
   // Newest first — don't assume the API's ordering.
   const events = [...(data ?? [])].sort(
@@ -875,7 +900,7 @@ function SecurityTab() {
         actions={
           <span className="row" style={{ gap: '0.5rem' }}>
             <Chip tone="success" icon="shield">
-              100% of privileged actions recorded
+              Logs every privileged action
             </Chip>
             <AuditExportButton />
           </span>
@@ -916,15 +941,43 @@ function SecurityTab() {
                       </span>
                     </td>
                     <td>
-                      {e.actorId ? (
-                        <span className="cell-strong" style={{ fontWeight: 500 }}>
-                          {e.actorId}
-                        </span>
-                      ) : (
-                        <Chip tone="neutral" dot>
-                          system
-                        </Chip>
-                      )}
+                      {(() => {
+                        if (!e.actorId) {
+                          return (
+                            <Chip tone="neutral" dot>
+                              system
+                            </Chip>
+                          );
+                        }
+                        const actor = userById.get(e.actorId);
+                        if (actor) {
+                          return (
+                            <div style={{ minWidth: 0 }}>
+                              <div className="cell-strong" style={{ fontWeight: 500 }}>
+                                {actor.name ?? actor.email}
+                              </div>
+                              {actor.name ? (
+                                <div className="cell-muted" style={{ fontSize: 12 }}>
+                                  {actor.email}
+                                </div>
+                              ) : null}
+                            </div>
+                          );
+                        }
+                        // Unknown id (e.g. a removed member) — show it verbatim so it stays traceable.
+                        return (
+                          <span
+                            className="tnum"
+                            style={{
+                              fontFamily: 'ui-monospace, monospace',
+                              fontSize: 12,
+                              color: 'var(--color-ink-2)',
+                            }}
+                          >
+                            {e.actorId}
+                          </span>
+                        );
+                      })()}
                     </td>
                     <td>
                       {e.target ? (
@@ -937,6 +990,14 @@ function SecurityTab() {
                       ) : (
                         <span className="cell-muted">—</span>
                       )}
+                      {(() => {
+                        const meta = formatMeta(e.metadata);
+                        return meta ? (
+                          <div className="cell-muted" style={{ fontSize: 11.5, marginTop: 2 }}>
+                            {meta}
+                          </div>
+                        ) : null;
+                      })()}
                     </td>
                     <td
                       className="cell-num muted"
@@ -962,9 +1023,14 @@ function SecurityTab() {
             >
               <Icon name="shield" size={16} />
             </span>
-            <span style={{ fontFamily: 'var(--font-display)', fontWeight: 600, fontSize: 15 }}>
-              Security posture
-            </span>
+            <div>
+              <div style={{ fontFamily: 'var(--font-display)', fontWeight: 600, fontSize: 15 }}>
+                Platform safeguards
+              </div>
+              <div className="muted" style={{ fontSize: 12 }}>
+                Compliance and safety features built into ConvoAds
+              </div>
+            </div>
           </div>
           <PostureRow label="Human review for restricted verticals" state="on" />
           <PostureRow label="Explicit consent captured before chat" state="on" />
@@ -977,13 +1043,14 @@ function SecurityTab() {
             Data & retention
           </div>
           <p className="muted" style={{ margin: 0, fontSize: 13 }}>
-            Conversation transcripts and lead records are retained for 24 months, then purged.
-            Every AI-written claim links to an approved source or is flagged “Needs verification”
-            before it can publish — the same provenance chain shown in the audit trail above.
+            Conversation transcripts and lead records are retained according to the workspace
+            retention policy, then purged. Every AI-written claim links to an approved source or is
+            flagged “Needs verification” before it can publish — the same provenance chain shown in
+            the audit trail above.
           </p>
           <div className="row" style={{ gap: '0.5rem', flexWrap: 'wrap', marginTop: '0.2rem' }}>
             <Chip tone="info" icon="doc">
-              24-month retention
+              Retention policy
             </Chip>
             <Chip tone="success" icon="check-circle">
               Consent logged
@@ -1096,7 +1163,8 @@ function DataRetentionControls() {
             <div style={{ fontWeight: 600, fontSize: 14 }}>Retention sweep</div>
             <div className="muted" style={{ fontSize: 12.5, marginTop: 2, maxWidth: '62ch' }}>
               Apply the workspace retention policy now — purges transcripts and lead records that are
-              past the 24-month window. Runs on a schedule automatically; use this to force it early.
+              past the configured retention window. Runs on a schedule automatically; use this to
+              force it early.
             </div>
           </div>
           {sweepConfirm ? (
@@ -1261,11 +1329,36 @@ function AuditExportButton() {
 /* Local presentational helpers                                        */
 /* ------------------------------------------------------------------ */
 
-function Fact({ label, value }: { label: string; value: React.ReactNode }) {
+function Fact({
+  label,
+  value,
+  sample,
+}: {
+  label: string;
+  value: React.ReactNode;
+  /** Marks this field as illustrative placeholder data, not a live value. */
+  sample?: boolean;
+}) {
   return (
     <div>
-      <div className="stat-label" style={{ marginBottom: '0.2rem' }}>
+      <div
+        className="stat-label"
+        style={{ marginBottom: '0.2rem', display: 'flex', gap: '0.4rem', alignItems: 'center' }}
+      >
         {label}
+        {sample ? (
+          <span
+            className="muted"
+            style={{
+              fontSize: 10,
+              fontWeight: 600,
+              textTransform: 'uppercase',
+              letterSpacing: '0.05em',
+            }}
+          >
+            Sample
+          </span>
+        ) : null}
       </div>
       <div style={{ fontWeight: 500, fontSize: 14 }}>{value}</div>
     </div>
@@ -1309,13 +1402,36 @@ function PostureRow({ label, state }: { label: string; state: 'on' | 'contact' }
       <span style={{ fontSize: 13 }}>{label}</span>
       {state === 'on' ? (
         <Chip tone="success" icon="check">
-          Enforced
+          Included
         </Chip>
       ) : (
         <Chip tone="info">Contact sales</Chip>
       )}
     </div>
   );
+}
+
+/**
+ * Compact, safe one-line summary of an audit event's `metadata` (typed `unknown`).
+ * Renders primitives directly and flat objects as `key: value · key: value`
+ * (first few primitive fields only); returns null when there's nothing trivial to show.
+ */
+function formatMeta(meta: unknown): string | null {
+  if (meta == null) return null;
+  if (typeof meta === 'string') return meta.trim() || null;
+  if (typeof meta === 'number' || typeof meta === 'boolean') return String(meta);
+  if (typeof meta === 'object' && !Array.isArray(meta)) {
+    const entries = Object.entries(meta as Record<string, unknown>).filter(
+      ([, v]) =>
+        v != null && (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean'),
+    );
+    if (entries.length === 0) return null;
+    return entries
+      .slice(0, 4)
+      .map(([k, v]) => `${k}: ${String(v)}`)
+      .join(' · ');
+  }
+  return null;
 }
 
 function cap(s: string): string {

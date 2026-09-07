@@ -256,7 +256,7 @@ export default function LeadsPage() {
       >
         {/* KPI strip */}
         <div className="grid grid-kpi">
-          <StatCard label="Total leads" value={total} icon="leads" footNote="Captured this period" />
+          <StatCard label="Total leads" value={total} icon="leads" footNote="Captured to date" />
           <StatCard
             label="Qualified"
             value={qualified}
@@ -423,8 +423,8 @@ export default function LeadsPage() {
                         <td className="cell-num cell-strong" style={cellStyle}>
                           {l.score ?? '—'}
                         </td>
-                        <td style={{ ...cellStyle, textTransform: 'capitalize' }}>
-                          {l.lifecycleStage ?? '—'}
+                        <td style={cellStyle}>
+                          {l.lifecycleStage ? stageLabel(l.lifecycleStage) : '—'}
                         </td>
                         <td style={cellStyle}>
                           {l.crmId ? (

@@ -64,7 +64,16 @@ export class AgentConfigService {
       where: scopedWhere(orgId, { id: agentId }),
     });
     if (!agent) throw new NotFoundException('Agent not found');
-    const merged = normalizeSettings({ ...(agent.settings as object), ...patch });
+    // Deep-merge the nested objects so a partial patch (e.g. { voice: { enabled } }
+    // from a raw API caller) can't silently wipe sibling voice/avatar/tools fields.
+    const stored = (agent.settings as Partial<AgentSettings>) ?? {};
+    const merged = normalizeSettings({
+      ...stored,
+      ...patch,
+      voice: { ...(stored.voice ?? {}), ...(patch.voice ?? {}) },
+      avatar: { ...(stored.avatar ?? {}), ...(patch.avatar ?? {}) },
+      tools: { ...(stored.tools ?? {}), ...(patch.tools ?? {}) },
+    } as Partial<AgentSettings>);
     const updated = await this.prisma.agentConfig.update({
       where: { id: agentId, orgId },
       data: { settings: merged as never, name: merged.name },

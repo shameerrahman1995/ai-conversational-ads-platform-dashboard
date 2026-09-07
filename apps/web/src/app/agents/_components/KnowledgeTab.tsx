@@ -8,9 +8,6 @@ import { Icon } from '@/components/Icon';
 import { Modal, useToast } from '@/components/feedback';
 import { IconTile } from './primitives';
 
-const fmtDate = (iso: string) =>
-  new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-
 const prettyType = (t: string) => (t === 'url' ? 'Web page' : t === 'pdf' ? 'PDF' : t.replace(/_/g, ' '));
 
 const TYPES = [

@@ -161,18 +161,29 @@ export default function PublishingPage() {
     for (const c of connections) if (!m.has(c.provider)) m.set(c.provider, c);
     return m;
   }, [connections]);
-  const connectedCount = connections.filter(
-    (c) => c.status === 'CONNECTED' && (PUBLISH_PLATFORMS as readonly string[]).includes(c.provider),
+  // One account-map card per platform that appears in the plans OR has a live
+  // connection, so the "N connected" chip can never exceed the cards on show.
+  const platforms = useMemo(() => {
+    const wanted = new Set<string>();
+    for (const pl of plans) wanted.add(pl.platform);
+    for (const [provider, c] of connByProvider)
+      if (c.status === 'CONNECTED' && (PUBLISH_PLATFORMS as readonly string[]).includes(provider))
+        wanted.add(provider);
+    return [
+      ...PLATFORM_ORDER.filter((p) => wanted.has(p)),
+      ...Array.from(wanted).filter((p) => !PLATFORM_ORDER.includes(p)),
+    ];
+  }, [plans, connByProvider]);
+  // Count only the platforms actually rendered as connected cards above.
+  const connectedCount = platforms.filter(
+    (p) =>
+      connByProvider.get(p)?.status === 'CONNECTED' &&
+      (PUBLISH_PLATFORMS as readonly string[]).includes(p),
   ).length;
 
   const previewAgent = previewVariant
     ? agentByCampaign.get(previewVariant.campaignId)
     : undefined;
-
-  // One account-map entry per platform present in the plans.
-  const platforms = PLATFORM_ORDER.filter((p) => plans.some((pl) => pl.platform === p)).concat(
-    Array.from(new Set(plans.map((p) => p.platform))).filter((p) => !PLATFORM_ORDER.includes(p)),
-  );
 
   function markSynced(ids: string[]) {
     const now = Date.now();
@@ -422,9 +433,9 @@ export default function PublishingPage() {
                   <Icon name="billing" size={16} />
                 </span>
                 <span>
-                  <div style={{ fontWeight: 600 }}>Ad spend budget</div>
+                  <div style={{ fontWeight: 600 }}>AI usage budget</div>
                   <div className="muted" style={{ fontSize: 12.5 }}>
-                    {fmtMoney(budget.monthToDate)} spent of {fmtMoney(budget.limit)} this month
+                    {fmtMoney(budget.monthToDate)} of {fmtMoney(budget.limit)} AI usage this month
                     {budget.tier ? ` · ${budget.tier} tier` : ''}
                   </div>
                 </span>
@@ -455,8 +466,8 @@ export default function PublishingPage() {
                 style={{ fontSize: 12.5, marginTop: '0.6rem', color: budgetSkin.ink }}
               >
                 {budget.overBudget
-                  ? 'Spend is over the monthly limit — approving new plans will increase it further.'
-                  : "You're close to the monthly limit. Review spend before approving more launches."}
+                  ? 'AI usage is over the monthly limit — approving new plans will increase it further.'
+                  : "You're close to the monthly limit. Review AI usage before approving more launches."}
               </div>
             ) : null}
           </Card>
@@ -775,10 +786,10 @@ export default function PublishingPage() {
       >
         <p style={{ margin: 0 }}>
           You&apos;re{' '}
-          <strong>{budget?.overBudget ? 'over' : 'near'} your monthly ad-spend limit</strong>
+          <strong>{budget?.overBudget ? 'over' : 'near'} your monthly AI-usage limit</strong>
           {budget && budget.remaining != null ? ` (${fmtMoney(budget.remaining)} remaining)` : ''}.
           Approving {pendingApprove?.kind === 'bulk' ? 'these plans' : 'this plan'} pushes creative to
-          the platform and will increase spend. Continue anyway?
+          the platform and will increase AI usage. Continue anyway?
         </p>
       </Modal>
 

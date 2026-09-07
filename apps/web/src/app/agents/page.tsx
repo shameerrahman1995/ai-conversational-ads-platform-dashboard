@@ -14,6 +14,7 @@ import { useToast } from '@/components/feedback';
 import { PageHeader, Button, Card, Chip, StatusChip, DataState, EmptyState } from '@/components/ui';
 import { Tabs, RestrictedBanner, type TabDef } from './_components/primitives';
 import { isRestricted, type TabKey } from './_components/types';
+import { VERTICAL_LABEL } from '@/lib/taxonomy';
 import { IdentityTab } from './_components/IdentityTab';
 import { VoiceTab } from './_components/VoiceTab';
 import { AvatarTab } from './_components/AvatarTab';
@@ -148,6 +149,8 @@ export default function AgentsPage() {
   }
 
   const restricted = selected ? isRestricted(selected.vertical) : false;
+  const verticalLabel =
+    selected?.vertical ? (VERTICAL_LABEL[selected.vertical] ?? selected.vertical) : 'restricted-vertical';
 
   async function createAgent(campaignId: string) {
     setCreating(true);
@@ -212,7 +215,7 @@ export default function AgentsPage() {
       if (restricted) {
         // Honest no-op: there's no auto-publish for restricted verticals.
         toast.toast(
-          `${selected.name} submitted for human review — required before a healthcare agent can go live`,
+          `${selected.name} submitted for human review — required before a ${verticalLabel} agent can go live`,
           'info',
         );
       } else {
@@ -298,7 +301,7 @@ export default function AgentsPage() {
                 sourceCount={sourceList?.length ?? 0}
               />
 
-              {restricted ? <RestrictedBanner /> : null}
+              {restricted ? <RestrictedBanner verticalLabel={verticalLabel} /> : null}
 
               <Card style={{ overflow: 'hidden' }}>
                 <Tabs tabs={TABS} active={tab} onChange={setTab} />
@@ -401,6 +404,7 @@ export default function AgentsPage() {
           draft={draft}
           isDirty={isDirty}
           restricted={restricted}
+          verticalLabel={verticalLabel}
           sources={sourceList ?? []}
           busy={busy}
           onConfirm={confirmPublish}
