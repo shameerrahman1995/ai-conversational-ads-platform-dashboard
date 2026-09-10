@@ -9,6 +9,22 @@ on a parent join for isolation, and making `DeliveryAttempt.orgId` required. All
 - Migration `20260910230931_org_scope_child_tables` (add nullable → backfill from parent → NOT NULL → FK + index). Applied to `acp`; verified **0 NULL orgIds**; `prisma migrate status` clean.
 - App-level scoping is the **primary, mandatory** control and is enforced in code + unit tests.
 
+## Update 2026-09-11 — RLS policies now APPLIED (enforcement one flip away)
+- Migration `20260910233000_enable_rls_tenant_policies` **enabled RLS + a `tenant_isolation`
+  policy on all 32 `orgId` tables** (keyed on `current_setting('app.current_org_id', true)`).
+  Applied to `acp`; **inert under the current superuser connection** (verified: real queries
+  still return rows), so the app is unaffected.
+- Least-privilege role script: `db/prisma/rls/setup-app-role.sql` (creates `acp_app`
+  NOSUPERUSER/NOBYPASSRLS + grants + default privileges).
+- Per-request GUC helper: `apps/api/src/common/tenant/with-org-context.ts` (`withOrgGuc` —
+  transaction-scoped, parameterized `set_config`; reads orgId from the request context).
+- **Verified on the real tables** (`db/prisma/rls/verify-rls.sql`, rolled back): 6 campaigns
+  across orgs → under a non-superuser role pinned to one org, **1 visible, 0 leaked**.
+
+**Remaining flip (operator, infra):** run `setup-app-role.sql`, point the RUNTIME
+`DATABASE_URL` at `acp_app` (keep migrations on the owner/superuser), and wrap request
+handlers + worker jobs in `withOrgGuc(...)` so every non-request DB path also sets the GUC.
+
 ## Row-Level Security — validated, staged for enablement (NOT yet enforced in-app)
 RLS is defense-in-depth **under** the app-level scoping. It was validated end-to-end against the
 live Postgres (in a rolled-back transaction, nothing persisted):
