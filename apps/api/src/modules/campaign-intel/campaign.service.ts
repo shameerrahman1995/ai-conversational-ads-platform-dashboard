@@ -146,7 +146,7 @@ export class CampaignService {
     // campaign's `version` can never point at a version row that failed to write.
     await this.prisma.$transaction(async (tx) => {
       await tx.campaignVersion.create({
-        data: { campaignId, version, snapshot: snapshot as never },
+        data: { orgId, campaignId, version, snapshot: snapshot as never },
       });
       await tx.campaign.update({
         where: { id: campaignId, orgId },

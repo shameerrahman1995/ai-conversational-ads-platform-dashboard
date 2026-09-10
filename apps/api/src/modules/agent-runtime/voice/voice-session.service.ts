@@ -91,6 +91,7 @@ export class VoiceSessionService {
     if (recordingRetained && convo.lead) {
       await this.prisma.consentRecord.create({
         data: {
+          orgId,
           leadId: convo.lead.id,
           type: 'call_recording',
           granted: true,

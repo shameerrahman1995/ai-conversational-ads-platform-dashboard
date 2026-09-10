@@ -68,6 +68,7 @@ export class AgentBuilderService {
     const version = (await this.prisma.agentVersion.count({ where: { agentConfigId: agentId } })) + 1;
     const agentVersion = await this.prisma.agentVersion.create({
       data: {
+        orgId,
         agentConfigId: agentId,
         version,
         config: config as never,

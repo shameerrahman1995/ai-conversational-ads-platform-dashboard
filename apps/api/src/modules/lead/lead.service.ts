@@ -55,6 +55,7 @@ export class LeadService {
         .filter(([, v]) => !!v)
         .map(([field, value]) => ({
           leadId: created.id,
+          orgId,
           field: String(field),
           // PII encrypted at rest (AES-256-GCM); read back via decryptField.
           value: encryptField(normalizeField(String(field), value as string)) as string,
@@ -66,6 +67,7 @@ export class LeadService {
         await tx.consentRecord.createMany({
           data: input.consents.map((c) => ({
             leadId: created.id,
+            orgId,
             type: c.type,
             granted: c.granted,
             disclosureVersion: c.disclosureVersion,

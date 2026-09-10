@@ -53,7 +53,7 @@ describe('CampaignService', () => {
     });
     expect(out.version).toBe(1);
     expect(d.prisma.campaignVersion.create).toHaveBeenCalledWith({
-      data: { campaignId: 'c1', version: 1, snapshot: expect.anything() },
+      data: { orgId: 'org_1', campaignId: 'c1', version: 1, snapshot: expect.anything() },
     });
     expect(d.prisma.campaign.update).toHaveBeenCalledWith({
       where: { id: 'c1', orgId: 'org_1' },

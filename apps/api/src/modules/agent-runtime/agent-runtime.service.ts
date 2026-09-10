@@ -62,11 +62,11 @@ export class AgentRuntimeService {
     // already an `enc:` blob, and returns null only for null input.
     const redacted = redactPII(userText);
     await this.prisma.message.create({
-      data: { conversationId, role: 'user', contentRef: encryptField(redacted) ?? redacted },
+      data: { orgId, conversationId, role: 'user', contentRef: encryptField(redacted) ?? redacted },
     });
 
     if (isDisallowedTopic(userText)) {
-      return this.respond(conversationId, FALLBACK_REPLY, { grounded: false, citations: [], fallback: true, disclosure });
+      return this.respond(orgId, conversationId, FALLBACK_REPLY, { grounded: false, citations: [], fallback: true, disclosure });
     }
 
     const chunks = await this.knowledge.retrieve(orgId, userText, 4);
@@ -84,7 +84,7 @@ export class AgentRuntimeService {
         // hot path). The gateway strips any param the chosen model does not support.
         { model: settings.model, maxTokens: settings.maxTokens, temperature: settings.temperature },
       );
-      return this.respond(conversationId, redactPII(text), {
+      return this.respond(orgId, conversationId, redactPII(text), {
         grounded: chunks.length > 0,
         citations,
         fallback: false,
@@ -92,7 +92,7 @@ export class AgentRuntimeService {
       });
     } catch {
       // Circuit breaker: keep the experience available with an approved fallback.
-      return this.respond(conversationId, FALLBACK_REPLY, { grounded: false, citations: [], fallback: true, disclosure });
+      return this.respond(orgId, conversationId, FALLBACK_REPLY, { grounded: false, citations: [], fallback: true, disclosure });
     }
   }
 
@@ -105,13 +105,14 @@ export class AgentRuntimeService {
   }
 
   private async respond(
+    orgId: string,
     conversationId: string,
     reply: string,
     meta: { grounded: boolean; citations: string[]; fallback: boolean; disclosure: string },
   ): Promise<AgentReply> {
     // Encrypt the assistant transcript at rest (P0).
     await this.prisma.message.create({
-      data: { conversationId, role: 'assistant', contentRef: encryptField(reply) ?? reply },
+      data: { orgId, conversationId, role: 'assistant', contentRef: encryptField(reply) ?? reply },
     });
     return { reply, ...meta };
   }

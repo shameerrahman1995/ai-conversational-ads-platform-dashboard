@@ -4,7 +4,7 @@ Labels: `mock` · `implemented-local` · `sandbox-tested` · `capability-gated` 
 
 | Area | Status | Notes |
 |---|---|---|
-| Auth / RBAC / tenant scoping | implemented-local | Real JWT + global default-deny guard; RLS + `orgId` on 6 child tables still open |
+| Auth / RBAC / tenant scoping | implemented-local | Real JWT + global default-deny guard; **`orgId` now on all tenant child tables + app-level scoping (this session)**; RLS policies validated + staged (needs dedicated non-superuser role — see RLS_TENANCY.md) |
 | PII encryption / retention / DSAR | implemented-local | AES-256-GCM field crypto + retention + DSAR export/erase |
 | Anthropic model gateway | implemented-local | Real Messages adapter; **param capability registry now strips unsupported sampling params** (this session) |
 | OpenAI / Gemini gateways | unsupported | Not wired; capability rules verified & documented for when they are added |
