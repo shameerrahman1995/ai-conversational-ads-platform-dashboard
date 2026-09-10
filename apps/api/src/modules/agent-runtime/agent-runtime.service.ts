@@ -54,7 +54,8 @@ export class AgentRuntimeService {
     if (!convo) throw new NotFoundException('Conversation not found');
     if (!convo.consent) throw new ForbiddenException('Consent required');
 
-    const disclosure = await this.resolveDisclosure(orgId, convo.agentId);
+    const settings = await this.resolveSettings(orgId, convo.agentId);
+    const disclosure = settings.disclosure;
 
     // Persist the (redacted) user turn — PII never lands in rows/logs, and the
     // transcript is encrypted at rest (P0). encryptField no-ops if the value is
@@ -73,10 +74,16 @@ export class AgentRuntimeService {
     const citations = [...new Set(chunks.map((c) => c.sourceDocId))];
 
     try {
-      const { text } = await this.gateway.complete([
-        { role: 'system', content: `${SYSTEM_POLICY}\n\n${wrapUntrusted(context)}` },
-        { role: 'user', content: userText },
-      ]);
+      const { text } = await this.gateway.complete(
+        [
+          { role: 'system', content: `${SYSTEM_POLICY}\n\n${wrapUntrusted(context)}` },
+          { role: 'user', content: userText },
+        ],
+        // The agent's configured model + params drive the live call (previously
+        // ignored — the Studio model/temperature controls were decorative on the
+        // hot path). The gateway strips any param the chosen model does not support.
+        { model: settings.model, maxTokens: settings.maxTokens, temperature: settings.temperature },
+      );
       return this.respond(conversationId, redactPII(text), {
         grounded: chunks.length > 0,
         citations,
@@ -89,12 +96,12 @@ export class AgentRuntimeService {
     }
   }
 
-  /** Resolve the agent's structural AI disclosure from its stored settings. */
-  private async resolveDisclosure(orgId: string, agentId: string): Promise<string> {
+  /** Resolve the agent's normalized settings (disclosure, model, and params). */
+  private async resolveSettings(orgId: string, agentId: string) {
     const agent = await this.prisma.agentConfig.findFirst({
       where: scopedWhere(orgId, { id: agentId }),
     });
-    return normalizeSettings(agent?.settings).disclosure;
+    return normalizeSettings(agent?.settings);
   }
 
   private async respond(

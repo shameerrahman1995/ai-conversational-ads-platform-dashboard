@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import type { ChatMessage, ModelCompleteOpts, ModelGatewayPort } from './model-gateway.port';
+import { sanitizeModelParams } from './models';
 
 /**
  * Real Anthropic Messages API adapter (blueprint §19 AI plane). Uses fetch — no
@@ -29,6 +30,15 @@ export class AnthropicModelGateway implements ModelGatewayPort {
       .filter((m) => m.role !== 'system')
       .map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content }));
 
+    // Capability registry guardrail: never send a parameter the target model
+    // rejects. The Claude 5 reasoning family (Opus 5 / Sonnet 5 / Fable 5.1) 400s
+    // on `temperature`, so it is omitted for those models and only sent to models
+    // that accept sampling (e.g. Haiku 4.5). See models.ts § MODEL_CAPABILITIES.
+    const params = sanitizeModelParams(model, {
+      temperature: opts?.temperature,
+      maxTokens: opts?.maxTokens,
+    });
+
     const res = await fetch(`${this.baseUrl}/v1/messages`, {
       method: 'POST',
       headers: {
@@ -38,8 +48,8 @@ export class AnthropicModelGateway implements ModelGatewayPort {
       },
       body: JSON.stringify({
         model,
-        max_tokens: opts?.maxTokens ?? 1024,
-        temperature: opts?.temperature ?? 0.4,
+        max_tokens: params.maxTokens,
+        ...(params.temperature != null ? { temperature: params.temperature } : {}),
         ...(system ? { system } : {}),
         messages: turns,
       }),

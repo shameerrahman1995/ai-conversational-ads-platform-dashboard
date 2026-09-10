@@ -51,6 +51,90 @@ export function isKnownModel(id: string): boolean {
   return MODEL_CATALOG.some((m) => m.id === id);
 }
 
+/**
+ * Per-model provider capability registry (blueprint §19 AI plane). Verified against
+ * current official Anthropic Messages API docs on 2026-09-11 (see
+ * docs/platform-verification/ai-providers-verification.md + the claude-api skill):
+ * the Claude 5 reasoning family (Opus 5, Sonnet 5, Fable 5.1) REMOVED the sampling
+ * parameters temperature/top_p/top_k and returns HTTP 400 if any are sent — depth is
+ * controlled by output_config.effort instead. Only Haiku 4.5 still accepts sampling.
+ *
+ * The model gateway consults this registry before every request so the platform can
+ * never send an unsupported model parameter (a master, non-negotiable rule). Support
+ * is keyed on the model id, not the provider, because it differs within a provider.
+ */
+export interface ModelCapabilities {
+  provider: string;
+  /** Whether temperature/top_p/top_k are accepted without a 400. */
+  supportsSampling: boolean;
+  /** Inclusive temperature range when sampling is supported. */
+  temperatureRange: [number, number];
+  /** Ceiling we allow for max_tokens (app policy — not the model's hard max). */
+  maxOutputTokens: number;
+  /** How reasoning depth is controlled (documentation + future wiring). */
+  reasoningControl: 'effort' | 'budget_tokens' | 'none';
+}
+
+const APP_MAX_OUTPUT_TOKENS = 8192;
+
+export const MODEL_CAPABILITIES: Record<string, ModelCapabilities> = {
+  'claude-opus-5': { provider: 'anthropic', supportsSampling: false, temperatureRange: [0, 1], maxOutputTokens: APP_MAX_OUTPUT_TOKENS, reasoningControl: 'effort' },
+  'claude-sonnet-5': { provider: 'anthropic', supportsSampling: false, temperatureRange: [0, 1], maxOutputTokens: APP_MAX_OUTPUT_TOKENS, reasoningControl: 'effort' },
+  'claude-fable-5-1': { provider: 'anthropic', supportsSampling: false, temperatureRange: [0, 1], maxOutputTokens: APP_MAX_OUTPUT_TOKENS, reasoningControl: 'effort' },
+  'claude-haiku-4-5': { provider: 'anthropic', supportsSampling: true, temperatureRange: [0, 1], maxOutputTokens: APP_MAX_OUTPUT_TOKENS, reasoningControl: 'budget_tokens' },
+};
+
+/**
+ * Fail-closed default for an unknown model id: assume sampling is NOT supported, so
+ * we never send temperature to a reasoning model that would reject it. Unsupported
+ * combinations fail closed (a non-negotiable rule).
+ */
+const UNKNOWN_MODEL_CAPS: ModelCapabilities = {
+  provider: 'unknown',
+  supportsSampling: false,
+  temperatureRange: [0, 1],
+  maxOutputTokens: APP_MAX_OUTPUT_TOKENS,
+  reasoningControl: 'none',
+};
+
+export function getModelCapabilities(modelId: string): ModelCapabilities {
+  return MODEL_CAPABILITIES[modelId] ?? UNKNOWN_MODEL_CAPS;
+}
+
+/** Does this model accept temperature/top_p/top_k at all? */
+export function modelSupportsSampling(modelId: string): boolean {
+  return getModelCapabilities(modelId).supportsSampling;
+}
+
+export interface SanitizedModelParams {
+  maxTokens: number;
+  /** Present ONLY when the target model accepts sampling params. */
+  temperature?: number;
+}
+
+/**
+ * Strip parameters the target model does not support and clamp the rest to safe
+ * ranges — the single guardrail enforcing "never send an unsupported model
+ * parameter". temperature is dropped for the Claude 5 reasoning family (which 400s
+ * on it) and kept, clamped, for models that accept it.
+ */
+export function sanitizeModelParams(
+  modelId: string,
+  requested: { temperature?: number; maxTokens?: number },
+): SanitizedModelParams {
+  const caps = getModelCapabilities(modelId);
+  const clamp = (n: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, n));
+  const maxTokens =
+    typeof requested.maxTokens === 'number' && requested.maxTokens > 0
+      ? clamp(Math.floor(requested.maxTokens), 1, caps.maxOutputTokens)
+      : 1024;
+  const out: SanitizedModelParams = { maxTokens };
+  if (caps.supportsSampling && typeof requested.temperature === 'number') {
+    out.temperature = clamp(requested.temperature, caps.temperatureRange[0], caps.temperatureRange[1]);
+  }
+  return out;
+}
+
 export interface VoiceSettings {
   enabled: boolean;
   provider?: string; // e.g. 'elevenlabs' | 'deepgram'
