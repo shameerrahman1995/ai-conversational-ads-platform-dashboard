@@ -40,4 +40,26 @@ describe('KnowledgeService', () => {
     expect(out).toHaveLength(1);
     expect(out[0].sourceDocId).toBe('s1');
   });
+
+  it('retrieve uses the pgvector ANN backend when KNOWLEDGE_RETRIEVAL=pgvector', async () => {
+    const prev = process.env.KNOWLEDGE_RETRIEVAL;
+    process.env.KNOWLEDGE_RETRIEVAL = 'pgvector';
+    try {
+      const prisma = {
+        knowledgeChunk: { findMany: vi.fn(), createMany: vi.fn() },
+        $queryRaw: vi.fn().mockResolvedValue([
+          { content: 'Fast setup in minutes', sourceDocId: 's1', semantic: 0.95 },
+          { content: 'Unrelated content', sourceDocId: 's2', semantic: 0.1 },
+        ]),
+      } as any;
+      const svc = new KnowledgeService(prisma, new StubEmbedder());
+      const out = await svc.retrieve('org_1', 'how fast is setup', 1);
+      expect(prisma.$queryRaw).toHaveBeenCalled(); // ANN path, not findMany
+      expect(prisma.knowledgeChunk.findMany).not.toHaveBeenCalled();
+      expect(out).toHaveLength(1);
+      expect(out[0].sourceDocId).toBe('s1');
+    } finally {
+      process.env.KNOWLEDGE_RETRIEVAL = prev;
+    }
+  });
 });

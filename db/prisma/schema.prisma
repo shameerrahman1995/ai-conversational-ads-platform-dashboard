@@ -208,14 +208,18 @@ model SourceDocument {
 }
 
 model KnowledgeChunk {
-  id           String    @id @default(cuid())
+  id           String                     @id @default(cuid())
   orgId        String
   sourceDocId  String
   content      String
   embeddingRef String? // pointer into the vector index
   metadata     Json?
+  // pgvector column for ANN retrieval (dim = embedder.dim). Unsupported by Prisma
+  // Client (written/read via raw SQL); kept in sync with metadata.vector, which
+  // remains the portable fallback used when the pgvector backend is off.
+  embedding    Unsupported("vector(32)")?
   expiresAt    DateTime?
-  createdAt    DateTime  @default(now())
+  createdAt    DateTime                   @default(now())
 
   org       Organization   @relation(fields: [orgId], references: [id], onDelete: Cascade)
   sourceDoc SourceDocument @relation(fields: [sourceDocId], references: [id], onDelete: Cascade)
