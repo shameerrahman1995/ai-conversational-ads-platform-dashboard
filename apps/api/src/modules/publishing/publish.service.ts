@@ -1,11 +1,16 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@acp/db';
+import { loadEnv } from '@acp/config';
+import type { AdConnector } from '@acp/connectors';
+import type { CreativeFormat, CreativeManifest } from '@acp/shared-types';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuditService } from '../../common/audit/audit.service';
 import { scopedWhere } from '../../common/tenant/scoped-where';
 import { JobsProducer } from '../../jobs/jobs.producer';
 import { ConnectorRegistry } from './connector-registry';
 import { PolicyService } from '../policy/policy.service';
+import { buildCreativeBundle } from '../creative/html5/bundle-builder';
+import { mintCreativeToken } from '../../common/auth/creative-token';
 
 export interface CreatePlanInput {
   campaignId: string;
@@ -176,9 +181,13 @@ export class PublishService {
       .update({ where: { id: variant.campaignId, orgId }, data: { status: 'PUBLISHING' } })
       .catch(() => undefined);
 
+    // For a live Google HTML5 creative, compile the ad ZIP + upload the media
+    // bundle first, so createDraft can attach it as the display upload ad. Every
+    // other case (stub, non-html5, non-google) uses the variant spec unchanged.
+    const campaignSpec = await this.resolvePublishSpec(orgId, plan, variant, connector);
     const draft = await connector.createDraft({
       accountId: plan.accountId ?? '',
-      campaignSpec: variant.spec,
+      campaignSpec,
       idempotencyKey: plan.idempotencyKey,
       secretRef: '',
     });
@@ -418,6 +427,70 @@ export class PublishService {
 
   async listPlans(orgId: string) {
     return this.prisma.publishJob.findMany({ where: scopedWhere(orgId) });
+  }
+
+  /**
+   * Build the campaignSpec handed to the connector's createDraft. For a LIVE
+   * Google HTML5 creative it compiles the thin creative into a real ZIP, uploads
+   * it as a MEDIA_BUNDLE asset, and returns a spec carrying `assetResourceName` +
+   * `finalUrl` for the display-upload-ad create. For every other case (stub mode,
+   * non-html5, non-google) it returns the variant spec unchanged — so the
+   * deterministic stub path (and its tests) are entirely unaffected.
+   */
+  private async resolvePublishSpec(
+    orgId: string,
+    plan: { platform: string; accountId: string | null },
+    variant: { id: string; campaignId: string; format: string; spec: Prisma.JsonValue },
+    connector: AdConnector,
+  ): Promise<unknown> {
+    const env = loadEnv();
+    if (
+      !(env.PROVIDERS_MODE === 'live' && plan.platform === 'google_ads' && variant.format === 'html5')
+    ) {
+      return variant.spec;
+    }
+    const campaign = await this.prisma.campaign.findFirst({
+      where: scopedWhere(orgId, { id: variant.campaignId }),
+    });
+    const spec = (variant.spec ?? {}) as Record<string, unknown>;
+    const settings = (campaign?.settings ?? {}) as Record<string, unknown>;
+    const finalUrl =
+      (typeof spec.finalUrl === 'string' && spec.finalUrl) ||
+      (typeof spec.landingUrl === 'string' && spec.landingUrl) ||
+      (typeof settings.landingUrl === 'string' && settings.landingUrl) ||
+      env.API_BASE_URL;
+    const manifest: CreativeManifest = {
+      creativeId: variant.id,
+      tenantId: orgId,
+      productId: variant.campaignId,
+      agentId: `agent:${variant.campaignId}`,
+      size: { width: 300, height: 250 },
+      mode: 'interactive_ai',
+      features: { textChat: true, voice: 'off', gallery: false, leadCapture: true },
+      allowedActions: ['show_specs', 'capture_lead', 'open_url'],
+      edgeApiBase: env.API_BASE_URL,
+      signedCreativeToken: mintCreativeToken({ creativeId: variant.id, tenantId: orgId, orgId }),
+    };
+    const copy = {
+      productName: campaign?.name ?? 'Product',
+      hook: (typeof spec.headline === 'string' && spec.headline) || campaign?.name || 'Learn more',
+      subhead: typeof spec.body === 'string' ? spec.body : undefined,
+      finalUrl,
+    };
+    const bundle = await buildCreativeBundle({ manifest, copy });
+    const [asset] = await connector.uploadAssets({
+      secretRef: '',
+      assets: [
+        {
+          variantId: variant.id,
+          format: variant.format as CreativeFormat,
+          assetRef: `variant:${variant.id}`,
+          checksum: '',
+          bundleBase64: bundle.zip.toString('base64'),
+        },
+      ],
+    });
+    return { ...spec, assetResourceName: asset.remoteAssetId, finalUrl };
   }
 
   private async requirePlan(orgId: string, planId: string) {

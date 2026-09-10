@@ -1,4 +1,41 @@
+import { existsSync, readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { z } from 'zod';
+
+/**
+ * Load a local `.env` file into `process.env` for dev/local runs (dependency-free).
+ * Real injected environment variables always win — a key already present in
+ * `process.env` is never overwritten — so this is a no-op harm-free call in
+ * production, where secrets are injected directly and no `.env` file exists.
+ * Must run before {@link loadEnv} so validation sees the loaded values.
+ *
+ * @returns the number of keys applied (0 if the file is absent).
+ */
+export function loadDotEnvFile(file = resolve(process.cwd(), '.env')): number {
+  if (!existsSync(file)) return 0;
+  let applied = 0;
+  for (const rawLine of readFileSync(file, 'utf8').split('\n')) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith('#')) continue;
+    const eq = line.indexOf('=');
+    if (eq <= 0) continue;
+    const key = line.slice(0, eq).trim();
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) continue;
+    if (process.env[key] !== undefined) continue; // real env wins
+    let val = line.slice(eq + 1).trim();
+    // Strip a trailing inline comment only on unquoted values.
+    if (!/^["']/.test(val)) val = val.replace(/\s+#.*$/, '').trim();
+    if (
+      (val.startsWith('"') && val.endsWith('"')) ||
+      (val.startsWith("'") && val.endsWith("'"))
+    ) {
+      val = val.slice(1, -1);
+    }
+    process.env[key] = val;
+    applied += 1;
+  }
+  return applied;
+}
 
 /**
  * Central environment schema. Fail fast at boot if configuration is invalid.
@@ -43,6 +80,22 @@ export const envSchema = z.object({
 
   // Provider selection: 'stub' (default) or 'live' — 'live' requires real creds.
   PROVIDERS_MODE: z.enum(['stub', 'live']).default('stub'),
+
+  // Google Ads API (live connector). All optional so dev/test defaults to the
+  // stub; the live adapter activates only when PROVIDERS_MODE=live AND the OAuth
+  // client + developer token + refresh token below are all present. Never sent to
+  // the browser (blueprint §12/§17).
+  GOOGLE_ADS_CLIENT_ID: z.string().optional(),
+  GOOGLE_ADS_CLIENT_SECRET: z.string().optional(),
+  GOOGLE_ADS_DEVELOPER_TOKEN: z.string().optional(),
+  GOOGLE_ADS_REFRESH_TOKEN: z.string().optional(),
+  // Manager (MCC) account that owns access — sent as the login-customer-id header.
+  GOOGLE_ADS_LOGIN_CUSTOMER_ID: z.string().optional(),
+  // Default operating customer id (the account campaigns are created under) when a
+  // publish plan does not carry its own accountId.
+  GOOGLE_ADS_CUSTOMER_ID: z.string().optional(),
+  // Pinned Google Ads REST API version.
+  GOOGLE_ADS_API_VERSION: z.string().default('v25'),
 });
 
 export type Env = z.infer<typeof envSchema>;

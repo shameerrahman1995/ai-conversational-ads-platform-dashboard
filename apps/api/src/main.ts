@@ -1,4 +1,8 @@
 import 'reflect-metadata';
+// MUST be the first import after reflect-metadata: loads apps/api/.env into
+// process.env before any module that reads config is imported (some call
+// loadEnv() at import time).
+import './bootstrap-env';
 
 import helmet from 'helmet';
 import { ValidationPipe } from '@nestjs/common';

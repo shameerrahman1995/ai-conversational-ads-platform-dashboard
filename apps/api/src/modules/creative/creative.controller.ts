@@ -2,7 +2,9 @@ import { Body, Controller, Delete, Get, Param, Patch, Post, Req, UseGuards } fro
 import { ApiHeader, ApiTags } from '@nestjs/swagger';
 import { CreativeService } from './creative.service';
 import { Html5CompilerService } from './html5-compiler.service';
+import type { CreativeManifest } from '@acp/shared-types';
 import {
+  CompileBundleDto,
   CompileHtml5Dto,
   CreateVariantDto,
   GenerateAdaptiveDto,
@@ -28,6 +30,34 @@ export class CreativeController {
   @Roles('creator')
   compileHtml5(@Req() req: { orgId: string }, @Param('id') id: string, @Body() dto: CompileHtml5Dto) {
     return this.html5.compile(req.orgId, id, dto);
+  }
+
+  @Post('variants/:id/html5/bundle')
+  @Roles('creator')
+  compileBundle(@Req() req: { orgId: string }, @Param('id') id: string, @Body() dto: CompileBundleDto) {
+    const manifest: CreativeManifest = {
+      creativeId: dto.creativeId,
+      tenantId: dto.tenantId,
+      productId: dto.productId,
+      agentId: dto.agentId,
+      size: { width: dto.size.width, height: dto.size.height },
+      mode: dto.mode as CreativeManifest['mode'],
+      features: {
+        textChat: dto.features.textChat,
+        voice: dto.features.voice as CreativeManifest['features']['voice'],
+        gallery: dto.features.gallery,
+        leadCapture: dto.features.leadCapture,
+      },
+      allowedActions: dto.allowedActions as CreativeManifest['allowedActions'],
+      edgeApiBase: dto.edgeApiBase,
+      signedCreativeToken: dto.signedCreativeToken,
+    };
+    return this.html5.compileBundle(req.orgId, id, {
+      template: dto.template,
+      network: dto.network,
+      manifest,
+      copy: dto.copy,
+    });
   }
 
   @Get('creative/html5/preview-policy')

@@ -105,6 +105,102 @@ export type CreativeFormat =
   | 'html5'
   | 'native_form_schema';
 
+// ---- Creative manifest: what ships inside the ad bundle (blueprint §3) ----
+// The advertisement itself is an AI product experience: a thin, secret-free
+// creative that renders from this manifest and talks to the Platform Edge API.
+export type CreativeMode = 'interactive_ai' | 'static';
+/** Voice is opt-in and runtime-detected — never assume an ad iframe permits mic. */
+export type CreativeVoiceMode = 'off' | 'runtime_detect' | 'on';
+export type CreativeAllowedAction =
+  | 'show_specs'
+  | 'compare'
+  | 'capture_lead'
+  | 'open_url'
+  | 'show_gallery'
+  | 'request_callback';
+
+export interface CreativeFeatures {
+  textChat: boolean;
+  voice: CreativeVoiceMode;
+  gallery: boolean;
+  leadCapture: boolean;
+}
+
+export interface CreativeSize {
+  width: number;
+  height: number;
+}
+
+/**
+ * Platform-neutral creative manifest embedded as `manifest.json` in the ad ZIP.
+ * MUST contain no secrets — any value here is public to the browser (blueprint §3).
+ */
+export interface CreativeManifest {
+  creativeId: string;
+  tenantId: string;
+  productId: string;
+  agentId: string;
+  size: CreativeSize;
+  mode: CreativeMode;
+  features: CreativeFeatures;
+  allowedActions: CreativeAllowedAction[];
+  edgeApiBase: string;
+  /** Short-lived / rotatable PUBLIC-scope token. Scoped to one creative/tenant. */
+  signedCreativeToken: string;
+}
+
+/** Claims inside a signed creative token (blueprint §3 security model). */
+export interface CreativeTokenClaims {
+  creativeId: string;
+  tenantId: string;
+  orgId: string;
+  scope: 'creative';
+  /** epoch seconds */
+  exp: number;
+}
+
+// ---- Structured AI reply the in-ad creative renders (blueprint §5) ----
+// The model returns natural language + structured UI instructions ONLY — never
+// raw HTML/JS. The edge layer validates/whitelists every field below.
+export interface AgentReplyUi {
+  focusCard?: string;
+  highlight?: string[];
+  suggestedReplies?: string[];
+}
+export interface AgentReplyLead {
+  intent?: string;
+  score?: number;
+  missingFields?: string[];
+}
+export interface AgentToolCall {
+  type: string;
+  label?: string;
+  intent?: string;
+  payload?: Record<string, unknown>;
+}
+export interface AgentStructuredReply {
+  answer: string;
+  ui?: AgentReplyUi;
+  lead?: AgentReplyLead;
+  toolCalls?: AgentToolCall[];
+}
+
+// ---- Deployment: a creative placed on a platform (blueprint §12) ----
+export type DeploymentNetworkCallPolicy = 'allowed' | 'validation_required' | 'blocked';
+export interface DeploymentCapabilities {
+  interactiveHtml: boolean;
+  networkCalls: DeploymentNetworkCallPolicy;
+  voice: boolean;
+}
+export interface DeploymentPlatformResources {
+  assetResourceName?: string;
+  adResourceName?: string;
+}
+export interface DeploymentTarget {
+  campaignId?: string;
+  adGroupId?: string;
+}
+
 // ---- Consent (kept as separate records per blueprint §15) ----
 export type ConsentType =
   | 'ad_platform'

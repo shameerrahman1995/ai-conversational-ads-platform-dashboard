@@ -47,6 +47,12 @@ export interface UploadAssetInput {
   /** Signed URL or storage key; connectors fetch server-side. */
   assetRef: string;
   checksum: string;
+  /**
+   * Inline bytes of a compiled creative bundle (base64), e.g. a Google HTML5
+   * MEDIA_BUNDLE ZIP. When present a connector uploads these directly instead of
+   * fetching `assetRef`. Kept optional so the stub/other connectors ignore it.
+   */
+  bundleBase64?: string;
 }
 
 export interface UploadAssetResult {

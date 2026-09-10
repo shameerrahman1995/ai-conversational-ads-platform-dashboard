@@ -1,4 +1,5 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import type { CreativeManifest } from '@acp/shared-types';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuditService } from '../../common/audit/audit.service';
 import { scopedWhere } from '../../common/tenant/scoped-where';
@@ -8,12 +9,27 @@ import {
   isAllowedTemplate,
   PREVIEW_SANDBOX,
 } from './html5/static-analysis';
+import {
+  buildCreativeBundle,
+  combinedSource,
+  type BundleCopy,
+} from './html5/bundle-builder';
 
 export interface CompileInput {
   template: string;
   html: string;
   network: string;
 }
+
+export interface CompileBundleInput {
+  template: string;
+  network: string;
+  manifest: CreativeManifest;
+  copy: BundleCopy;
+}
+
+/** Google's uploaded-HTML5 hard limit on the ZIP size (blueprint §3). */
+const GOOGLE_MAX_ZIP_BYTES = 600_000;
 
 /**
  * HTML5 / playable compiler (blueprint §14/§17): allowlisted templates + static
@@ -59,6 +75,83 @@ export class Html5CompilerService {
       metadata: { status, issues: analysis.issues.length },
     });
     return { status, ...analysis, csp: buildPreviewCsp(), sandbox: PREVIEW_SANDBOX };
+  }
+
+  /**
+   * Compile a REAL HTML5 ad ZIP (blueprint §3): builds a thin, secret-free
+   * creative from the manifest, runs the same static-analysis gate over the
+   * generated source, enforces the Google ZIP-size limit, and returns the ZIP
+   * bytes (base64) + file list + size + validation. On success it persists the
+   * base64 ZIP + bundle metadata on the variant so the publish flow can later
+   * hand the bytes to the Google adapter.
+   */
+  async compileBundle(orgId: string, variantId: string, input: CompileBundleInput) {
+    if (!isAllowedTemplate(input.template)) {
+      throw new BadRequestException(`Template not in allowlist: ${input.template}`);
+    }
+    const variant = await this.prisma.creativeVariant.findFirst({
+      where: scopedWhere(orgId, { id: variantId }),
+    });
+    if (!variant) throw new NotFoundException('Variant not found');
+
+    const bundle = await buildCreativeBundle({ manifest: input.manifest, copy: input.copy });
+
+    // Same static-analysis gate as inline compile, run over the generated source.
+    const analysis = analyzeHtml5(combinedSource(bundle.files), { network: input.network });
+    const issues = [...analysis.issues];
+    // Enforce the real deliverable (ZIP) size, not just the source size.
+    if (bundle.zipBytes > GOOGLE_MAX_ZIP_BYTES) {
+      issues.push({
+        code: 'oversize',
+        message: `zip ${bundle.zipBytes} exceeds ${GOOGLE_MAX_ZIP_BYTES} bytes`,
+      });
+    }
+    const ok = issues.length === 0;
+    const status = ok ? 'compiled' : 'validation_failed';
+    const zipBase64 = ok ? bundle.zip.toString('base64') : null;
+
+    const manifest = {
+      html5: {
+        network: input.network,
+        template: input.template,
+        csp: buildPreviewCsp(),
+        sandbox: PREVIEW_SANDBOX,
+        sizeBytes: analysis.sizeBytes,
+        issues,
+      },
+      html5Bundle: {
+        creativeId: input.manifest.creativeId,
+        mode: input.manifest.mode,
+        size: input.manifest.size,
+        edgeApiBase: input.manifest.edgeApiBase,
+        files: bundle.fileList,
+        zipBytes: bundle.zipBytes,
+        status,
+        // Persisted so the publish flow can hand the real bytes to the adapter.
+        zipBase64,
+      },
+    };
+    await this.prisma.creativeVariant.update({
+      where: { id: variantId, orgId },
+      data: { manifest: manifest as never, status },
+    });
+    await this.audit.record({
+      orgId,
+      action: 'creative.html5_bundle_compiled',
+      target: variantId,
+      metadata: { status, zipBytes: bundle.zipBytes, issues: issues.length },
+    });
+
+    return {
+      status,
+      ok,
+      files: bundle.fileList,
+      zipBytes: bundle.zipBytes,
+      zipBase64,
+      validation: { ok, issues, sizeBytes: analysis.sizeBytes },
+      csp: buildPreviewCsp(),
+      sandbox: PREVIEW_SANDBOX,
+    };
   }
 
   previewPolicy() {

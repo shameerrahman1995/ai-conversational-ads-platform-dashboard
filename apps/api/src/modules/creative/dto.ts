@@ -1,6 +1,19 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { Allow, IsArray, IsIn, IsOptional, IsString, Matches, ValidateNested } from 'class-validator';
+import {
+  Allow,
+  IsArray,
+  IsBoolean,
+  IsIn,
+  IsInt,
+  IsOptional,
+  IsString,
+  Matches,
+  ValidateNested,
+} from 'class-validator';
 import { Type } from 'class-transformer';
+
+const NETWORKS = ['google_ads', 'meta', 'tiktok', 'microsoft', 'amazon_dsp', 'generic_export'];
+const TEMPLATES = ['standard_banner', 'carousel_html5', 'playable_basic'];
 
 const HEX = /^#[0-9a-fA-F]{3,8}$/;
 
@@ -89,15 +102,139 @@ export class UpdateVariantDto {
 }
 
 export class CompileHtml5Dto {
-  @ApiProperty({ enum: ['standard_banner', 'carousel_html5', 'playable_basic'] })
-  @IsIn(['standard_banner', 'carousel_html5', 'playable_basic'])
+  @ApiProperty({ enum: TEMPLATES })
+  @IsIn(TEMPLATES)
   template!: string;
 
   @ApiProperty({ description: 'Inline HTML5 bundle source' })
   @IsString()
   html!: string;
 
-  @ApiProperty({ enum: ['google_ads', 'meta', 'tiktok', 'microsoft', 'amazon_dsp', 'generic_export'] })
+  @ApiProperty({ enum: NETWORKS })
   @IsString()
   network!: string;
+}
+
+export class CreativeSizeDto {
+  @ApiProperty({ example: 300 })
+  @IsInt()
+  width!: number;
+
+  @ApiProperty({ example: 250 })
+  @IsInt()
+  height!: number;
+}
+
+export class CreativeFeaturesDto {
+  @ApiProperty()
+  @IsBoolean()
+  textChat!: boolean;
+
+  @ApiProperty({ enum: ['off', 'runtime_detect', 'on'] })
+  @IsIn(['off', 'runtime_detect', 'on'])
+  voice!: string;
+
+  @ApiProperty()
+  @IsBoolean()
+  gallery!: boolean;
+
+  @ApiProperty()
+  @IsBoolean()
+  leadCapture!: boolean;
+}
+
+export class BundleCopyDto {
+  @ApiProperty({ description: 'Product/brand name' })
+  @IsString()
+  productName!: string;
+
+  @ApiProperty({ description: 'Primary hook headline' })
+  @IsString()
+  hook!: string;
+
+  @ApiProperty({ required: false })
+  @IsOptional()
+  @IsString()
+  subhead?: string;
+
+  @ApiProperty({ required: false, description: 'Primary CTA label (default "Explore")' })
+  @IsOptional()
+  @IsString()
+  ctaLabel?: string;
+
+  @ApiProperty({ required: false, description: 'AI button label (default "Ask AI")' })
+  @IsOptional()
+  @IsString()
+  askAiLabel?: string;
+
+  @ApiProperty({ description: 'Clickthrough / fallback URL' })
+  @IsString()
+  finalUrl!: string;
+
+  @ApiProperty({ required: false })
+  @IsOptional()
+  @IsString()
+  privacyUrl?: string;
+}
+
+/**
+ * Compile a REAL HTML5 ad ZIP. Carries the CreativeManifest fields (secret-free
+ * except the public-scope signed token) plus the copy the template renders.
+ */
+export class CompileBundleDto {
+  @ApiProperty({ enum: TEMPLATES })
+  @IsIn(TEMPLATES)
+  template!: string;
+
+  @ApiProperty({ enum: NETWORKS })
+  @IsString()
+  network!: string;
+
+  @ApiProperty()
+  @IsString()
+  creativeId!: string;
+
+  @ApiProperty()
+  @IsString()
+  tenantId!: string;
+
+  @ApiProperty()
+  @IsString()
+  productId!: string;
+
+  @ApiProperty()
+  @IsString()
+  agentId!: string;
+
+  @ApiProperty({ type: CreativeSizeDto })
+  @ValidateNested()
+  @Type(() => CreativeSizeDto)
+  size!: CreativeSizeDto;
+
+  @ApiProperty({ enum: ['interactive_ai', 'static'] })
+  @IsIn(['interactive_ai', 'static'])
+  mode!: string;
+
+  @ApiProperty({ type: CreativeFeaturesDto })
+  @ValidateNested()
+  @Type(() => CreativeFeaturesDto)
+  features!: CreativeFeaturesDto;
+
+  @ApiProperty({ type: [String], description: 'Whitelisted creative actions' })
+  @IsArray()
+  @IsString({ each: true })
+  allowedActions!: string[];
+
+  @ApiProperty({ description: 'Platform Edge API base URL' })
+  @IsString()
+  edgeApiBase!: string;
+
+  @ApiProperty({ description: 'Public-scope, rotatable signed creative token' })
+  @IsString()
+  signedCreativeToken!: string;
+
+  @ApiProperty({ type: BundleCopyDto })
+  @ValidateNested()
+  @Type(() => BundleCopyDto)
+  copy!: BundleCopyDto;
 }

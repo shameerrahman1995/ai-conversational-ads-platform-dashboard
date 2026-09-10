@@ -565,12 +565,38 @@ model Event {
   orgId     String
   type      String
   payload   Json
+  // Ad-session the event belongs to (blueprint §13/§14 funnel), when applicable.
+  sessionId String?
+  // Client-supplied idempotency key: a unique index makes ingestion dedupe-safe
+  // so retries from the creative never double-count the funnel (nulls allowed).
+  dedupeKey String?  @unique
   createdAt DateTime @default(now())
 
   org Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
 
   @@index([orgId, type])
+  @@index([sessionId])
   @@index([createdAt])
+}
+
+// In-ad conversational session (blueprint §4/§13): a durable record of one ad
+// exposure/conversation. Live session state also lives in Redis under a short
+// TTL; this row is the persisted spine that Message/Lead/Event tie back to.
+model AdSession {
+  id           String    @id @default(cuid())
+  orgId        String
+  creativeId   String // CreativeVariant id (the served creative)
+  deploymentId String? // PublishJob/RemoteObject id when known
+  platform     String? // serving platform (google_ads, google_dv360, ...)
+  status       String    @default("open") // open | converted | closed
+  capabilities Json? // capability snapshot at session start (fetch/mic/audio)
+  anonId       String? // anonymous device/session signal (no PII)
+  startedAt    DateTime  @default(now())
+  lastSeenAt   DateTime  @updatedAt
+  closedAt     DateTime?
+
+  @@index([orgId])
+  @@index([creativeId])
 }
 
 model AuditEvent {
