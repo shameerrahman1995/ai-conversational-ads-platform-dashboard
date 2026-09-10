@@ -10,7 +10,7 @@ Labels: `mock` · `implemented-local` · `sandbox-tested` · `capability-gated` 
 | OpenAI / Gemini gateways | unsupported | Not wired; capability rules verified & documented for when they are added |
 | Voice (STT/TTS) | mock | Consent-layered pipeline present; STT/TTS are stubs; text is source of truth; opt-in only |
 | Knowledge retrieval | implemented-local (mock embeddings) | Brute-force cosine; pgvector open |
-| HTML5 creative compiler | implemented-local | Forbids external network for no-network platforms; Google 600 KB enforced; AST sanitizer still open (regex today) |
+| HTML5 creative compiler | implemented-local | **AST-based analyzer (parse5) — per-network external policy incl. google_ads + Google-host allowlist, protocol-relative/CSS-url/event-handler/dynamic-import coverage, secret scanner, hardened preview CSP (this session)**; Google 600 KB enforced |
 | Google Ads publishing | implemented-local | `google-ads.live.ts` (REST v25) builds paused DISPLAY upload ad; **not** sandbox-verified here; dev-token sunset caveat |
 | Meta / TikTok publishing | mock | Stub adapters; native formats + honest fallbacks per verified matrix |
 | Direct-publisher live runtime | implemented-local | Edge ad-session + creative-token guard (WIP); host-cooperative model |

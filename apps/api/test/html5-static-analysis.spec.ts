@@ -42,7 +42,66 @@ describe('template allowlist + CSP', () => {
     expect(isAllowedTemplate('playable_basic')).toBe(true);
     expect(isAllowedTemplate('arbitrary_user_template')).toBe(false);
   });
-  it('CSP locks down external resources', () => {
-    expect(buildPreviewCsp()).toContain("default-src 'none'");
+  it('CSP locks down external resources and denies network/embed/nav vectors', () => {
+    const csp = buildPreviewCsp();
+    expect(csp).toContain("default-src 'none'");
+    expect(csp).toContain("connect-src 'none'");
+    expect(csp).toContain("object-src 'none'");
+    expect(csp).toContain("form-action 'none'");
+  });
+});
+
+describe('analyzeHtml5 — AST hardening (bypasses the old regex missed)', () => {
+  const has = (r: ReturnType<typeof analyzeHtml5>, code: string) => r.issues.some((i) => i.code === code);
+
+  it('flags google_ads external images (old scan ignored google_ads)', () => {
+    const r = analyzeHtml5('<img src="https://cdn.evil.com/x.png">', { network: 'google_ads' });
+    expect(has(r, 'external_request')).toBe(true);
+  });
+
+  it('allows Google-hosted resources for google_ads (allowlist)', () => {
+    const r = analyzeHtml5('<link href="https://fonts.googleapis.com/css?family=Inter">', {
+      network: 'google_ads',
+    });
+    expect(r.ok).toBe(true);
+  });
+
+  it('flags protocol-relative external script src', () => {
+    const r = analyzeHtml5('<script src="//evil.com/x.js"></script>', { network: 'tiktok' });
+    expect(has(r, 'external_request')).toBe(true);
+  });
+
+  it('flags external URL inside CSS url()', () => {
+    const r = analyzeHtml5('<div style="background:url(https://evil.com/a.png)"></div>', {
+      network: 'google_ads',
+    });
+    expect(has(r, 'external_request')).toBe(true);
+  });
+
+  it('flags fetch inside an inline event handler', () => {
+    const r = analyzeHtml5('<button onclick="fetch(\'https://x.example\')">go</button>', {
+      network: 'tiktok',
+    });
+    expect(has(r, 'external_request')).toBe(true);
+  });
+
+  it('flags dynamic import() and Worker as network', () => {
+    expect(has(analyzeHtml5('<script>import("https://x")</script>', { network: 'tiktok' }), 'external_request')).toBe(true);
+    expect(has(analyzeHtml5('<script>new Worker("w.js")</script>', { network: 'tiktok' }), 'external_request')).toBe(true);
+  });
+
+  it('flags javascript: URLs and innerHTML as unsafe', () => {
+    expect(has(analyzeHtml5('<a href="javascript:alert(1)">x</a>', { network: 'meta' }), 'unsafe_js')).toBe(true);
+    expect(has(analyzeHtml5('<script>el.innerHTML=u</script>', { network: 'meta' }), 'unsafe_js')).toBe(true);
+  });
+
+  it('flags secrets embedded in the bundle', () => {
+    const r = analyzeHtml5('<script>var k="sk-ABCDEFGHIJKLMNOPQRSTUV1234";</script>', { network: 'google_ads' });
+    expect(has(r, 'secret')).toBe(true);
+  });
+
+  it('allows external calls on host-cooperative direct-publisher', () => {
+    const r = analyzeHtml5('<script>fetch("https://api.example/x")</script>', { network: 'direct_publisher' });
+    expect(r.ok).toBe(true);
   });
 });
