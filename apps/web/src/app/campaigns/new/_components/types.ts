@@ -26,12 +26,21 @@ export interface WizardState {
   endDate: string; // '' = run continuously
   bidStrategy: string;
 
-  // 5 — creative & agent
+  // 4 — creative
   sourceUri: string; // product page to ground on (optional)
   formats: string[];
+  brandVoice: string;
+
+  // 5 — agent
   attachAgent: boolean;
   agentModel: string;
-  brandVoice: string;
+
+  // 6 — conversion
+  conversionGoal: string; // what counts as a conversion
+  conversionAction: string; // the primary post-click action
+  destinationUrl: string; // fallback destination if the agent is off / unsupported
+  consentRequired: boolean; // require explicit consent before creating a lead
+  crmRouting: string; // where a qualified lead is routed
 }
 
 export interface StepProps {
@@ -39,7 +48,7 @@ export interface StepProps {
   patch: (p: Partial<WizardState>) => void;
   /** Provider keys already connected (from connections.list) — for ChannelsStep. */
   connectedProviders?: string[];
-  /** Model catalog — for CreativeAgentStep. */
+  /** Model catalog — for AgentStep. */
   models?: { id: string; label: string; tier?: string; description?: string }[];
 }
 
@@ -72,10 +81,29 @@ export const DEFAULT_WIZARD: WizardState = {
   bidStrategy: 'maximize_conversions',
   sourceUri: '',
   formats: ['image_1_1', 'image_9_16'],
+  brandVoice: 'Confident & local',
   attachAgent: true,
   agentModel: 'claude-sonnet-5',
-  brandVoice: 'Confident & local',
+  conversionGoal: 'qualified_lead',
+  conversionAction: 'book_a_call',
+  destinationUrl: '',
+  consentRequired: true,
+  crmRouting: 'Create a consented contact in the CRM, assign to sales round-robin, include the conversation summary and source campaign.',
 };
+
+export const CONVERSION_GOALS: { key: string; label: string; description: string }[] = [
+  { key: 'qualified_lead', label: 'Qualified lead', description: 'A consented, sales-ready lead captured by the agent.' },
+  { key: 'booking', label: 'Booked appointment', description: 'A confirmed booking on the connected calendar.' },
+  { key: 'purchase', label: 'Purchase', description: 'A completed purchase on your site.' },
+  { key: 'signup', label: 'Sign-up', description: 'A new account or newsletter sign-up.' },
+];
+export const CONVERSION_ACTIONS: { key: string; label: string }[] = [
+  { key: 'book_a_call', label: 'Book a call' },
+  { key: 'capture_lead', label: 'Capture lead details' },
+  { key: 'request_callback', label: 'Request a callback' },
+  { key: 'purchase', label: 'Complete purchase' },
+  { key: 'signup', label: 'Create account' },
+];
 
 export interface ObjectiveOption {
   key: string;

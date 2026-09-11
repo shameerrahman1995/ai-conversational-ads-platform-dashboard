@@ -14,16 +14,20 @@ import { ObjectiveStep } from './_components/ObjectiveStep';
 import { ChannelsStep } from './_components/ChannelsStep';
 import { AudienceStep } from './_components/AudienceStep';
 import { BudgetStep } from './_components/BudgetStep';
-import { CreativeAgentStep } from './_components/CreativeAgentStep';
+import { CreativeStep } from './_components/CreativeStep';
+import { AgentStep } from './_components/AgentStep';
+import { ConversionStep } from './_components/ConversionStep';
 import { ReviewStep } from './_components/ReviewStep';
 
 const STEPS = [
   { key: 'objective', label: 'Objective' },
-  { key: 'channels', label: 'Channels' },
+  { key: 'channels', label: 'Platforms' },
   { key: 'audience', label: 'Audience' },
-  { key: 'budget', label: 'Budget & schedule' },
-  { key: 'creative', label: 'Creative & agent' },
-  { key: 'review', label: 'Review & launch' },
+  { key: 'creative', label: 'Creative' },
+  { key: 'agent', label: 'Agent' },
+  { key: 'conversion', label: 'Conversion' },
+  { key: 'budget', label: 'Budget' },
+  { key: 'review', label: 'Review' },
 ];
 
 export default function NewCampaignWizard() {
@@ -55,44 +59,80 @@ export default function NewCampaignWizard() {
       case 1:
         return state.platforms.length >= 1;
       case 3:
-        return state.budgetAmount > 0 && !!state.startDate;
-      case 4:
         return state.formats.length >= 1;
+      case 6:
+        return state.budgetAmount > 0 && !!state.startDate;
       default:
         return true;
     }
   })();
 
+  const canSaveDraft = state.name.trim().length > 1 && !!state.objective;
+
   const stepProps = { state, patch, connectedProviders, models };
 
-  async function launch() {
+  /** The Campaign.settings payload — shared by Save draft and Create. */
+  function buildSettings() {
+    return {
+      platforms: state.platforms,
+      audience: {
+        locations: state.locations,
+        ageMin: state.ageMin,
+        ageMax: state.ageMax,
+        genders: state.genders,
+        languages: state.languages,
+        interests: state.interests,
+      },
+      budget: {
+        type: state.budgetType,
+        amount: state.budgetAmount,
+        currency: state.currency,
+        bidStrategy: state.bidStrategy,
+      },
+      schedule: { startDate: state.startDate, endDate: state.endDate || null },
+      creative: { formats: state.formats, brandVoice: state.brandVoice },
+      agent: { attach: state.attachAgent, model: state.agentModel },
+      conversion: {
+        goal: state.conversionGoal,
+        action: state.conversionAction,
+        destinationUrl: state.destinationUrl,
+        consentRequired: state.consentRequired,
+        crmRouting: state.crmRouting,
+      },
+    };
+  }
+
+  /** Save progress as a draft campaign without the full launch orchestration. */
+  async function saveDraft() {
+    if (busy) return;
+    if (!canSaveDraft) {
+      toast.toast('Add a campaign name and objective before saving a draft.', 'info');
+      return;
+    }
     setBusy(true);
     try {
-      const settings = {
-        platforms: state.platforms,
-        audience: {
-          locations: state.locations,
-          ageMin: state.ageMin,
-          ageMax: state.ageMax,
-          genders: state.genders,
-          languages: state.languages,
-          interests: state.interests,
-        },
-        budget: {
-          type: state.budgetType,
-          amount: state.budgetAmount,
-          currency: state.currency,
-          bidStrategy: state.bidStrategy,
-        },
-        schedule: { startDate: state.startDate, endDate: state.endDate || null },
-        creative: { formats: state.formats, brandVoice: state.brandVoice },
-        agent: { attach: state.attachAgent, model: state.agentModel },
-      };
       const created = await client.campaigns.create({
         objective: state.objective,
         name: state.name.trim(),
         vertical: state.vertical !== 'none' ? state.vertical : undefined,
-        settings,
+        settings: buildSettings(),
+      });
+      toast.success('Draft saved — continue setup on the campaign page');
+      router.push(`/campaigns/${created.id}`);
+    } catch (e) {
+      toast.error(e instanceof ApiClientError ? e.body.message : 'Could not save the draft.');
+      setBusy(false);
+    }
+  }
+
+  async function launch() {
+    setBusy(true);
+    try {
+      const created = await client.campaigns.create({
+        objective: state.objective,
+        name: state.name.trim(),
+        vertical: state.vertical !== 'none' ? state.vertical : undefined,
+        settings: buildSettings(),
       });
 
       // The campaign now exists (the only hard requirement). Everything below is
@@ -269,9 +309,11 @@ export default function NewCampaignWizard() {
         {step === 0 ? <ObjectiveStep {...stepProps} /> : null}
         {step === 1 ? <ChannelsStep {...stepProps} /> : null}
         {step === 2 ? <AudienceStep {...stepProps} /> : null}
-        {step === 3 ? <BudgetStep {...stepProps} /> : null}
-        {step === 4 ? <CreativeAgentStep {...stepProps} /> : null}
-        {step === 5 ? <ReviewStep {...stepProps} /> : null}
+        {step === 3 ? <CreativeStep {...stepProps} /> : null}
+        {step === 4 ? <AgentStep {...stepProps} /> : null}
+        {step === 5 ? <ConversionStep {...stepProps} /> : null}
+        {step === 6 ? <BudgetStep {...stepProps} /> : null}
+        {step === 7 ? <ReviewStep {...stepProps} /> : null}
       </Card>
 
       {/* Nav */}
@@ -283,15 +325,20 @@ export default function NewCampaignWizard() {
         >
           {step === 0 ? 'Cancel' : 'Back'}
         </Button>
-        {step < STEPS.length - 1 ? (
-          <Button variant="primary" onClick={() => setStep((s) => s + 1)} disabled={!canProceed}>
-            Continue
+        <div className="row" style={{ gap: '0.5rem' }}>
+          <Button variant="ghost" icon="save" onClick={saveDraft} disabled={busy || !canSaveDraft}>
+            Save draft
           </Button>
-        ) : (
-          <Button variant="primary" icon="check" onClick={launch} disabled={busy}>
-            {busy ? 'Creating…' : 'Create campaign'}
-          </Button>
-        )}
+          {step < STEPS.length - 1 ? (
+            <Button variant="primary" onClick={() => setStep((s) => s + 1)} disabled={!canProceed}>
+              Continue
+            </Button>
+          ) : (
+            <Button variant="primary" icon="check" onClick={launch} disabled={busy}>
+              {busy ? 'Creating…' : 'Create campaign'}
+            </Button>
+          )}
+        </div>
       </div>
     </div>
   );
