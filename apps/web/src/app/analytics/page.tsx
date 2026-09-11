@@ -18,6 +18,8 @@ import {
   DataState,
   Meter,
 } from '@/components/ui';
+import { BarChart } from '@/components/charts';
+import { formatMoney } from '@/lib/format';
 
 const usd = (n: number, max = 0) =>
   `$${n.toLocaleString('en-US', { maximumFractionDigits: max, minimumFractionDigits: max })}`;
@@ -59,10 +61,18 @@ export default function AnalyticsPage() {
   const [funnel, spend, attribution, experiments, budget, campaigns] = data ?? [];
 
   const stages = funnel?.stages ?? [];
-  const firstCount = stages[0]?.count ?? 0;
   const meetings = stages.find((s) => s.key === 'meeting')?.count ?? 0;
 
   const providers = spend ? Object.entries(spend.byProvider) : [];
+
+  // Reporting window comes from the attribution response; it is empty (all-time)
+  // unless a since/until was requested, so we label it honestly rather than
+  // hardcoding "All time".
+  const attWindow = attribution?.window;
+  const hasWindow = Boolean(attWindow?.since || attWindow?.until);
+  const windowLabel = hasWindow
+    ? `${attWindow?.since ?? '…'} → ${attWindow?.until ?? 'now'}`
+    : 'All time';
 
   // Resolve experiment campaign IDs to human names (falls back to a short ID).
   const campaignNameById = new Map((campaigns ?? []).map((c) => [c.id, campaignLabel(c)]));
@@ -77,9 +87,13 @@ export default function AnalyticsPage() {
             <span
               className="row muted"
               style={{ gap: '0.35rem', fontSize: 12.5, cursor: 'default' }}
-              title="Reporting window — all-time totals for this account"
+              title={
+                hasWindow
+                  ? 'Reporting window from the attribution response'
+                  : 'Reporting window — all-time totals for this account'
+              }
             >
-              <Icon name="clock" size={12} /> All time
+              <Icon name="clock" size={12} /> {windowLabel}
             </span>
             <Button
               icon="download"
@@ -114,7 +128,7 @@ export default function AnalyticsPage() {
         <div className="grid grid-kpi">
           <StatCard
             label="Ad spend"
-            value={usd(spend?.totals.spend ?? 0)}
+            value={formatMoney(spend?.totals.spend ?? 0)}
             icon="billing"
             footNote="Provider-reported, all time"
           />
@@ -128,7 +142,7 @@ export default function AnalyticsPage() {
             label="Cost / qualified lead"
             value={
               attribution?.costPerQualifiedLead != null
-                ? usd(attribution.costPerQualifiedLead)
+                ? formatMoney(attribution.costPerQualifiedLead)
                 : '—'
             }
             icon="analytics"
@@ -148,6 +162,31 @@ export default function AnalyticsPage() {
           />
         </div>
 
+        {/* Disclosures — currency, reporting window, timezone, freshness */}
+        <div
+          className="row"
+          style={{
+            flexWrap: 'wrap',
+            gap: '0.35rem 1.1rem',
+            marginTop: '0.75rem',
+            fontSize: 12.5,
+            color: 'var(--color-ink-3)',
+          }}
+        >
+          <span className="row" style={{ gap: '0.35rem' }}>
+            <Icon name="billing" size={12} /> Ad spend &amp; attribution in <strong>₹ INR</strong>
+          </span>
+          <span className="row" style={{ gap: '0.35rem' }}>
+            <Icon name="clock" size={12} /> Window: {windowLabel}
+          </span>
+          <span className="row" style={{ gap: '0.35rem' }}>
+            <Icon name="globe" size={12} /> Asia/Kolkata · IST
+          </span>
+          <span className="row" style={{ gap: '0.35rem' }}>
+            <Icon name="shield" size={12} /> Reflects recorded events
+          </span>
+        </div>
+
         {/* Funnel + attribution */}
         <div className="grid grid-2" style={{ marginTop: '1rem' }}>
           <Panel
@@ -164,32 +203,21 @@ export default function AnalyticsPage() {
               )
             }
           >
-            <div className="card-pad stack" style={{ gap: '0.9rem' }}>
-              {stages.map((s, i) => {
-                const width = firstCount ? (s.count / firstCount) * 100 : 0;
-                return (
-                  <div key={s.key}>
-                    <div className="spread" style={{ marginBottom: '0.35rem' }}>
-                      <span style={{ fontWeight: 500, textTransform: 'capitalize' }}>
-                        {s.key.replace(/_/g, ' ')}
-                      </span>
-                      <span className="row" style={{ gap: '0.6rem' }}>
-                        <span className="tnum" style={{ fontWeight: 600 }}>
-                          {num(s.count)}
-                        </span>
-                        <span
-                          className="muted tnum"
-                          style={{ fontSize: 12, minWidth: 52, textAlign: 'right' }}
-                          title={i === 0 ? 'Top of funnel' : 'Conversion from previous step'}
-                        >
-                          {i === 0 ? '100%' : pct(s.conversionFromPrev)}
-                        </span>
-                      </span>
-                    </div>
-                    <Meter pct={Math.max(width, 1.5)} />
-                  </div>
-                );
-              })}
+            <div className="card-pad">
+              {/* Real bar chart of stage counts; each bar's note keeps the
+                  stage-to-stage conversion % that was already computed. Bars
+                  descend from the top of funnel, so it reads as a funnel. */}
+              <BarChart
+                items={stages.map((s, i) => ({
+                  label: s.key.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()),
+                  value: s.count,
+                  tone: 'brand',
+                  note: i === 0 ? 'Top of funnel' : `${pct(s.conversionFromPrev)} vs previous`,
+                }))}
+              />
+              <div className="muted" style={{ fontSize: 12, marginTop: '0.4rem' }}>
+                Counts per stage · note shows conversion from the previous step.
+              </div>
             </div>
           </Panel>
 
@@ -205,7 +233,7 @@ export default function AnalyticsPage() {
               <AttrRow
                 icon="billing"
                 label="Ad spend"
-                value={usd(attribution?.spend ?? 0, 2)}
+                value={formatMoney(attribution?.spend ?? 0, { maximumFractionDigits: 2 })}
               />
               <AttrRow
                 icon="leads"
@@ -216,7 +244,7 @@ export default function AnalyticsPage() {
               <AttrRow
                 icon="up-right"
                 label="Attributed revenue"
-                value={usd(attribution?.revenue ?? 0)}
+                value={formatMoney(attribution?.revenue ?? 0)}
                 tone="success"
               />
             </div>
@@ -285,6 +313,22 @@ export default function AnalyticsPage() {
           className="analytics-mt"
           actions={<Chip tone="neutral">{providers.length} platforms</Chip>}
         >
+          {providers.length > 0 ? (
+            <div className="card-pad" style={{ borderBottom: '1px solid var(--color-line)' }}>
+              {/* Spend comparison across platforms — one bar per provider, from
+                  the real spend().byProvider figures. Complements the table below. */}
+              <BarChart
+                items={providers.map(([slug, row]) => ({
+                  label: platformName(slug),
+                  value: row.spend,
+                }))}
+              />
+              <div className="muted" style={{ fontSize: 12, marginTop: '0.4rem' }}>
+                Provider-reported ad spend in ₹ (INR); bar length is each platform&apos;s share of
+                total.
+              </div>
+            </div>
+          ) : null}
           <div className="table-wrap">
             <table className="table">
               <thead>
@@ -307,7 +351,9 @@ export default function AnalyticsPage() {
                     <td className="cell-num tnum">
                       {row.impressions ? pct(row.clicks / row.impressions, 2) : '—'}
                     </td>
-                    <td className="cell-num tnum cell-strong">{usd(row.spend, 2)}</td>
+                    <td className="cell-num tnum cell-strong">
+                      {formatMoney(row.spend, { maximumFractionDigits: 2 })}
+                    </td>
                   </tr>
                 ))}
                 {spend ? (
@@ -322,7 +368,9 @@ export default function AnalyticsPage() {
                         ? pct(spend.totals.clicks / spend.totals.impressions, 2)
                         : '—'}
                     </td>
-                    <td className="cell-num tnum cell-strong">{usd(spend.totals.spend, 2)}</td>
+                    <td className="cell-num tnum cell-strong">
+                      {formatMoney(spend.totals.spend, { maximumFractionDigits: 2 })}
+                    </td>
                   </tr>
                 ) : null}
               </tbody>
@@ -457,7 +505,7 @@ function exportSpendCsv(
 ): void {
   const ctr = (clicks: number, impressions: number) =>
     impressions ? pct(clicks / impressions, 2) : '';
-  const header = ['Platform', 'Impressions', 'Clicks', 'CTR', 'Spend (USD)'];
+  const header = ['Platform', 'Impressions', 'Clicks', 'CTR', 'Spend (INR)'];
   const rows = providers.map(([slug, row]) => [
     platformName(slug),
     row.impressions,

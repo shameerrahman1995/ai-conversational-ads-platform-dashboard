@@ -26,6 +26,11 @@ import {
 } from '@acp/api-client';
 import { AdPreviewModal } from '../creative/_components/AdPreviewModal';
 import { readSpec } from '../creative/_components/spec';
+import {
+  CapabilitiesPreview,
+  RequestPlanDetails,
+  type CreatePlanResult,
+} from './_components/RequestPlan';
 
 /* Platform display metadata — order fixes the account-map layout. */
 const PLATFORM_ORDER = ['google_ads', 'meta', 'tiktok'];
@@ -930,6 +935,11 @@ function NewPlanModal({
   const [platform, setPlatform] = useState('');
   const [accountId, setAccountId] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  // Dry-run preview (destination capabilities) — surfaced before creating a plan.
+  const [dryRun, setDryRun] = useState<Record<string, unknown> | null>(null);
+  const [dryRunning, setDryRunning] = useState(false);
+  // Full server response after a successful create — the "Request plan".
+  const [created, setCreated] = useState<CreatePlanResult | null>(null);
 
   const campaignsState = useAsync(() => client.campaigns.list(), [client]);
   const campaigns = campaignsState.data ?? [];
@@ -950,19 +960,38 @@ function NewPlanModal({
 
   const valid =
     campaignId !== '' && variantId !== '' && platform !== '' && accountId.trim() !== '';
+  // The dry-run only needs a destination — it previews the account, not the creative.
+  const canDryRun = platform !== '' && accountId.trim() !== '';
+
+  /* Preview what the chosen destination supports — a real dry-run/preview call.
+   * Read-only: it never creates or pushes a plan, so it can't block "Create". */
+  async function runDryRun() {
+    if (!canDryRun) return;
+    setDryRunning(true);
+    try {
+      const caps = await client.publishing.capabilities(platform, accountId.trim());
+      setDryRun(caps);
+    } catch (e) {
+      toast.error(errMsg(e, "Couldn't run the dry-run preview"));
+    } finally {
+      setDryRunning(false);
+    }
+  }
 
   async function submit() {
     if (!valid) return;
     setSubmitting(true);
     try {
-      await client.publishing.createPlan({
+      const result = await client.publishing.createPlan({
         campaignId,
         variantId,
         platform,
         accountId: accountId.trim(),
       });
-      toast.success('Publish plan created');
-      onCreated();
+      toast.success('Publish plan created — paused for review');
+      // Keep the modal open to show the returned request plan; the queue
+      // refreshes when the user dismisses via onCreated().
+      setCreated(result);
     } catch (e) {
       toast.error(errMsg(e, "Couldn't create this publish plan"));
     } finally {
@@ -970,16 +999,45 @@ function NewPlanModal({
     }
   }
 
+  // Once the plan exists, every dismissal path must refresh the queue.
+  const dismiss = () => (created ? onCreated() : onClose());
+
+  if (created) {
+    return (
+      <Modal
+        open
+        onClose={onCreated}
+        title="Request plan"
+        width={560}
+        footer={
+          <Button variant="primary" icon="check" onClick={onCreated}>
+            Done
+          </Button>
+        }
+      >
+        <RequestPlanDetails result={created} />
+      </Modal>
+    );
+  }
+
   return (
     <Modal
       open
-      onClose={() => (submitting ? null : onClose())}
+      onClose={() => (submitting ? null : dismiss())}
       title="New publish plan"
       width={520}
       footer={
         <>
           <Button variant="ghost" onClick={onClose} disabled={submitting}>
             Cancel
+          </Button>
+          <Button
+            variant="default"
+            icon="eye"
+            onClick={runDryRun}
+            disabled={!canDryRun || dryRunning || submitting}
+          >
+            {dryRunning ? 'Running…' : 'Dry run'}
           </Button>
           <Button variant="primary" icon="publishing" onClick={submit} disabled={!valid || submitting}>
             {submitting ? 'Creating…' : 'Create publish plan'}
@@ -1051,6 +1109,7 @@ function NewPlanModal({
             onChange={(e) => {
               setPlatform(e.target.value);
               setAccountId(''); // reset — accounts are platform-scoped
+              setDryRun(null); // stale — preview is per destination
             }}
           >
             <option value="">Select a platform</option>
@@ -1071,7 +1130,10 @@ function NewPlanModal({
               id="np-account"
               className="select"
               value={accountId}
-              onChange={(e) => setAccountId(e.target.value)}
+              onChange={(e) => {
+                setAccountId(e.target.value);
+                setDryRun(null);
+              }}
             >
               <option value="">Select a connected account</option>
               {accountOptions.map((c) => (
@@ -1086,7 +1148,10 @@ function NewPlanModal({
               className="input"
               placeholder="e.g. acct_g1"
               value={accountId}
-              onChange={(e) => setAccountId(e.target.value)}
+              onChange={(e) => {
+                setAccountId(e.target.value);
+                setDryRun(null);
+              }}
             />
           )}
           {platform !== '' && !hasAccountOptions ? (
@@ -1100,8 +1165,17 @@ function NewPlanModal({
           ) : null}
         </div>
 
-        <div className="chip chip-info" style={{ alignSelf: 'flex-start' }}>
-          <Icon name="shield" size={12} /> Plans start in review — nothing serves until you approve it
+        {dryRun ? <CapabilitiesPreview caps={dryRun} /> : null}
+
+        <div className="stack" style={{ gap: '0.4rem' }}>
+          <div className="chip chip-info" style={{ alignSelf: 'flex-start' }}>
+            <Icon name="shield" size={12} /> Plans start in review — nothing serves until you approve it
+          </div>
+          <div className="muted" style={{ fontSize: 12 }}>
+            A new plan is created <strong>paused, in review</strong> (READY_FOR_REVIEW). It does not go
+            live until it is approved <em>and</em> executed. Use <strong>Dry run</strong> to preview
+            what the destination supports first — it never creates or publishes anything.
+          </div>
         </div>
       </div>
     </Modal>
