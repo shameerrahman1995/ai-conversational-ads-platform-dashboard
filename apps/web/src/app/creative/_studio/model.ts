@@ -1,4 +1,4 @@
-import type { CreativeBlueprint, CreativeBlock } from '@acp/api-client';
+import type { CreativeBlueprint, CreativeBlock, BlueprintVersion } from '@acp/api-client';
 
 /**
  * The AI Creative Studio's CLIENT-SIDE working model.
@@ -15,9 +15,23 @@ export interface StudioBlock extends CreativeBlock {
   aiFreedom?: AiFreedom;
 }
 
-export interface StudioCreative extends Omit<CreativeBlueprint, 'blocks'> {
+/**
+ * A studio version entry. Extends the persisted `BlueprintVersion` with an
+ * in-session deep snapshot of the working creative so "Restore" can truly swap
+ * that content back locally. `snapshot` is present only on versions saved during
+ * this browser session; the seed / server-loaded version carries none.
+ *
+ * NOTE: there is no server persistence endpoint for the blueprint yet, so these
+ * versions live only in the working session — they are not durable.
+ */
+export interface StudioVersion extends BlueprintVersion {
+  snapshot?: StudioCreative;
+}
+
+export interface StudioCreative extends Omit<CreativeBlueprint, 'blocks' | 'versions'> {
   supportingCopy: string;
   blocks: StudioBlock[];
+  versions: StudioVersion[];
 }
 
 /** The six real journey states, in order. */

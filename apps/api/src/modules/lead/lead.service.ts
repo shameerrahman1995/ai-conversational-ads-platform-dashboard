@@ -6,6 +6,15 @@ import { scopedWhere } from '../../common/tenant/scoped-where';
 import { computeLeadScore, normalizeField, type LeadFields } from './lead-scoring';
 import { encryptField, decryptField } from '../../common/crypto/field-crypto';
 
+const DEFAULT_LEAD_LIMIT = 200;
+const MAX_LEAD_LIMIT = 500;
+
+/** Clamp a caller-supplied page size to a safe server-enforced maximum. */
+function clampLeadLimit(limit?: number): number {
+  if (limit == null || Number.isNaN(limit) || limit <= 0) return DEFAULT_LEAD_LIMIT;
+  return Math.min(Math.floor(limit), MAX_LEAD_LIMIT);
+}
+
 export interface CreateLeadInput {
   conversationId?: string;
   fields: LeadFields;
@@ -82,10 +91,15 @@ export class LeadService {
     return { leadId: lead.id, deduped: false, score };
   }
 
-  async listLeads(orgId: string) {
+  async listLeads(orgId: string, opts: { limit?: number | string; cursor?: string } = {}) {
+    // Server-clamped page size so an unbounded list can never be requested.
+    const take = clampLeadLimit(opts.limit == null ? undefined : Number(opts.limit));
     const leads = await this.prisma.lead.findMany({
       where: scopedWhere(orgId),
       include: { fieldValues: true, consentRecords: true },
+      orderBy: { createdAt: 'desc' },
+      take,
+      ...(opts.cursor ? { cursor: { id: opts.cursor }, skip: 1 } : {}),
     });
     return leads.map((lead) => ({ ...lead, fieldValues: this.decryptFieldValues(lead.fieldValues) }));
   }

@@ -120,4 +120,21 @@ describe('ExperimentsService', () => {
       }),
     );
   });
+
+  // B2 (decision integrity): the caller must approve the ACTUAL analysed winner.
+  // Approving the losing arm (or a non-existent key) must be rejected — otherwise a
+  // forged decision could route budget/traffic to the loser.
+  it('decide rejects a winnerKey that is not the analysed leader (loser cannot win)', async () => {
+    const d = deps({
+      experiment: {
+        id: 'e1',
+        arms: [
+          { key: 'A', exposures: 1000, conversions: 100 }, // 10% (loser)
+          { key: 'B', exposures: 1000, conversions: 220 }, // 22% (real winner)
+        ],
+      },
+    });
+    await expect(make(d).decide('org_1', 'e1', 'A')).rejects.toThrow(/not the analysed winner/i);
+    expect(d.prisma.experiment.update).not.toHaveBeenCalled();
+  });
 });

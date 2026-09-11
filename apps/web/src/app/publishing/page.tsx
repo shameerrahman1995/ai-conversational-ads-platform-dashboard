@@ -805,6 +805,7 @@ export default function PublishingPage() {
         variant={previewVariant}
         agentId={previewAgent?.id}
         agentName={previewAgent?.name}
+        campaignId={previewVariant?.campaignId}
       />
 
       {/* New publish plan */}

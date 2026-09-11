@@ -492,6 +492,10 @@ function QaPanel() {
   ];
   return (
     <div className="qa-list">
+      <div className="spread" style={{ alignItems: 'center', marginBottom: '0.4rem' }}>
+        <span className="muted" style={{ fontSize: 12 }}>Illustrative checks — not computed per creative yet</span>
+        <Chip tone="neutral">Illustrative</Chip>
+      </div>
       {checks.map(([label, status, detail]) => (
         <div key={label}>
           <span className={status === 'Passed' ? 'success' : 'warning'}>

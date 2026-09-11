@@ -221,4 +221,85 @@ describe('PublishService', () => {
     expect(out.policy.findings.some((f: any) => f.code === 'restricted_vertical')).toBe(true);
     expect(d.prisma.publishJob.create).toHaveBeenCalled();
   });
+
+  // B5 (idempotency includes accountId): the same creative on the same platform can
+  // target different ad accounts; each must be its own plan. A key without accountId
+  // would collide and silently return the first account's plan.
+  it('createPlan keys the plan by variant:platform:accountId (per-account isolation)', async () => {
+    const d = deps();
+    await make(d).createPlan('org_1', planInput);
+    expect(d.prisma.publishJob.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ idempotencyKey: 'v1:google_ads:acct' }) }),
+    );
+  });
+
+  // B4 (snapshot required): a plan must pin an immutable campaign version. Without a
+  // snapshot there is nothing to approve — the two-person paper trail (approvePlan
+  // only records an Approval when snapshotId is set) would be silently skipped.
+  it('createPlan refuses a campaign with no generated version snapshot', async () => {
+    const d = deps();
+    d.prisma.campaignVersion.findFirst.mockResolvedValue(null); // never generated
+    await expect(make(d).createPlan('org_1', planInput)).rejects.toThrow(/Generate the campaign/i);
+    expect(d.prisma.publishJob.create).not.toHaveBeenCalled();
+  });
+
+  // B4 (no dead-plan reuse): an ARCHIVED (cancelled) plan for this key can never be
+  // approved. Reusing it would leave the campaign stuck "in review" behind a dead
+  // plan — a fresh plan must be created instead.
+  it('createPlan does not reuse an ARCHIVED plan for the same key (creates fresh)', async () => {
+    const d = deps();
+    d.prisma.publishJob.findUnique.mockResolvedValue({
+      id: 'old',
+      orgId: 'org_1',
+      status: 'ARCHIVED',
+      idempotencyKey: 'v1:google_ads:acct',
+    });
+    await make(d).createPlan('org_1', planInput);
+    expect(d.prisma.publishJob.create).toHaveBeenCalled(); // fresh, not the archived one
+  });
+
+  // B3 (archived campaign cannot go live): approve + execute must both refuse a plan
+  // whose owning campaign is archived (terminal) — no spend on a dead campaign.
+  it('approvePlan refuses a plan whose campaign is archived', async () => {
+    const d = deps(); // default plan is READY_FOR_REVIEW
+    d.prisma.creativeVariant.findFirst.mockResolvedValue({ id: 'v1', campaignId: 'c1' });
+    d.prisma.campaign.findFirst.mockResolvedValue({ id: 'c1', status: 'ARCHIVED' });
+    await expect(make(d).approvePlan('org_1', 'p1', 'publisher_1')).rejects.toThrow(/archived/i);
+    expect(d.prisma.approval.create).not.toHaveBeenCalled();
+  });
+
+  it('executePublish refuses to go live when the campaign is archived', async () => {
+    const d = deps({ plan: approvedPlan });
+    d.prisma.creativeVariant.findFirst.mockResolvedValue({ id: 'v1', campaignId: 'c1' });
+    d.prisma.campaign.findFirst.mockResolvedValue({ id: 'c1', status: 'ARCHIVED' });
+    await expect(make(d).executePublish('org_1', 'p1')).rejects.toThrow(/archived/i);
+    expect(d.prisma.remoteObject.create).not.toHaveBeenCalled();
+  });
+
+  // B1 (pause/resume cannot bypass the go-live gate): only a plan that was actually
+  // published (has a remoteId and is IN_REVIEW/LIVE) can be paused; and a paused
+  // plan that was never published cannot be flipped to LIVE via resume.
+  it('pause refuses an un-published plan (no remoteId) — closes the resume→LIVE bypass', async () => {
+    const d = deps(); // default plan READY_FOR_REVIEW, remoteId null
+    await expect(make(d).pause('org_1', 'p1')).rejects.toThrow(/published/i);
+    expect(d.prisma.publishJob.update).not.toHaveBeenCalled();
+  });
+
+  it('pause succeeds for a LIVE plan with a remote object', async () => {
+    const d = deps({ plan: { id: 'p1', orgId: 'org_1', platform: 'google_ads', status: 'LIVE', remoteId: 'ad1' } });
+    const out: any = await make(d).pause('org_1', 'p1');
+    expect(out.status).toBe('PAUSED');
+  });
+
+  it('resume refuses a paused plan that was never published (no remoteId)', async () => {
+    const d = deps({ plan: { id: 'p1', orgId: 'org_1', platform: 'google_ads', status: 'PAUSED', remoteId: null } });
+    await expect(make(d).resume('org_1', 'p1')).rejects.toThrow(/never published/i);
+    expect(d.prisma.publishJob.update).not.toHaveBeenCalled();
+  });
+
+  it('resume restores a genuinely-published paused plan to LIVE', async () => {
+    const d = deps({ plan: { id: 'p1', orgId: 'org_1', platform: 'google_ads', status: 'PAUSED', remoteId: 'ad1' } });
+    const out: any = await make(d).resume('org_1', 'p1');
+    expect(out.status).toBe('LIVE');
+  });
 });

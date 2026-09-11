@@ -46,8 +46,14 @@ export class PublishingController {
   // Approval separation: a publisher (not the creator) approves the immutable plan.
   @Post('publish-plans/:id/approve')
   @Roles('publisher')
-  approve(@Req() req: { orgId: string; headers: Record<string, string> }, @Param('id') id: string) {
-    const approverId = req.headers['x-user-id'] ?? 'unknown';
+  approve(
+    @Req() req: { orgId: string; user?: { userId?: string }; headers: Record<string, string> },
+    @Param('id') id: string,
+  ) {
+    // Non-repudiation: the recorded approver is the VERIFIED JWT principal, never a
+    // client-supplied header (the header is only a dev-mode fallback, and a
+    // spoofed x-user-id must not be able to forge the two-person approval trail).
+    const approverId = req.user?.userId ?? req.headers['x-user-id'] ?? 'unknown';
     return this.publish.approvePlan(req.orgId, id, approverId);
   }
 

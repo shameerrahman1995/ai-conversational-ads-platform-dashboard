@@ -1,12 +1,14 @@
 import { ApiProperty } from '@nestjs/swagger';
 import {
   Allow,
+  ArrayMaxSize,
   IsArray,
   IsBoolean,
   IsIn,
   IsInt,
   IsOptional,
   IsString,
+  IsUrl,
   Matches,
   MinLength,
   ValidateNested,
@@ -15,6 +17,18 @@ import { Type } from 'class-transformer';
 
 const NETWORKS = ['google_ads', 'meta', 'tiktok', 'microsoft', 'amazon_dsp', 'generic_export'];
 const TEMPLATES = ['standard_banner', 'carousel_html5', 'playable_basic'];
+
+/** Whitelisted adaptive output formats (bounds the image-gen fan-out). */
+const KNOWN_FORMATS = [
+  'image_1_1',
+  'image_4_5',
+  'image_9_16',
+  'image_16_9',
+  'video',
+  'carousel',
+  'html5',
+  'native_form_schema',
+];
 
 const HEX = /^#[0-9a-fA-F]{3,8}$/;
 
@@ -50,6 +64,9 @@ export class GenerateAdaptiveDto {
 
   @ApiProperty({ type: [String], description: 'Formats to produce (e.g. image_1_1, image_9_16)' })
   @IsArray()
+  @ArrayMaxSize(12)
+  @IsString({ each: true })
+  @IsIn(KNOWN_FORMATS, { each: true })
   formats!: string[];
 
   @ApiProperty({ required: false, enum: ['image', 'video', 'audio', 'none'] })
@@ -230,12 +247,12 @@ export class BundleCopyDto {
   askAiLabel?: string;
 
   @ApiProperty({ description: 'Clickthrough / fallback URL' })
-  @IsString()
+  @IsUrl({ require_protocol: true, protocols: ['http', 'https'] })
   finalUrl!: string;
 
   @ApiProperty({ required: false })
   @IsOptional()
-  @IsString()
+  @IsUrl({ require_protocol: true, protocols: ['http', 'https'] })
   privacyUrl?: string;
 }
 

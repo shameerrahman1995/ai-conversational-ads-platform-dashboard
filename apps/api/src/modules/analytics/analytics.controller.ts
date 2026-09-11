@@ -3,7 +3,7 @@ import { ApiHeader, ApiTags } from '@nestjs/swagger';
 import { AnalyticsService } from './analytics.service';
 import { SpendService } from './spend.service';
 import { AttributionService } from './attribution.service';
-import { ImportSpendDto, TrackEventDto } from './dto';
+import { AttributionQueryDto, ImportSpendDto, SpendQueryDto, TrackEventDto } from './dto';
 import { TenantGuard } from '../../common/tenant/tenant.guard';
 import { RolesGuard } from '../../common/rbac/roles.guard';
 import { Roles } from '../../common/rbac/roles.decorator';
@@ -45,22 +45,17 @@ export class AnalyticsController {
 
   @Get('analytics/spend')
   @Roles('analyst')
-  getSpend(
-    @Req() req: { orgId: string },
-    @Query('provider') provider?: string,
-    @Query('since') since?: string,
-    @Query('until') until?: string,
-  ) {
-    return this.spend.getSpend(req.orgId, { provider, since, until });
+  getSpend(@Req() req: { orgId: string }, @Query() query: SpendQueryDto) {
+    return this.spend.getSpend(req.orgId, {
+      provider: query.provider,
+      since: query.since,
+      until: query.until,
+    });
   }
 
   @Get('analytics/attribution')
   @Roles('analyst')
-  attributionReport(
-    @Req() req: { orgId: string },
-    @Query('since') since?: string,
-    @Query('until') until?: string,
-  ) {
-    return this.attribution.report(req.orgId, { since, until });
+  attributionReport(@Req() req: { orgId: string }, @Query() query: AttributionQueryDto) {
+    return this.attribution.report(req.orgId, { since: query.since, until: query.until });
   }
 }

@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Param, Post, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Post, Query, Req, UseGuards } from '@nestjs/common';
 import { ApiHeader, ApiTags } from '@nestjs/swagger';
 import { LeadService } from './lead.service';
 import { AssignDto, CreateLeadDto, MergeDto, StatusDto } from './dto';
@@ -22,8 +22,12 @@ export class LeadController {
 
   @Get()
   @Roles('analyst')
-  list(@Req() req: { orgId: string }) {
-    return this.leads.listLeads(req.orgId);
+  list(
+    @Req() req: { orgId: string },
+    @Query('limit') limit?: string,
+    @Query('cursor') cursor?: string,
+  ) {
+    return this.leads.listLeads(req.orgId, { limit, cursor });
   }
 
   @Get(':id')

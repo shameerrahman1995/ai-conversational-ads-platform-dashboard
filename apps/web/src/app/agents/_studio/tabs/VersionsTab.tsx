@@ -67,9 +67,8 @@ export function VersionsTab({ agent, settings, notify }: TabProps) {
                   ) : (
                     <Button
                       size="sm"
-                      onClick={() =>
-                        notify('Version restored', `Version ${v.version} is now the working draft.`, 'success')
-                      }
+                      disabled
+                      title="Restore isn't wired yet — it will arrive with the versions API"
                     >
                       Restore
                     </Button>
@@ -108,7 +107,8 @@ export function VersionsTab({ agent, settings, notify }: TabProps) {
           <strong style={{ fontSize: 13 }}>Campaigns stay pinned</strong>
           <div className="muted" style={{ fontSize: 12.5 }}>
             Existing campaigns remain pinned to their current version until an authorised user updates the campaign
-            and completes review.
+            and completes review. Restoring a previous version isn&apos;t available yet — it will arrive with the
+            versions API.
           </div>
         </div>
       </div>

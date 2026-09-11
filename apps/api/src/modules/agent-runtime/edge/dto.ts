@@ -8,8 +8,42 @@ import {
   IsOptional,
   IsString,
   MaxLength,
+  Validate,
   ValidateNested,
+  ValidatorConstraint,
+  type ValidatorConstraintInterface,
 } from 'class-validator';
+
+/** Hard caps for the public, dynamically-keyed lead `fields` record. */
+const MAX_LEAD_FIELD_KEYS = 30;
+const MAX_LEAD_FIELD_KEY_LENGTH = 64;
+const MAX_LEAD_FIELD_VALUE_LENGTH = 1024;
+
+/**
+ * Bounds an untrusted `Record<string, string>` submitted from a public creative:
+ * the keys are dynamic (per-agent qualification) so they can't be rigidly typed,
+ * but the record must stay small — at most 30 keys, each key <= 64 chars, and
+ * each value a string <= 1024 chars — to stop lead-field abuse / payload bloat.
+ * Object-ness / presence is enforced by @IsObject on the property itself.
+ */
+@ValidatorConstraint({ name: 'boundedStringRecord', async: false })
+class BoundedStringRecordConstraint implements ValidatorConstraintInterface {
+  validate(value: unknown): boolean {
+    if (value === undefined || value === null) return true; // @IsObject handles presence
+    if (typeof value !== 'object' || Array.isArray(value)) return false;
+    const entries = Object.entries(value as Record<string, unknown>);
+    if (entries.length > MAX_LEAD_FIELD_KEYS) return false;
+    for (const [key, val] of entries) {
+      if (key.length > MAX_LEAD_FIELD_KEY_LENGTH) return false;
+      if (typeof val !== 'string' || val.length > MAX_LEAD_FIELD_VALUE_LENGTH) return false;
+    }
+    return true;
+  }
+
+  defaultMessage(): string {
+    return `fields must be an object of at most ${MAX_LEAD_FIELD_KEYS} keys (each key <= ${MAX_LEAD_FIELD_KEY_LENGTH} chars, each value a string <= ${MAX_LEAD_FIELD_VALUE_LENGTH} chars)`;
+  }
+}
 
 /** Body for `POST /v1/ad-sessions`. */
 export class CreateAdSessionDto {
@@ -77,6 +111,7 @@ export class AdSessionMessageDto {
 export class SubmitLeadDto {
   @ApiProperty({ description: 'Captured lead fields (email/phone/fullName/company)' })
   @IsObject()
+  @Validate(BoundedStringRecordConstraint)
   fields!: Record<string, string>;
 
   @ApiProperty({ description: 'Explicit consent — REQUIRED to be true' })

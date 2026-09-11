@@ -146,6 +146,14 @@ export class ExperimentsService {
     if (!analysis.winner) {
       throw new BadRequestException('No statistically significant winner yet');
     }
+    // The caller must approve the ACTUAL winner — not the losing arm or a
+    // non-existent key. Otherwise a downstream consumer could route budget/traffic
+    // to the loser based on a forged decision.
+    if (winnerKey !== analysis.leaderKey) {
+      throw new BadRequestException(
+        `winnerKey "${winnerKey}" is not the analysed winner ("${analysis.leaderKey}").`,
+      );
+    }
 
     const updated = await this.prisma.experiment.update({
       where: { id: experiment.id, orgId },

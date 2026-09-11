@@ -7,7 +7,7 @@ import { useAsync } from '@/lib/useAsync';
 import { Button, Chip, StatusChip } from '@/components/ui';
 import { Modal, useToast } from '@/components/feedback';
 import { Icon } from '@/components/Icon';
-import { SEED_CREATIVE, cx, downloadJson, uid, type StudioCreative } from './_studio/model';
+import { SEED_CREATIVE, cloneData, cx, downloadJson, uid, type StudioCreative, type StudioVersion } from './_studio/model';
 import type { Notify, StageId, StageProps } from './_studio/stages/types';
 import { BriefStage } from './_studio/stages/BriefStage';
 import { DirectionsStage } from './_studio/stages/DirectionsStage';
@@ -68,17 +68,29 @@ export default function CreativeStudioPage() {
     if (saving) return;
     setSaving(true);
     window.setTimeout(() => {
-      const version = {
+      // Capture a real deep snapshot of the working creative so this version can
+      // be truly restored later (Restore swaps it back into `creative`). The
+      // snapshot omits its own version history to avoid nesting past snapshots.
+      // NOTE: kept in this browser session only — there is no server persistence
+      // endpoint for the blueprint yet, so nothing here is saved to the backend.
+      const snapshot = cloneData(creative);
+      snapshot.versions = [];
+      const version: StudioVersion = {
         id: uid('v'),
         label: `Version ${creative.versions.length + 1}`,
         createdAt: new Date().toISOString(),
         actor: 'You',
-        note: 'Saved from the AI Creative Studio working draft',
+        note: 'Working draft snapshot (kept in this session)',
+        snapshot,
       };
       setCreativeState((c) => ({ ...c, versions: [version, ...c.versions] }));
       setDirty(false);
       setSaving(false);
-      notify('Creative version saved', `${creative.name} now has ${version.label}.`, 'success');
+      notify(
+        'Saved a working version',
+        `${version.label} is kept in this session — not yet persisted to the server.`,
+        'success',
+      );
     }, 500);
   }
 
@@ -129,6 +141,10 @@ export default function CreativeStudioPage() {
                 Saved
               </span>
             )}
+          </div>
+          <div className="muted row" style={{ gap: '0.35rem', fontSize: 11.5, marginTop: '0.35rem' }}>
+            <Icon name="doc" size={12} />
+            Working draft — versions are kept in this browser session; server persistence isn&apos;t wired yet.
           </div>
         </div>
         <div className="creative-topbar-actions">
@@ -197,6 +213,26 @@ export default function CreativeStudioPage() {
         }
       >
         <div className="stack" style={{ gap: '0.6rem' }}>
+          <div
+            className="row"
+            style={{
+              gap: '0.5rem',
+              alignItems: 'flex-start',
+              padding: '0.6rem 0.7rem',
+              border: '1px solid var(--color-line)',
+              borderRadius: 'var(--radius-control)',
+              background: 'var(--color-info-soft)',
+              fontSize: 12.5,
+            }}
+          >
+            <span style={{ color: 'var(--color-info)', flex: 'none' }}>
+              <Icon name="doc" size={15} />
+            </span>
+            <span className="muted">
+              Working draft — versions are captured in this browser session and can be restored here. Server
+              persistence isn&apos;t wired yet, so they aren&apos;t saved to the backend.
+            </span>
+          </div>
           {creative.versions.map((v, i) => (
             <div key={v.id} className="row" style={{ gap: '0.75rem', alignItems: 'flex-start' }}>
               <Chip tone={i === 0 ? 'brand' : 'neutral'}>{i === 0 ? 'Current' : `v${creative.versions.length - i}`}</Chip>
@@ -210,9 +246,23 @@ export default function CreativeStudioPage() {
               <Button
                 size="sm"
                 variant="ghost"
+                disabled={i === 0 || !v.snapshot}
+                title={
+                  i === 0
+                    ? 'This is the current working draft'
+                    : v.snapshot
+                      ? undefined
+                      : 'No working snapshot was captured for this version'
+                }
                 onClick={() => {
+                  if (i === 0 || !v.snapshot) return;
+                  const restored = v.snapshot;
                   setHistoryOpen(false);
-                  notify('Version restored', `${v.label} is now the working draft.`, 'success');
+                  // Real local restore: swap the captured snapshot back into the
+                  // working creative, keeping the existing version history intact.
+                  setCreativeState((cur) => ({ ...restored, versions: cur.versions }));
+                  setDirty(true);
+                  notify('Restored working version', `Restored to ${v.label} in this working session.`, 'success');
                 }}
               >
                 Restore

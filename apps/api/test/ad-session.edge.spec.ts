@@ -48,7 +48,7 @@ function deps(overrides: { agent?: unknown; variant?: unknown } = {}) {
         .mockResolvedValue(
           'agent' in overrides
             ? overrides.agent
-            : { id: 'ag_1', orgId: 'org_1', campaignId: 'camp_1', settings: { voice: { enabled: false } } },
+            : { id: 'ag_1', orgId: 'org_1', campaignId: 'camp_1', status: 'live', settings: { voice: { enabled: false } } },
         ),
     },
     event: { createMany: vi.fn().mockResolvedValue({ count: 1 }) },
@@ -134,6 +134,7 @@ describe('AdSessionService (edge)', () => {
   it('action allow-lists tools and stubs unwired ones; rejects arbitrary tools', async () => {
     const d = deps();
     const svc = make(d);
+    await svc.createSession(CLAIMS, { creativeId: 'cr_1' }); // own the session first
     const ok = await svc.action(CLAIMS, 'sess_1', { type: 'availability' });
     expect(ok.ok).toBe(true);
     expect(ok.result.stub).toBe(true);
@@ -172,6 +173,7 @@ describe('AdSessionService (edge)', () => {
   it('ingestEvents delegates to the dedupe-safe event writer and warms the session', async () => {
     const d = deps();
     const svc = make(d);
+    await svc.createSession(CLAIMS, { creativeId: 'cr_1' }); // own the session first
     const out = await svc.ingestEvents(CLAIMS, 'sess_1', {
       events: [{ type: 'ad.click', dedupeKey: 'k1' }],
     });
@@ -180,6 +182,38 @@ describe('AdSessionService (edge)', () => {
       { type: 'ad.click', dedupeKey: 'k1', payload: undefined },
     ]);
     expect(out).toEqual({ accepted: 1 });
+  });
+
+  // A3 (cross-tenant guard): a valid token for one org must not be able to touch or
+  // inject events into a session that belongs to a different org. loadOwnedSession
+  // returns null on org mismatch, so both handlers 404 and never write.
+  it('ingestEvents 404s and writes nothing for a session owned by another org', async () => {
+    const d = deps();
+    const svc = make(d);
+    // Seed a session owned by a DIFFERENT org directly in the store.
+    await d.store.create({ id: 'sess_other', orgId: 'org_evil', creativeId: 'cr_1' } as any);
+    await expect(
+      svc.ingestEvents(CLAIMS, 'sess_other', { events: [{ type: 'ad.click', dedupeKey: 'k1' }] }),
+    ).rejects.toThrow(/not found|expired/i);
+    expect(d.events.ingest).not.toHaveBeenCalled();
+    expect(d.store.touch).not.toHaveBeenCalled();
+  });
+
+  it('action 404s for a session owned by another org (no tool dispatch, no event)', async () => {
+    const d = deps();
+    const svc = make(d);
+    await d.store.create({ id: 'sess_other', orgId: 'org_evil', creativeId: 'cr_1' } as any);
+    await expect(svc.action(CLAIMS, 'sess_other', { type: 'availability' })).rejects.toThrow(/not found|expired/i);
+    expect(d.events.emit).not.toHaveBeenCalled();
+    expect(d.store.touch).not.toHaveBeenCalled();
+  });
+
+  // A2 (public edge live-gate): a draft/unreviewed agent must not be reachable from
+  // the pre-token public bootstrap — the RBAC publish gate is meaningless otherwise.
+  it('bootstrap 404s when the creative has no live (published) agent', async () => {
+    const d = deps({ agent: { id: 'ag_1', orgId: 'org_1', campaignId: 'camp_1', status: 'draft', settings: {} } });
+    const svc = make(d);
+    await expect(svc.bootstrap('cr_1')).rejects.toThrow(/not live|not found/i);
   });
 });
 

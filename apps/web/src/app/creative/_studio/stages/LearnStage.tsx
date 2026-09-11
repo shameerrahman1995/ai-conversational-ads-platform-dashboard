@@ -64,6 +64,11 @@ export function LearnStage({ notify }: StageProps) {
         </Button>
       </div>
 
+      <div className="spread" style={{ alignItems: 'center', marginBottom: '0.5rem' }}>
+        <span className="muted" style={{ fontSize: 12.5 }}>Performance snapshot · selected creative family (last period)</span>
+        <Chip tone="neutral">Illustrative</Chip>
+      </div>
+
       <div className="learn-metrics">
         <MetricCard label="Impressions" value="2.54M" icon="eye" delta={{ dir: 'up', value: '12.1%' }} footNote="selected creative family" />
         <MetricCard label="AI conversations" value="7,132" icon="message" delta={{ dir: 'up', value: '14.7%' }} footNote="2.8% conversation rate" />

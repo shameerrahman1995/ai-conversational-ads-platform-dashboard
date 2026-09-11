@@ -127,7 +127,13 @@ export class AdSessionService {
 
   // ---- POST /v1/ad-sessions/:id/events ----
   async ingestEvents(claims: CreativeTokenClaims, sessionId: string, dto: IngestEventsDto): Promise<{ accepted: number }> {
-    await this.store.touch(sessionId); // keep an active session warm
+    // Cross-tenant guard: the session must belong to the token's org (like every
+    // other session handler). Without this, a caller holding a valid token for
+    // their own creative could keep another org's session alive and inject Events
+    // referencing that foreign session id.
+    const owned = await this.loadOwnedSession(claims, sessionId);
+    if (!owned) throw new NotFoundException('Ad session not found or expired');
+    await this.store.touch(sessionId); // keep the (owned) session warm
     return this.events.ingest(
       claims.orgId,
       sessionId,
@@ -238,6 +244,9 @@ export class AdSessionService {
     if (!ALLOWED_ACTIONS.has(dto.type)) {
       throw new BadRequestException(`Unsupported action: ${dto.type}`);
     }
+    // Cross-tenant guard — only act on a session owned by the token's org.
+    const owned = await this.loadOwnedSession(claims, sessionId);
+    if (!owned) throw new NotFoundException('Ad session not found or expired');
     await this.store.touch(sessionId);
     const result = this.stubToolResult(dto.type);
     await this.events.emit(claims.orgId, sessionId, {
@@ -305,7 +314,13 @@ export class AdSessionService {
     const agent = await this.prisma.agentConfig.findFirst({
       where: scopedWhere(orgId, { campaignId: variant.campaignId }),
     });
-    const settings = agent ? normalizeSettings(agent.settings) : DEFAULT_AGENT_SETTINGS;
+    // Only a PUBLISHED agent may talk to real visitors. A draft/unreviewed agent
+    // (the publisher-gated publish step never ran) must not be reachable from the
+    // public edge — the RBAC publish gate is meaningless otherwise.
+    if (!agent || agent.status !== 'live') {
+      throw new NotFoundException('This creative is not live');
+    }
+    const settings = normalizeSettings(agent.settings);
     const env = loadEnv();
 
     const features: CreativeFeatures = {

@@ -79,12 +79,27 @@ describe('LeadService', () => {
     expect(lead.fieldValues[0].value).toBe('a@b.com');
   });
 
-  it('listLeads is org-scoped with relations', async () => {
+  it('listLeads is org-scoped with relations and a clamped default page size', async () => {
     const d = deps();
     await make(d).listLeads('org_1');
     expect(d.prisma.lead.findMany).toHaveBeenCalledWith({
       where: { orgId: 'org_1' },
       include: { fieldValues: true, consentRecords: true },
+      orderBy: { createdAt: 'desc' },
+      take: 200,
+    });
+  });
+
+  it('listLeads clamps an over-large limit and paginates by cursor', async () => {
+    const d = deps();
+    await make(d).listLeads('org_1', { limit: 100000, cursor: 'l9' });
+    expect(d.prisma.lead.findMany).toHaveBeenCalledWith({
+      where: { orgId: 'org_1' },
+      include: { fieldValues: true, consentRecords: true },
+      orderBy: { createdAt: 'desc' },
+      take: 500,
+      cursor: { id: 'l9' },
+      skip: 1,
     });
   });
 

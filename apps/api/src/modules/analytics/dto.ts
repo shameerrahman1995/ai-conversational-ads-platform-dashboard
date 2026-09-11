@@ -1,5 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { Allow, IsIn, IsOptional, IsString } from 'class-validator';
+import { Allow, IsDateString, IsIn, IsOptional, IsString } from 'class-validator';
 
 export class TrackEventDto {
   @ApiProperty({ example: 'ad.click' })
@@ -22,10 +22,41 @@ export class ImportSpendDto {
   accountId!: string;
 
   @ApiProperty({ example: '2026-09-01' })
-  @IsString()
+  @IsDateString()
   since!: string;
 
   @ApiProperty({ example: '2026-09-30' })
-  @IsString()
+  @IsDateString()
   until!: string;
+}
+
+/** Query for `GET /v1/analytics/spend` — bad dates now 400 instead of 500. */
+export class SpendQueryDto {
+  @ApiProperty({ required: false, enum: ['google_ads', 'meta', 'generic_export'] })
+  @IsOptional()
+  @IsString()
+  provider?: string;
+
+  @ApiProperty({ required: false, example: '2026-09-01' })
+  @IsOptional()
+  @IsDateString()
+  since?: string;
+
+  @ApiProperty({ required: false, example: '2026-09-30' })
+  @IsOptional()
+  @IsDateString()
+  until?: string;
+}
+
+/** Query for `GET /v1/analytics/attribution` — bad dates now 400 instead of 500. */
+export class AttributionQueryDto {
+  @ApiProperty({ required: false, example: '2026-09-01' })
+  @IsOptional()
+  @IsDateString()
+  since?: string;
+
+  @ApiProperty({ required: false, example: '2026-09-30' })
+  @IsOptional()
+  @IsDateString()
+  until?: string;
 }

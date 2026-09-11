@@ -3,9 +3,13 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { scopedWhere } from '../../common/tenant/scoped-where';
 import { encryptField } from '../../common/crypto/field-crypto';
 import { KnowledgeService } from '../knowledge/knowledge.service';
+import { BudgetService } from '../cost/budget.service';
 import { MODEL_GATEWAY, type ModelGatewayPort } from './model-gateway.port';
 import { FALLBACK_REPLY, SYSTEM_POLICY, isDisallowedTopic, redactPII, wrapUntrusted } from './guardrails';
 import { normalizeSettings } from './models';
+
+/** Nominal $/1K-token estimate used for budget accounting on the hot path. */
+const COST_PER_1K_TOKENS_USD = 0.002;
 
 export interface AgentReply {
   reply: string;
@@ -30,6 +34,7 @@ export class AgentRuntimeService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly knowledge: KnowledgeService,
+    private readonly budget: BudgetService,
     @Inject(MODEL_GATEWAY) private readonly gateway: ModelGatewayPort,
   ) {}
 
@@ -69,6 +74,19 @@ export class AgentRuntimeService {
       return this.respond(orgId, conversationId, FALLBACK_REPLY, { grounded: false, citations: [], fallback: true, disclosure });
     }
 
+    // Budget enforcement: a paid model call must not run once the org is over its
+    // monthly cap. Degrade to the approved fallback instead of spending (previously
+    // the cap was never consulted on the hot path — spend was unbounded).
+    const status = await this.budget.getStatus(orgId);
+    if (status.overBudget) {
+      return this.respond(orgId, conversationId, FALLBACK_REPLY, {
+        grounded: false,
+        citations: [],
+        fallback: true,
+        disclosure,
+      });
+    }
+
     const chunks = await this.knowledge.retrieve(orgId, userText, 4);
     const context = chunks.map((c) => c.content).join('\n');
     const citations = [...new Set(chunks.map((c) => c.sourceDocId))];
@@ -84,6 +102,16 @@ export class AgentRuntimeService {
         // hot path). The gateway strips any param the chosen model does not support.
         { model: settings.model, maxTokens: settings.maxTokens, temperature: settings.temperature },
       );
+      // Record usage so the cap is actually tracked. Token/cost are estimated from
+      // text length (the gateway does not surface usage); the enforcement above is
+      // the real control.
+      const estTokens = Math.ceil((userText.length + text.length) / 4);
+      await this.budget.recordUsage(orgId, {
+        sessionId: conversationId,
+        kind: 'agent_message',
+        units: estTokens,
+        cost: (estTokens / 1000) * COST_PER_1K_TOKENS_USD,
+      });
       return this.respond(orgId, conversationId, redactPII(text), {
         grounded: chunks.length > 0,
         citations,

@@ -15,8 +15,12 @@ export class FactsController {
 
   @Post(':id/approve')
   @Roles('reviewer')
-  approve(@Req() req: { orgId: string; headers: Record<string, string> }, @Param('id') id: string) {
-    const approverId = req.headers['x-user-id'] ?? 'unknown';
+  approve(
+    @Req() req: { orgId: string; user?: { userId?: string }; headers: Record<string, string> },
+    @Param('id') id: string,
+  ) {
+    // Record the VERIFIED JWT principal as the approver, not a spoofable header.
+    const approverId = req.user?.userId ?? req.headers['x-user-id'] ?? 'unknown';
     return this.ingestion.approveFact(req.orgId, id, approverId);
   }
 

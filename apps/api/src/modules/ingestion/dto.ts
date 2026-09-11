@@ -1,5 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsIn, IsOptional, IsString } from 'class-validator';
+import { IsIn, IsOptional, IsString, IsUrl } from 'class-validator';
 
 export class RegisterSourceDto {
   @ApiProperty({ enum: ['url', 'pdf', 'feed'] })
@@ -8,7 +8,7 @@ export class RegisterSourceDto {
 
   @ApiProperty({ required: false, description: 'Required for type=url' })
   @IsOptional()
-  @IsString()
+  @IsUrl({ require_protocol: true, protocols: ['http', 'https'] })
   uri?: string;
 
   @ApiProperty({ required: false, description: 'Original filename for uploaded files' })

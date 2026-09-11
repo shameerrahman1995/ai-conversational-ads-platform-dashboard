@@ -133,7 +133,15 @@ export function VariantsStage({ creative, patch, notify }: StageProps) {
               <p>{v.mode}</p>
               <small>{v.note}</small>
               <div className="variant-score">
-                <span>Readiness</span>
+                <span>
+                  Readiness{' '}
+                  <span
+                    className="muted"
+                    style={{ fontSize: 10, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}
+                  >
+                    · Illustrative
+                  </span>
+                </span>
                 <strong>{v.score}%</strong>
               </div>
               <Meter pct={v.score} />
@@ -215,7 +223,7 @@ export function VariantsStage({ creative, patch, notify }: StageProps) {
             </div>
             <div className="policy-grid">
               <KeyValue label="Runtime mode" value={openVariant.mode} />
-              <KeyValue label="Readiness" value={`${openVariant.score}%`} />
+              <KeyValue label="Readiness" value={`${openVariant.score}%`} note="Illustrative — not computed per creative yet" />
               <KeyValue label="Creative" value={creative.name} />
               <KeyValue label="Protection" value="Brand, product and legal locks inherited" />
             </div>

@@ -76,7 +76,11 @@ export function ReviewStage({ creative, patch, notify }: StageProps) {
       <div className="review-layout">
         {/* LEFT — quality, compliance and comments */}
         <Card className="card-pad">
-          <CardHead title="Quality and compliance" subtitle={`Working draft · QA ${creative.qaScore}%`} />
+          <CardHead
+            title="Quality and compliance"
+            subtitle={`Working draft · QA ${creative.qaScore}%`}
+            actions={<Chip tone="neutral">Illustrative</Chip>}
+          />
           <div className="review-checks">
             {CHECKS.map(([label, pct, status]) => {
               const passed = status === 'Passed';
@@ -204,7 +208,11 @@ export function ReviewStage({ creative, patch, notify }: StageProps) {
               style={{ width: '100%', justifyContent: 'center', marginTop: '0.9rem' }}
               onClick={() => {
                 patch({ status: 'Ready' });
-                notify('Creative approved', 'The immutable version is ready for campaign handoff.', 'success');
+                notify(
+                  'Working draft marked Ready',
+                  'The working draft is marked ready for handoff in this session — it is not published to the server yet.',
+                  'success',
+                );
               }}
             >
               Approve and hand off

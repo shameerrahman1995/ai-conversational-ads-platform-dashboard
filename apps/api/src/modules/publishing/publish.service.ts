@@ -70,7 +70,10 @@ export class PublishService {
     }
 
     const connector = this.registry.get(input.platform);
-    const idempotencyKey = `${input.variantId}:${input.platform}`;
+    // Key includes accountId — the same creative on the same platform can target
+    // different ad accounts, and each is a distinct plan (a key without accountId
+    // would silently return the first account's plan for a second account).
+    const idempotencyKey = `${input.variantId}:${input.platform}:${input.accountId}`;
     const validation = await connector.validate({
       accountId: input.accountId,
       campaignSpec: variant.spec,
@@ -102,15 +105,28 @@ export class PublishService {
       orderBy: { version: 'desc' },
     });
     const snapshotId = version?.id ?? null;
+    // A plan must pin an immutable campaign version — without it there is nothing
+    // to approve (approvePlan only records an Approval when snapshotId is set), so
+    // a snapshot-less plan would silently skip the two-person paper trail. Requiring
+    // it also blocks publishing a DRAFT campaign that was never generated.
+    if (!snapshotId) {
+      throw new BadRequestException('Generate the campaign before creating a publish plan.');
+    }
 
-    const existing = await db.publishJob.findUnique({
+    // Don't reuse a cancelled (ARCHIVED) plan for this key — it can never be
+    // approved, and returning it would leave the campaign stuck "in review" with a
+    // dead plan. A fresh plan is created instead.
+    const found = await db.publishJob.findUnique({
       where: {
         orgId_platform_idempotencyKey: { orgId, platform: input.platform, idempotencyKey },
       },
     });
+    const existing = found && found.status !== 'ARCHIVED' ? found : null;
 
     // Create the plan and advance the campaign into review as one unit so a plan
-    // can never exist without its campaign reflecting the review state.
+    // can never exist without its campaign reflecting the review state. Only the
+    // legal FSM source (GENERATED → READY_FOR_REVIEW) advances; a campaign already
+    // in a review/approved state is left untouched.
     const writes = async (t: Prisma.TransactionClient) => {
       const plan =
         existing ??
@@ -127,7 +143,7 @@ export class PublishService {
         }));
       await t.campaign
         .updateMany({
-          where: { id: input.campaignId, orgId, status: { in: ['DRAFT', 'GENERATED', 'VALIDATION_FAILED'] } },
+          where: { id: input.campaignId, orgId, status: 'GENERATED' },
           data: { status: 'READY_FOR_REVIEW' },
         })
         .catch(() => undefined);
@@ -151,10 +167,28 @@ export class PublishService {
     return { plan, validation, capabilities, snapshotId, policy, capabilityCheck };
   }
 
+  /** Reject going live on behalf of a campaign that is archived (terminal). */
+  private async assertCampaignNotArchived(orgId: string, variantId: string) {
+    const variant = await this.prisma.creativeVariant.findFirst({
+      where: scopedWhere(orgId, { id: variantId }),
+    });
+    if (!variant) return;
+    const campaign = await this.prisma.campaign.findFirst({
+      where: scopedWhere(orgId, { id: variant.campaignId }),
+    });
+    if (campaign?.status === 'ARCHIVED') {
+      throw new BadRequestException('This campaign is archived — its plans cannot be approved or published.');
+    }
+  }
+
   async approvePlan(orgId: string, planId: string, approverId: string) {
     const plan = await this.requirePlan(orgId, planId);
     if (!['READY_FOR_REVIEW', 'REJECTED'].includes(plan.status)) {
       throw new BadRequestException(`Plan is not awaiting approval (status ${plan.status})`);
+    }
+    await this.assertCampaignNotArchived(orgId, plan.variantId);
+    if (!plan.snapshotId) {
+      throw new BadRequestException('This plan has no campaign version snapshot and cannot be approved.');
     }
     const updated = await this.prisma.publishJob.update({
       where: { id: planId, orgId },
@@ -197,6 +231,13 @@ export class PublishService {
       where: scopedWhere(orgId, { id: plan.variantId }),
     });
     if (!variant) throw new NotFoundException('Variant not found');
+    // An archived campaign must not resume spending on a live platform.
+    const campaign = await this.prisma.campaign.findFirst({
+      where: scopedWhere(orgId, { id: variant.campaignId }),
+    });
+    if (campaign?.status === 'ARCHIVED') {
+      throw new BadRequestException('This campaign is archived — its plans cannot go live.');
+    }
     const connector = this.registry.get(plan.platform);
 
     await this.prisma.publishJob.update({ where: { id: planId, orgId }, data: { status: 'PUBLISHING' } });
@@ -341,9 +382,14 @@ export class PublishService {
 
   async pause(orgId: string, planId: string) {
     const plan = await this.requirePlan(orgId, planId);
-    if (plan.remoteId) {
-      await this.registry.get(plan.platform).pause({ remoteId: plan.remoteId, secretRef: '' });
+    // Only a plan that has actually been published (approved → executed, so it has
+    // a remoteId and is IN_REVIEW/LIVE) can be paused. Without this guard, an
+    // un-approved plan could be paused then resumed straight to LIVE — bypassing
+    // the two-person go-live control entirely.
+    if (!plan.remoteId || !['IN_REVIEW', 'LIVE'].includes(plan.status)) {
+      throw new BadRequestException('Only a published (in-review or live) plan can be paused.');
     }
+    await this.registry.get(plan.platform).pause({ remoteId: plan.remoteId, secretRef: '' });
     const updated = await this.prisma.publishJob.update({
       where: { id: planId, orgId },
       data: { status: 'PAUSED' },
@@ -357,6 +403,11 @@ export class PublishService {
     const plan = await this.requirePlan(orgId, planId);
     if (plan.status !== 'PAUSED') {
       throw new BadRequestException(`Only a paused plan can be resumed (status ${plan.status}).`);
+    }
+    // A paused plan that was never published (no remoteId) must not be flipped to
+    // LIVE — it would never have gone through approval/execution.
+    if (!plan.remoteId) {
+      throw new BadRequestException('This plan was never published and cannot be resumed.');
     }
     // Stub connectors have no resume; a live adapter would re-enable the remote ad here.
     if (plan.remoteId) {

@@ -15,6 +15,7 @@ import { VoiceSessionService } from './voice/voice-session.service';
 import { SPEECH_TO_TEXT, TEXT_TO_SPEECH } from './voice/speech.port';
 import { StubSpeechToText, StubTextToSpeech } from './voice/stub-speech';
 import { LeadModule } from '../lead/lead.module';
+import { CostModule } from '../cost/cost.module';
 import { AdSessionController } from './edge/ad-session.controller';
 import { CreativeBootstrapController } from './edge/creative-bootstrap.controller';
 import { AdSessionService } from './edge/ad-session.service';
@@ -44,7 +45,7 @@ const adSessionRedisProvider = {
 // The visitor-facing ad-session edge API (blueprint §4/§5) is registered here so
 // it reuses AgentRuntimeService additively; LeadModule provides LeadService.
 @Module({
-  imports: [LeadModule],
+  imports: [LeadModule, CostModule],
   controllers: [AgentController, AgentSessionController, AdSessionController, CreativeBootstrapController],
   providers: [
     AgentRuntimeService,

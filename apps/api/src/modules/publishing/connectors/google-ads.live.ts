@@ -1,4 +1,4 @@
-import { Logger } from '@nestjs/common';
+import { BadRequestException, Logger } from '@nestjs/common';
 import { loadEnv } from '@acp/config';
 
 /**
@@ -82,7 +82,9 @@ export function assertNumericId(value: string | undefined | null, label = 'id'):
 /** GAQL date literals must be strict YYYY-MM-DD (no injection surface). */
 function assertGaqlDate(value: string, label: string): string {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
-    throw new Error(`Google Ads: invalid ${label} date "${value}" (expected YYYY-MM-DD)`);
+    throw new BadRequestException(
+      `Google Ads: invalid ${label} date "${value}" (expected YYYY-MM-DD)`,
+    );
   }
   return value;
 }
