@@ -526,7 +526,11 @@ export default function AdminPage() {
       ) : null}
 
       {manageMember ? (
-        <ManageMemberModal member={manageMember} onClose={() => setManageMember(null)} />
+        <ManageMemberModal
+          member={manageMember}
+          onClose={() => setManageMember(null)}
+          onSaved={refetch}
+        />
       ) : null}
     </div>
   );
@@ -796,19 +800,68 @@ function BudgetModal({
 }
 
 /* ------------------------------------------------------------------ */
-/* Manage member (details; role changes have no endpoint yet)          */
+/* Manage member (details + admin-only role change)                    */
 /* ------------------------------------------------------------------ */
 
-function ManageMemberModal({ member, onClose }: { member: OrgUser; onClose: () => void }) {
+function ManageMemberModal({
+  member,
+  onClose,
+  onSaved,
+}: {
+  member: OrgUser;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const client = useApiClient();
+  const toast = useToast();
+  const { role: viewerRole } = useOrg();
+  const isAdmin = viewerRole === 'admin';
+
+  const [role, setRole] = useState<string>(member.role);
+  const [busy, setBusy] = useState(false);
+  const changed = role !== member.role;
+
+  async function save() {
+    if (!changed || busy) return;
+    setBusy(true);
+    try {
+      await client.users.updateRole(member.id, role);
+      toast.success(`Role changed to ${cap(role)}`);
+      onSaved();
+      onClose();
+    } catch (e) {
+      // Surfaces server-side guards such as last-admin protection (400).
+      toast.error(e instanceof ApiClientError ? e.body.message : 'Could not update the role');
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <Modal
       open
       onClose={onClose}
       title="Member details"
       footer={
-        <Button variant="primary" onClick={onClose}>
-          Done
-        </Button>
+        isAdmin ? (
+          <>
+            <Button variant="ghost" onClick={onClose} disabled={busy}>
+              Cancel
+            </Button>
+            <Button
+              variant="primary"
+              icon="check"
+              onClick={save}
+              disabled={!changed || busy}
+            >
+              {busy ? 'Saving…' : 'Save changes'}
+            </Button>
+          </>
+        ) : (
+          <Button variant="primary" onClick={onClose}>
+            Done
+          </Button>
+        )
       }
     >
       <div className="row" style={{ gap: '0.75rem', alignItems: 'center' }}>
@@ -845,30 +898,58 @@ function ManageMemberModal({ member, onClose }: { member: OrgUser; onClose: () =
           margin: 0,
         }}
       >
-        <Fact label="Role" value={<Chip tone={member.role === 'admin' ? 'brand' : 'neutral'}>{cap(member.role)}</Chip>} />
+        <Fact
+          label="Current role"
+          value={<Chip tone={member.role === 'admin' ? 'brand' : 'neutral'}>{cap(member.role)}</Chip>}
+        />
         <Fact label="Status" value={<StatusChip status={member.status} />} />
-        <Fact label="Permissions" value={<span style={{ fontSize: 13 }}>{ROLE_HINT[member.role] ?? '—'}</span>} />
       </dl>
 
-      <div
-        className="row"
-        style={{
-          gap: '0.7rem',
-          alignItems: 'flex-start',
-          padding: '0.8rem 1rem',
-          background: 'var(--color-info-soft)',
-          border: '1px solid #cfe0fb',
-          borderRadius: 'var(--radius-control)',
-        }}
-      >
-        <span style={{ color: 'var(--color-info)', flex: 'none', marginTop: 1 }}>
-          <Icon name="clock" size={16} />
-        </span>
-        <div style={{ fontSize: 12.5 }}>
-          Changing a member&apos;s role or removing access from here is coming soon. For now, manage
-          roles through your workspace administrator.
+      {isAdmin ? (
+        <div className="field">
+          <label className="field-label" htmlFor="member-role">
+            Change role
+          </label>
+          <select
+            id="member-role"
+            className="select"
+            value={role}
+            onChange={(e) => setRole(e.target.value)}
+            disabled={busy}
+          >
+            {INVITE_ROLES.map((r) => (
+              <option key={r} value={r}>
+                {cap(r)}
+              </option>
+            ))}
+          </select>
+          <span className="muted" style={{ fontSize: 12 }}>
+            {ROLE_HINT[role] ?? 'Determines what this member can do in the workspace.'}
+          </span>
         </div>
-      </div>
+      ) : (
+        <div
+          className="row"
+          style={{
+            gap: '0.7rem',
+            alignItems: 'flex-start',
+            padding: '0.8rem 1rem',
+            background: 'var(--color-info-soft)',
+            border: '1px solid #cfe0fb',
+            borderRadius: 'var(--radius-control)',
+          }}
+        >
+          <span style={{ color: 'var(--color-info)', flex: 'none', marginTop: 1 }}>
+            <Icon name="lock" size={16} />
+          </span>
+          <div style={{ fontSize: 12.5 }}>
+            <div style={{ fontWeight: 600, marginBottom: 2 }}>
+              {ROLE_HINT[member.role] ?? '—'}
+            </div>
+            Only workspace admins can change a member&apos;s role.
+          </div>
+        </div>
+      )}
     </Modal>
   );
 }

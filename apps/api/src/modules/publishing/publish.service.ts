@@ -3,6 +3,7 @@ import { Prisma } from '@acp/db';
 import { loadEnv } from '@acp/config';
 import type { AdConnector } from '@acp/connectors';
 import type { CreativeFormat, CreativeManifest } from '@acp/shared-types';
+import { checkRuntimeProfile } from '@acp/shared-types';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuditService } from '../../common/audit/audit.service';
 import { scopedWhere } from '../../common/tenant/scoped-where';
@@ -85,6 +86,16 @@ export class PublishService {
       secretRef: '',
     });
 
+    // Runtime-profile capability gate (blueprint §9 / U7.2): validate the live
+    // conversational runtime against the destination's REAL connector capability
+    // facts. Additive/advisory — the resolved profile + reasons are surfaced in
+    // the response and audited so an operator sees when a placement would be
+    // downgraded; it does not hard-block the plan.
+    const capabilityCheck = checkRuntimeProfile('live-conversation', {
+      supportsHtml5: capabilities.supportsHtml5,
+      supportsNativeLeadForms: capabilities.supportsNativeLeadForms,
+    });
+
     // Immutable snapshot = the latest campaign version.
     const version = await db.campaignVersion.findFirst({
       where: { campaignId: input.campaignId },
@@ -132,9 +143,12 @@ export class PublishService {
         vertical: campaign.vertical,
         policyWarnings: policy.findings.map((f) => f.code),
         requiresHumanReview: policy.findings.some((f) => f.requiresHumanReview),
+        runtimeProfileRequested: capabilityCheck.requested,
+        runtimeProfileResolved: capabilityCheck.resolved,
+        runtimeProfileSupported: capabilityCheck.supported,
       },
     });
-    return { plan, validation, capabilities, snapshotId, policy };
+    return { plan, validation, capabilities, snapshotId, policy, capabilityCheck };
   }
 
   async approvePlan(orgId: string, planId: string, approverId: string) {

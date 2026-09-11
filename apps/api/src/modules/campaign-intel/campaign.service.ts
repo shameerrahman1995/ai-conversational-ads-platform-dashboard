@@ -1,4 +1,5 @@
 import { BadRequestException, Inject, Injectable, NotFoundException } from '@nestjs/common';
+import { canTransitionCampaign, type CampaignStatus } from '@acp/shared-types';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuditService } from '../../common/audit/audit.service';
 import { scopedWhere } from '../../common/tenant/scoped-where';
@@ -105,6 +106,54 @@ export class CampaignService {
       where: { campaignId },
       orderBy: { version: 'asc' },
     });
+  }
+
+  /**
+   * Advance a campaign through its lifecycle (activate/pause/archive). The
+   * transition is validated against the shared state machine; "archive" is the
+   * delete path (status -> ARCHIVED), never a hard delete, because the cascade
+   * would take versions/variants/experiments with it.
+   */
+  async changeStatus(orgId: string, campaignId: string, status: CampaignStatus) {
+    const campaign = await this.requireCampaign(orgId, campaignId);
+    const from = campaign.status as CampaignStatus;
+    if (!canTransitionCampaign(from, status)) {
+      throw new BadRequestException(`Cannot transition campaign from ${from} to ${status}`);
+    }
+    const updated = await this.prisma.campaign.update({
+      where: { id: campaignId, orgId },
+      data: { status },
+    });
+    await this.audit.record({
+      orgId,
+      action: 'campaign.status_changed',
+      target: campaignId,
+      metadata: { from, to: status },
+    });
+    return updated;
+  }
+
+  /** Duplicate a campaign into a fresh DRAFT (copy only the authoring inputs). */
+  async duplicate(orgId: string, campaignId: string) {
+    const source = await this.requireCampaign(orgId, campaignId);
+    const copy = await this.prisma.campaign.create({
+      data: {
+        orgId,
+        objective: source.objective,
+        name: source.name ? `${source.name} (copy)` : '(copy)',
+        vertical: source.vertical,
+        settings: (source.settings ?? undefined) as never,
+        status: 'DRAFT',
+        version: 1,
+      },
+    });
+    await this.audit.record({
+      orgId,
+      action: 'campaign.duplicated',
+      target: copy.id,
+      metadata: { sourceId: campaignId },
+    });
+    return copy;
   }
 
   // ---- internals ----

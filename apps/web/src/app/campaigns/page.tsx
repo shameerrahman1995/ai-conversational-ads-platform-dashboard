@@ -18,6 +18,7 @@ import {
 } from '@/components/ui';
 import type { CampaignSummary } from '@acp/api-client';
 import { VERTICAL_LABEL } from '@/lib/taxonomy';
+import { CampaignRowActions, ArchiveCampaignModal } from './_components/CampaignRowActions';
 
 /* Sentence-case an objective like "lead_generation" → "Lead generation". */
 const objectiveLabel = (s: string) =>
@@ -62,6 +63,7 @@ export default function CampaignsPage() {
     [client, reload],
   );
   const [filter, setFilter] = useState<FilterKey>('all');
+  const [archiveTarget, setArchiveTarget] = useState<CampaignSummary | null>(null);
 
   const campaigns = useMemo(() => data ?? [], [data]);
 
@@ -285,31 +287,41 @@ export default function CampaignsPage() {
                           <td className="cell-num">v{c.version}</td>
                           <td className="cell-muted tnum">{dateLabel(c.createdAt)}</td>
                           <td style={{ textAlign: 'right' }}>
-                            {c.status === 'READY_FOR_REVIEW' ? (
-                              <Button
-                                size="sm"
-                                variant="ghost"
-                                icon="shield"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  goTo(c.id);
-                                }}
-                              >
-                                Review
-                              </Button>
-                            ) : (
-                              <Button
-                                size="sm"
-                                variant="ghost"
-                                icon="chevron-right"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  goTo(c.id);
-                                }}
-                              >
-                                Open
-                              </Button>
-                            )}
+                            <div
+                              className="row"
+                              style={{ gap: '0.25rem', justifyContent: 'flex-end' }}
+                            >
+                              <CampaignRowActions
+                                campaign={c}
+                                onChanged={() => setReload((n) => n + 1)}
+                                onArchiveRequest={setArchiveTarget}
+                              />
+                              {c.status === 'READY_FOR_REVIEW' ? (
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  icon="shield"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    goTo(c.id);
+                                  }}
+                                >
+                                  Review
+                                </Button>
+                              ) : (
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  icon="chevron-right"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    goTo(c.id);
+                                  }}
+                                >
+                                  Open
+                                </Button>
+                              )}
+                            </div>
                           </td>
                         </tr>
                       ))}
@@ -338,6 +350,17 @@ export default function CampaignsPage() {
           </>
         )}
       </DataState>
+
+      {archiveTarget ? (
+        <ArchiveCampaignModal
+          campaign={archiveTarget}
+          onClose={() => setArchiveTarget(null)}
+          onArchived={() => {
+            setArchiveTarget(null);
+            setReload((n) => n + 1);
+          }}
+        />
+      ) : null}
     </div>
   );
 }

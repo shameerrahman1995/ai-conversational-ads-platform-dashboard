@@ -1,6 +1,7 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { Allow, IsIn, IsOptional, IsString } from 'class-validator';
 import { RESTRICTED_VERTICALS } from '@acp/policy';
+import { CAMPAIGN_STATUSES, type CampaignStatus } from '@acp/shared-types';
 
 export class CreateCampaignDto {
   @ApiProperty({ example: 'lead_generation' })
@@ -47,4 +48,10 @@ export class RegenerateFieldDto {
   @ApiProperty({ enum: ['headline', 'offer', 'cta'] })
   @IsIn(['headline', 'offer', 'cta'])
   field!: 'headline' | 'offer' | 'cta';
+}
+
+export class UpdateStatusDto {
+  @ApiProperty({ enum: CAMPAIGN_STATUSES, description: 'Target lifecycle status' })
+  @IsIn(CAMPAIGN_STATUSES as unknown as string[])
+  status!: CampaignStatus;
 }

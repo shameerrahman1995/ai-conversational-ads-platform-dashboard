@@ -528,6 +528,15 @@ export function createApiClient(opts: ClientOptions) {
           method: 'POST',
           body: JSON.stringify({ field }),
         }),
+      /** Lifecycle transition (activate → LIVE, pause → PAUSED, archive → ARCHIVED). */
+      setStatus: (id: string, status: CampaignStatus) =>
+        request<CampaignSummary>(`/v1/campaigns/${id}/status`, {
+          method: 'POST',
+          body: JSON.stringify({ status }),
+        }),
+      /** Duplicate a campaign into a new DRAFT. */
+      duplicate: (id: string) =>
+        request<CampaignSummary>(`/v1/campaigns/${id}/duplicate`, { method: 'POST' }),
     },
 
     creative: {
@@ -656,6 +665,9 @@ export function createApiClient(opts: ClientOptions) {
       list: () => request<OrgUser[]>('/v1/users'),
       invite: (body: { email: string; role: string }) =>
         request<OrgUser>('/v1/users', { method: 'POST', body: JSON.stringify(body) }),
+      /** Change a member's role (admin only). */
+      updateRole: (id: string, role: string) =>
+        request<OrgUser>(`/v1/users/${id}/role`, { method: 'PATCH', body: JSON.stringify({ role }) }),
     },
 
     conversations: {

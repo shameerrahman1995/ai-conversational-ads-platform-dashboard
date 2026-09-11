@@ -1,7 +1,7 @@
-import { Body, Controller, Get, Post, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, Patch, Post, Req, UseGuards } from '@nestjs/common';
 import { ApiHeader, ApiTags } from '@nestjs/swagger';
 import { IdentityService } from './identity.service';
-import { InviteUserDto } from './dto';
+import { ChangeUserRoleDto, InviteUserDto } from './dto';
 import { TenantGuard } from '../../common/tenant/tenant.guard';
 import { RolesGuard } from '../../common/rbac/roles.guard';
 import { Roles } from '../../common/rbac/roles.decorator';
@@ -29,5 +29,15 @@ export class UsersController {
   @Roles('admin')
   invite(@Req() req: { orgId: string }, @Body() dto: InviteUserDto) {
     return this.identity.inviteUser(req.orgId, dto.email, dto.role);
+  }
+
+  @Patch(':id/role')
+  @Roles('admin')
+  changeRole(
+    @Req() req: { orgId: string },
+    @Param('id') id: string,
+    @Body() dto: ChangeUserRoleDto,
+  ) {
+    return this.identity.changeUserRole(req.orgId, id, dto.role);
   }
 }

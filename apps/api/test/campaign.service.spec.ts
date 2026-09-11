@@ -96,4 +96,86 @@ describe('CampaignService', () => {
     await make(d).listCampaigns('org_1');
     expect(d.prisma.campaign.findMany).toHaveBeenCalledWith({ where: { orgId: 'org_1' } });
   });
+
+  it('changeStatus applies a valid transition, org-scoped, and audits from/to', async () => {
+    const d = deps();
+    d.prisma.campaign.findFirst.mockResolvedValue({ id: 'c1', version: 1, status: 'LIVE' });
+    d.prisma.campaign.update.mockResolvedValue({ id: 'c1', version: 1, status: 'PAUSED' });
+
+    const out = await make(d).changeStatus('org_1', 'c1', 'PAUSED');
+
+    expect(d.prisma.campaign.findFirst).toHaveBeenCalledWith({ where: { orgId: 'org_1', id: 'c1' } });
+    expect(d.prisma.campaign.update).toHaveBeenCalledWith({
+      where: { id: 'c1', orgId: 'org_1' },
+      data: { status: 'PAUSED' },
+    });
+    expect(d.audit.record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        orgId: 'org_1',
+        action: 'campaign.status_changed',
+        target: 'c1',
+        metadata: { from: 'LIVE', to: 'PAUSED' },
+      }),
+    );
+    expect(out.status).toBe('PAUSED');
+  });
+
+  it('changeStatus rejects an invalid transition without updating', async () => {
+    const d = deps();
+    d.prisma.campaign.findFirst.mockResolvedValue({ id: 'c1', version: 1, status: 'LIVE' });
+    await expect(make(d).changeStatus('org_1', 'c1', 'DRAFT')).rejects.toThrow();
+    expect(d.prisma.campaign.update).not.toHaveBeenCalled();
+    expect(d.audit.record).not.toHaveBeenCalled();
+  });
+
+  it('changeStatus 404s when the campaign is missing / belongs to another org', async () => {
+    const d = deps();
+    d.prisma.campaign.findFirst.mockResolvedValue(null);
+    await expect(make(d).changeStatus('org_1', 'nope', 'PAUSED')).rejects.toThrow();
+    expect(d.prisma.campaign.update).not.toHaveBeenCalled();
+  });
+
+  it('duplicate creates a DRAFT copy with copied settings and a "(copy)" name', async () => {
+    const d = deps();
+    d.prisma.campaign.findFirst.mockResolvedValue({
+      id: 'c1',
+      orgId: 'org_1',
+      objective: 'lead_generation',
+      name: 'Q4',
+      vertical: 'legal',
+      settings: { budget: 100 },
+      status: 'LIVE',
+      version: 3,
+    });
+    d.prisma.campaign.create.mockResolvedValue({ id: 'c2', status: 'DRAFT', version: 1 });
+
+    const out = await make(d).duplicate('org_1', 'c1');
+
+    expect(d.prisma.campaign.create).toHaveBeenCalledWith({
+      data: {
+        orgId: 'org_1',
+        objective: 'lead_generation',
+        name: 'Q4 (copy)',
+        vertical: 'legal',
+        settings: { budget: 100 },
+        status: 'DRAFT',
+        version: 1,
+      },
+    });
+    expect(d.audit.record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        orgId: 'org_1',
+        action: 'campaign.duplicated',
+        metadata: { sourceId: 'c1' },
+      }),
+    );
+    expect(out.id).toBe('c2');
+  });
+
+  it('duplicate 404s when the source campaign is missing', async () => {
+    const d = deps();
+    d.prisma.campaign.findFirst.mockResolvedValue(null);
+    await expect(make(d).duplicate('org_1', 'nope')).rejects.toThrow();
+    expect(d.prisma.campaign.create).not.toHaveBeenCalled();
+  });
 });

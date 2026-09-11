@@ -2,6 +2,9 @@ import { ApiProperty } from '@nestjs/swagger';
 import { IsIn, IsOptional, IsString } from 'class-validator';
 import type { UserRole } from '@acp/shared-types';
 
+/** The Prisma `UserRole` enum, as a runtime tuple for validation. */
+export const USER_ROLES = ['creator', 'reviewer', 'publisher', 'analyst', 'admin'] as const;
+
 export class CreateOrgDto {
   @ApiProperty({ example: 'Acme Corp' })
   @IsString()
@@ -18,7 +21,13 @@ export class InviteUserDto {
   @IsString()
   email!: string;
 
-  @ApiProperty({ enum: ['creator', 'reviewer', 'publisher', 'analyst', 'admin'] })
-  @IsIn(['creator', 'reviewer', 'publisher', 'analyst', 'admin'])
+  @ApiProperty({ enum: USER_ROLES })
+  @IsIn(USER_ROLES)
+  role!: UserRole;
+}
+
+export class ChangeUserRoleDto {
+  @ApiProperty({ enum: USER_ROLES })
+  @IsIn(USER_ROLES)
   role!: UserRole;
 }

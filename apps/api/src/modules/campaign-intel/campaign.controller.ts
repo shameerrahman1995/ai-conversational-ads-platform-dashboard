@@ -1,7 +1,7 @@
 import { Body, Controller, Get, Param, Post, Req, UseGuards } from '@nestjs/common';
 import { ApiHeader, ApiTags } from '@nestjs/swagger';
 import { CampaignService } from './campaign.service';
-import { CreateCampaignDto, GenerateCopyDto, RegenerateFieldDto } from './dto';
+import { CreateCampaignDto, GenerateCopyDto, RegenerateFieldDto, UpdateStatusDto } from './dto';
 import { TenantGuard } from '../../common/tenant/tenant.guard';
 import { RolesGuard } from '../../common/rbac/roles.guard';
 import { Roles } from '../../common/rbac/roles.decorator';
@@ -42,5 +42,21 @@ export class CampaignController {
   @Roles('creator')
   versions(@Req() req: { orgId: string }, @Param('id') id: string) {
     return this.campaigns.getVersions(req.orgId, id);
+  }
+
+  @Post(':id/status')
+  @Roles('publisher')
+  changeStatus(
+    @Req() req: { orgId: string },
+    @Param('id') id: string,
+    @Body() dto: UpdateStatusDto,
+  ) {
+    return this.campaigns.changeStatus(req.orgId, id, dto.status);
+  }
+
+  @Post(':id/duplicate')
+  @Roles('creator')
+  duplicate(@Req() req: { orgId: string }, @Param('id') id: string) {
+    return this.campaigns.duplicate(req.orgId, id);
   }
 }

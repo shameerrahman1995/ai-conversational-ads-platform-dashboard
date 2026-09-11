@@ -400,3 +400,74 @@ export interface GenerateBlueprintInput {
   size?: string;
   name?: string;
 }
+
+// ====================================================================
+// Runtime-profile capability registry (V10 §9 / U7.2)
+// --------------------------------------------------------------------
+// Every placement runs one of these profiles. Before a creative is
+// compiled AND before a deployment is created, the target profile is
+// validated against the destination's connector capabilities so the
+// platform never ships an interaction a placement can't run. Unsupported
+// combinations fail closed to an approved fallback profile.
+// ====================================================================
+
+export const RUNTIME_PROFILES = [
+  'live-conversation',
+  'interactive-offline',
+  'native-fallback',
+  'concept-only',
+] as const;
+export type RuntimeProfile = (typeof RUNTIME_PROFILES)[number];
+
+export interface RuntimeProfileRequirement {
+  /** Needs the host to run an interactive HTML5 bundle. */
+  needsInteractiveHtml: boolean;
+  /** Needs a native lead-form surface. */
+  needsNativeLeadForm: boolean;
+  label: string;
+}
+
+export const RUNTIME_PROFILE_REQUIREMENTS: Record<RuntimeProfile, RuntimeProfileRequirement> = {
+  'live-conversation': { needsInteractiveHtml: true, needsNativeLeadForm: false, label: 'Live conversational runtime' },
+  'interactive-offline': { needsInteractiveHtml: true, needsNativeLeadForm: false, label: 'Interactive offline decision graph' },
+  'native-fallback': { needsInteractiveHtml: false, needsNativeLeadForm: true, label: 'Native lead-form fallback' },
+  'concept-only': { needsInteractiveHtml: false, needsNativeLeadForm: false, label: 'Concept preview only' },
+};
+
+/** The connector capability facts a runtime-profile check consults. */
+export interface RuntimeCapabilityFacts {
+  supportsHtml5: boolean;
+  supportsNativeLeadForms: boolean;
+}
+
+export interface CapabilityCheckResult {
+  requested: RuntimeProfile;
+  supported: boolean;
+  /** A safe profile to fall back to when the requested one isn't supported. */
+  resolved: RuntimeProfile;
+  reasons: string[];
+}
+
+/**
+ * Validate a runtime profile against a destination's capabilities. Fails closed:
+ * an unsupported interactive profile downgrades to native-fallback (if lead forms
+ * are supported) or concept-only. Used at BOTH the compile and deploy gates.
+ */
+export function checkRuntimeProfile(
+  requested: RuntimeProfile,
+  caps: RuntimeCapabilityFacts,
+): CapabilityCheckResult {
+  const req = RUNTIME_PROFILE_REQUIREMENTS[requested];
+  const reasons: string[] = [];
+  if (req.needsInteractiveHtml && !caps.supportsHtml5) {
+    reasons.push('Destination does not support interactive HTML5.');
+  }
+  if (req.needsNativeLeadForm && !caps.supportsNativeLeadForms) {
+    reasons.push('Destination does not support native lead forms.');
+  }
+  if (reasons.length === 0) {
+    return { requested, supported: true, resolved: requested, reasons: [] };
+  }
+  const resolved: RuntimeProfile = caps.supportsNativeLeadForms ? 'native-fallback' : 'concept-only';
+  return { requested, supported: false, resolved, reasons };
+}

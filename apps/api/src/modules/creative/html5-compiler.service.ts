@@ -1,5 +1,6 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import type { CreativeManifest } from '@acp/shared-types';
+import { checkRuntimeProfile } from '@acp/shared-types';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuditService } from '../../common/audit/audit.service';
 import { scopedWhere } from '../../common/tenant/scoped-where';
@@ -30,6 +31,15 @@ export interface CompileBundleInput {
 
 /** Google's uploaded-HTML5 hard limit on the ZIP size (blueprint §3). */
 const GOOGLE_MAX_ZIP_BYTES = 600_000;
+
+/**
+ * The compiler runs ahead of any publish plan, so it has no target connector's
+ * capability facts. Interactive HTML5 templates target the live conversational
+ * runtime; check it against the local-preview baseline (a fully-capable host) so
+ * the `capabilityCheck` shape is always present on the compile result. The real,
+ * per-destination check happens at the deploy gate against connector capabilities.
+ */
+const LOCAL_PREVIEW_CAPS = { supportsHtml5: true, supportsNativeLeadForms: true } as const;
 
 /**
  * HTML5 / playable compiler (blueprint §14/§17): allowlisted templates + static
@@ -68,13 +78,14 @@ export class Html5CompilerService {
       where: { id: variantId, orgId },
       data: { manifest: manifest as never, status },
     });
+    const capabilityCheck = checkRuntimeProfile('live-conversation', LOCAL_PREVIEW_CAPS);
     await this.audit.record({
       orgId,
       action: 'creative.html5_compiled',
       target: variantId,
-      metadata: { status, issues: analysis.issues.length },
+      metadata: { status, issues: analysis.issues.length, runtimeProfile: capabilityCheck.resolved },
     });
-    return { status, ...analysis, csp: buildPreviewCsp(), sandbox: PREVIEW_SANDBOX };
+    return { status, ...analysis, csp: buildPreviewCsp(), sandbox: PREVIEW_SANDBOX, capabilityCheck };
   }
 
   /**
@@ -135,11 +146,17 @@ export class Html5CompilerService {
       where: { id: variantId, orgId },
       data: { manifest: manifest as never, status },
     });
+    const capabilityCheck = checkRuntimeProfile('live-conversation', LOCAL_PREVIEW_CAPS);
     await this.audit.record({
       orgId,
       action: 'creative.html5_bundle_compiled',
       target: variantId,
-      metadata: { status, zipBytes: bundle.zipBytes, issues: issues.length },
+      metadata: {
+        status,
+        zipBytes: bundle.zipBytes,
+        issues: issues.length,
+        runtimeProfile: capabilityCheck.resolved,
+      },
     });
 
     return {
@@ -151,6 +168,7 @@ export class Html5CompilerService {
       validation: { ok, issues, sizeBytes: analysis.sizeBytes },
       csp: buildPreviewCsp(),
       sandbox: PREVIEW_SANDBOX,
+      capabilityCheck,
     };
   }
 
