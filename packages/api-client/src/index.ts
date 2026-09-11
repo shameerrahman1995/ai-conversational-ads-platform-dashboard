@@ -4,7 +4,30 @@
  * OpenAPI contract later; the surface here mirrors the live routes.) The MVP
  * auth stub is header-based: the caller supplies orgId + role via `getHeaders`.
  */
-import type { ApiError, CampaignStatus, QualificationLevel } from '@acp/shared-types';
+import type {
+  ApiError,
+  CampaignStatus,
+  QualificationLevel,
+  CreativeBlueprint,
+  GenerateBlueprintInput,
+} from '@acp/shared-types';
+
+// Re-export the AI Creative Studio blueprint contract so the web imports every
+// creative type from one place (@acp/api-client), matching the existing pattern.
+export type {
+  CreativeBlueprint,
+  CreativeDirection,
+  CreativeBlock,
+  CreativeBlockType,
+  JourneyState,
+  JourneyStateId,
+  BlueprintVariant,
+  BlueprintVariantStatus,
+  BlueprintVersion,
+  BlueprintGeneration,
+  CreativeBlueprintStatus,
+  GenerateBlueprintInput,
+} from '@acp/shared-types';
 
 export interface ClientOptions {
   baseUrl: string;
@@ -408,6 +431,15 @@ export function createApiClient(opts: ClientOptions) {
         },
       ) =>
         request<{ created: CreativeVariant[] }>(`/v1/campaigns/${campaignId}/creative/generate`, {
+          method: 'POST',
+          body: JSON.stringify(body),
+        }),
+      /**
+       * Generate a full CreativeBlueprint (directions/blocks/journey states/
+       * variants) from a brief. Deterministic offline — usable with no keys.
+       */
+      generateBlueprint: (campaignId: string, body: GenerateBlueprintInput) =>
+        request<CreativeBlueprint>(`/v1/campaigns/${campaignId}/creative/blueprint`, {
           method: 'POST',
           body: JSON.stringify(body),
         }),

@@ -8,6 +8,7 @@ import {
   IsOptional,
   IsString,
   Matches,
+  MinLength,
   ValidateNested,
 } from 'class-validator';
 import { Type } from 'class-transformer';
@@ -65,6 +66,67 @@ export class GenerateAdaptiveDto {
   @IsOptional()
   @IsString()
   model?: string;
+}
+
+/**
+ * Generate a full CreativeBlueprint from a natural-language brief.
+ * The brief must be at least 12 characters so there is something to plan against.
+ */
+export class GenerateBlueprintDto {
+  @ApiProperty({ description: 'Natural-language campaign brief (min 12 chars)' })
+  @IsString()
+  @MinLength(12, { message: 'A campaign brief of at least 12 characters is required.' })
+  prompt!: string;
+
+  @ApiProperty({ required: false, description: 'Explicit product/brand name' })
+  @IsOptional()
+  @IsString()
+  productName?: string;
+
+  @ApiProperty({ required: false, description: 'Desired campaign outcome' })
+  @IsOptional()
+  @IsString()
+  outcome?: string;
+
+  @ApiProperty({ required: false, description: 'Target audience' })
+  @IsOptional()
+  @IsString()
+  audience?: string;
+
+  @ApiProperty({ required: false, description: 'Brand tone' })
+  @IsOptional()
+  @IsString()
+  tone?: string;
+
+  @ApiProperty({ required: false, description: 'Primary benefit to lead with' })
+  @IsOptional()
+  @IsString()
+  primaryBenefit?: string;
+
+  @ApiProperty({ required: false })
+  @IsOptional()
+  @IsString()
+  headline?: string;
+
+  @ApiProperty({ required: false })
+  @IsOptional()
+  @IsString()
+  cta?: string;
+
+  @ApiProperty({ required: false, description: 'Legal disclaimer text' })
+  @IsOptional()
+  @IsString()
+  disclaimer?: string;
+
+  @ApiProperty({ required: false, example: '#6d5dfc' })
+  @IsOptional()
+  @Matches(HEX)
+  accent?: string;
+
+  @ApiProperty({ required: false, example: '#0c1120' })
+  @IsOptional()
+  @Matches(HEX)
+  background?: string;
 }
 
 export class GenerateImageDto {

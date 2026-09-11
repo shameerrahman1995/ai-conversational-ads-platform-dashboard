@@ -249,3 +249,154 @@ export type LeadId = Id<'lead'>;
 export function roleSatisfies(userRole: UserRole, allowed: UserRole[]): boolean {
   return userRole === 'admin' || allowed.includes(userRole);
 }
+
+// ====================================================================
+// AI Creative Studio — the CreativeBlueprint contract (V10 §9)
+// --------------------------------------------------------------------
+// A blueprint is the brief → directions → blocks → journey-states →
+// variants tree the 9-stage studio composes and the InteractiveAd
+// renders. It is distinct from `CreativeVariant` (a persisted rendered
+// row): a blueprint is the design intent; a variant is one output.
+// The deterministic generator produces a full blueprint with NO API
+// keys (generation.provider === 'mock'), so the studio is always usable.
+// ====================================================================
+
+/** One of the three strategic directions the brief expands into. */
+export interface CreativeDirection {
+  id: string;
+  name: string;
+  /** The headline/opening line this direction leads with. */
+  hook: string;
+  rationale: string;
+  /** Fit score 0–100. */
+  score: number;
+}
+
+/** Block kinds that compose an interactive creative. */
+export type CreativeBlockType = 'brand' | 'text' | 'visual' | 'ask-ai' | 'cta' | 'legal';
+
+/**
+ * One editable (or locked) piece of the creative. `locked` blocks are
+ * protected from AI/Copilot edits — brand, product visual and legal copy
+ * ship locked so nothing can rewrite a claim you can't back up.
+ */
+export interface CreativeBlock {
+  id: string;
+  type: CreativeBlockType;
+  label: string;
+  value: string;
+  visible: boolean;
+  locked: boolean;
+}
+
+/** The six real customer-journey states (+ fallback) an interactive ad runs. */
+export type JourneyStateId = 'hook' | 'explore' | 'ask' | 'answer' | 'qualify' | 'convert';
+export interface JourneyState {
+  id: JourneyStateId;
+  label: string;
+  /** What this state is trying to accomplish. */
+  purpose: string;
+  /** Analytics event emitted on entry. */
+  event: string;
+  /** Deterministic non-AI fallback if the live path is unavailable. */
+  fallback: string;
+}
+
+/** Per-placement variant readiness within a blueprint (display-shaped). */
+export type BlueprintVariantStatus = 'Ready' | 'Review' | 'Gated' | 'Blocked';
+export interface BlueprintVariant {
+  /** Display label: 'Google' | 'Meta' | 'TikTok' | 'Publisher'. */
+  platform: string;
+  /** e.g. '336 × 280'. */
+  size: string;
+  /** Runtime profile label, e.g. 'Live conversational runtime'. */
+  runtime: string;
+  status: BlueprintVariantStatus;
+}
+
+/** An entry in the blueprint's audit/version trail. */
+export interface BlueprintVersion {
+  id: string;
+  label: string;
+  /** ISO-8601. */
+  createdAt: string;
+  actor: string;
+  note: string;
+}
+
+/**
+ * Provenance for how the blueprint was produced. `provider: 'mock'` is the
+ * deterministic offline planner; a live provider merges its output on top and
+ * sets `fallbackUsed` if it had to fall back to the deterministic blueprint.
+ */
+export interface BlueprintGeneration {
+  provider: string;
+  model: string;
+  assumptions?: string[];
+  usage?: unknown | null;
+  latencyMs?: number | null;
+  fallbackUsed?: boolean;
+  error?: string;
+}
+
+/** Lifecycle status of a blueprint (display-shaped). */
+export type CreativeBlueprintStatus = 'Draft' | 'In review' | 'Approved' | 'Retired';
+
+/** The full blueprint the studio composes and the InteractiveAd renders. */
+export interface CreativeBlueprint {
+  id: string;
+  name: string;
+  productName: string;
+  status: CreativeBlueprintStatus | string;
+  version: number;
+  /** The natural-language brief the blueprint was generated from. */
+  prompt: string;
+  outcome: string;
+  audience: string;
+  tone: string;
+  /** Currently-selected preview platform label. */
+  platform: string;
+  /** Currently-selected preview size, e.g. '336 × 280'. */
+  size: string;
+  /** Currently-selected journey state label, e.g. 'Hook'. */
+  state: string;
+  headline: string;
+  body: string;
+  cta: string;
+  /** Accent hex. */
+  accent: string;
+  /** Background hex. */
+  background: string;
+  concept: string;
+  /** QA readiness 0–100. */
+  qaScore: number;
+  directions: CreativeDirection[];
+  blocks: CreativeBlock[];
+  states: JourneyState[];
+  variants: BlueprintVariant[];
+  versions: BlueprintVersion[];
+  /** ISO-8601. */
+  createdAt: string;
+  /** ISO-8601. */
+  updatedAt: string;
+  generation: BlueprintGeneration;
+}
+
+/** Input to the blueprint generator. `prompt` must be ≥ 12 characters. */
+export interface GenerateBlueprintInput {
+  prompt: string;
+  productName?: string;
+  outcome?: string;
+  audience?: string;
+  tone?: string;
+  cta?: string;
+  headline?: string;
+  body?: string;
+  primaryBenefit?: string;
+  accent?: string;
+  background?: string;
+  disclaimer?: string;
+  platform?: string;
+  size?: string;
+  name?: string;
+}

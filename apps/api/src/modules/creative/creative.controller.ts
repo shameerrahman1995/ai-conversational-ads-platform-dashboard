@@ -1,6 +1,7 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post, Req, UseGuards } from '@nestjs/common';
 import { ApiHeader, ApiTags } from '@nestjs/swagger';
 import { CreativeService } from './creative.service';
+import { CreativeBlueprintService } from './creative-blueprint.service';
 import { Html5CompilerService } from './html5-compiler.service';
 import type { CreativeManifest } from '@acp/shared-types';
 import {
@@ -8,6 +9,7 @@ import {
   CompileHtml5Dto,
   CreateVariantDto,
   GenerateAdaptiveDto,
+  GenerateBlueprintDto,
   GenerateImageDto,
   UpdateVariantDto,
 } from './dto';
@@ -23,6 +25,7 @@ import { Roles } from '../../common/rbac/roles.decorator';
 export class CreativeController {
   constructor(
     private readonly creative: CreativeService,
+    private readonly blueprint: CreativeBlueprintService,
     private readonly html5: Html5CompilerService,
   ) {}
 
@@ -82,6 +85,16 @@ export class CreativeController {
   @Roles('creator')
   generateAdaptive(@Req() req: { orgId: string }, @Param('id') id: string, @Body() dto: GenerateAdaptiveDto) {
     return this.creative.generateAdaptive(req.orgId, id, dto);
+  }
+
+  @Post('campaigns/:id/creative/blueprint')
+  @Roles('creator')
+  generateBlueprint(
+    @Req() req: { orgId: string },
+    @Param('id') id: string,
+    @Body() dto: GenerateBlueprintDto,
+  ) {
+    return this.blueprint.generate(req.orgId, id, dto);
   }
 
   @Get('campaigns/:id/variants')
