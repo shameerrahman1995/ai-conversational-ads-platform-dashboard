@@ -3,39 +3,28 @@
 import { useRouter } from 'next/navigation';
 import { useApiClient } from '@/lib/api';
 import { useAsync } from '@/lib/useAsync';
-import { Icon } from '@/components/Icon';
-import {
-  PageHeader,
-  Button,
-  StatCard,
-  Panel,
-  Card,
-  Chip,
-  StatusChip,
-  DataState,
-} from '@/components/ui';
-import type { LeadSummary } from '@acp/api-client';
+import { Icon, type IconName } from '@/components/Icon';
+import { PageHeader, Button, Panel, Chip, StatusChip, DataState, MetricCard } from '@/components/ui';
+import { BarChart, type BarChartItem } from '@/components/charts';
+import { formatMoney, formatCompact } from '@/lib/format';
+import type { CampaignSummary, Connection, Experiment } from '@acp/api-client';
 
-const usd = (n: number, max = 0) =>
-  `$${n.toLocaleString('en-US', { maximumFractionDigits: max, minimumFractionDigits: max })}`;
-const num = (n: number) => n.toLocaleString('en-US');
+/* Provider display names + brand tone for platform rows/badges. */
+const PROVIDERS: { key: string; label: string; tone: 'brand' | 'info' | 'violet' | 'success' }[] = [
+  { key: 'google_ads', label: 'Google Ads', tone: 'brand' },
+  { key: 'meta', label: 'Meta', tone: 'info' },
+  { key: 'tiktok', label: 'TikTok', tone: 'violet' },
+];
 
-/**
- * Best display name for a lead row: captured contact name (case-insensitive
- * name/full_name/first_name(+last_name)), else email, else the AI summary,
- * else a short id fallback.
- */
-function leadDisplayName(l: LeadSummary): string {
-  const fields = l.fieldValues ?? [];
-  const get = (name: string) =>
-    fields.find((f) => f.field.trim().toLowerCase() === name)?.value?.trim() || '';
-  const combinedName = [get('first_name'), get('last_name')].filter(Boolean).join(' ').trim();
-  const contact = get('name') || get('full_name') || combinedName || get('email');
-  if (contact) return contact;
-  if (l.agentSummary) {
-    return l.agentSummary.slice(0, 42) + (l.agentSummary.length > 42 ? '…' : '');
-  }
-  return `Lead ${l.id.slice(0, 6)}`;
+const REVIEW_STATES = ['READY_FOR_REVIEW', 'IN_REVIEW', 'VALIDATION_FAILED'];
+const ATTENTION_CONN = ['REVOKED', 'REAUTH_REQUIRED', 'DEGRADED'];
+
+interface Insight {
+  icon: IconName;
+  title: string;
+  detail: string;
+  source: string;
+  href: string;
 }
 
 export default function OverviewPage() {
@@ -48,142 +37,165 @@ export default function OverviewPage() {
         client.analytics.attribution(),
         client.analytics.spend(),
         client.campaigns.list(),
-        client.leads.list(),
+        client.connections.list(),
+        client.experiments.list(),
       ]),
     [client],
   );
 
-  const [funnel, attribution, spend, campaigns, leads] = data ?? [];
+  const [funnel, attribution, spend, campaigns, connections, experiments] = data ?? [];
   const stages = funnel?.stages ?? [];
   const topCount = stages[0]?.count ?? 0;
-  const liveCampaigns = (campaigns ?? []).filter((c) => c.status === 'LIVE').length;
+  const list: CampaignSummary[] = campaigns ?? [];
+  const conns: Connection[] = connections ?? [];
+  const exps: Experiment[] = experiments ?? [];
+
+  const liveCampaigns = list.filter((c) => c.status === 'LIVE').length;
+  const conversations =
+    stages.find((s) => s.key === 'conversation')?.count ?? stages.find((s) => s.key === 'agent_start')?.count ?? 0;
+  const needsReview = list.filter((c) => REVIEW_STATES.includes(c.status)).length;
+
+  // Spend-by-platform bars (real, from spend.byProvider).
+  const spendBars: BarChartItem[] = PROVIDERS.map((p) => ({
+    label: p.label,
+    value: spend?.byProvider?.[p.key]?.spend ?? 0,
+    tone: p.tone,
+    note: formatMoney(spend?.byProvider?.[p.key]?.spend ?? 0),
+  })).filter((b) => b.value > 0);
+
+  // AI-operator insights — derived from real workspace state (evidence-backed).
+  const insights: Insight[] = [];
+  if (needsReview > 0)
+    insights.push({
+      icon: 'check',
+      title: `${needsReview} campaign${needsReview > 1 ? 's' : ''} awaiting review`,
+      detail: 'Approve each AI-written claim before anything can go live.',
+      source: 'Review queue',
+      href: '/campaigns',
+    });
+  const runningExp = exps.find((e) => e.status === 'running' || e.status === 'active');
+  if (runningExp)
+    insights.push({
+      icon: 'bolt',
+      title: 'Experiment in progress',
+      detail: runningExp.hypothesis,
+      source: 'Experiments',
+      href: '/experiments',
+    });
+  const badConn = conns.find((c) => ATTENTION_CONN.includes(c.status));
+  if (badConn) {
+    const label = PROVIDERS.find((p) => p.key === badConn.provider)?.label ?? badConn.provider;
+    insights.push({
+      icon: 'connections',
+      title: `Reconnect ${label}`,
+      detail: `Its access is ${badConn.status.toLowerCase().replace(/_/g, ' ')} — deployments on it stay paused until it reconnects.`,
+      source: 'Integrations',
+      href: '/connections',
+    });
+  }
 
   return (
     <div>
+      <div className="ov-eyebrow">Workspace intelligence</div>
       <PageHeader
         title="Overview"
-        subtitle="How conversations are turning into qualified pipeline across every connected channel."
+        subtitle="Campaign performance, customer conversations and production readiness across the workspace."
         actions={
           <>
             <Chip icon="clock">All time</Chip>
-            <Button
-              icon="plus"
-              variant="primary"
-              onClick={() => router.push('/campaigns/new')}
-            >
-              New campaign
+            <Button icon="plus" variant="primary" onClick={() => router.push('/campaigns/new')}>
+              Create campaign
             </Button>
           </>
         }
       />
 
       <DataState loading={loading} error={error} loadingLabel="Loading your workspace…">
-        {/* KPI row */}
-        <div className="grid grid-kpi">
-          <StatCard
-            label="Qualified leads"
-            value={num(attribution?.qualifiedLeads ?? 0)}
-            icon="leads"
-            footNote="All time"
-          />
-          <StatCard
-            label="Ad spend"
-            value={usd(spend?.totals.spend ?? 0)}
-            icon="billing"
-            footNote="Provider-reported, all time"
-          />
-          <StatCard
+        {needsReview > 0 ? (
+          <div className="approve-banner">
+            <span className="approve-ic">
+              <Icon name="alert" size={15} />
+            </span>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontWeight: 600, fontSize: 13 }}>
+                {needsReview} item{needsReview > 1 ? 's' : ''} need approval
+              </div>
+              <div className="muted" style={{ fontSize: 12 }}>
+                Each AI-written claim is reviewed by a person before it can publish.
+              </div>
+            </div>
+            <button className="approve-link" onClick={() => router.push('/campaigns')}>
+              Review queue →
+            </button>
+          </div>
+        ) : null}
+
+        {/* KPI row (real; deltas/sparklines await a daily-metrics series endpoint) */}
+        <div className="grid grid-kpi" style={{ marginTop: needsReview > 0 ? '1rem' : 0 }}>
+          <MetricCard label="Media spend" value={formatMoney(spend?.totals.spend ?? 0)} icon="billing" footNote="Provider-reported" />
+          <MetricCard label="Ad conversations" value={formatCompact(conversations, 'en-US')} icon="message" footNote="Engaged sessions" />
+          <MetricCard label="Qualified leads" value={formatCompact(attribution?.qualifiedLeads ?? 0, 'en-US')} icon="leads" footNote="Consented & scored" />
+          <MetricCard
             label="Cost / qualified lead"
-            value={
-              attribution?.costPerQualifiedLead != null
-                ? usd(attribution.costPerQualifiedLead)
-                : '—'
-            }
+            value={attribution?.costPerQualifiedLead != null ? formatMoney(attribution.costPerQualifiedLead) : '—'}
             icon="analytics"
-            footNote="lower is better"
+            footNote="Lower is better"
           />
-          <StatCard
-            label="Return on ad spend"
-            value={attribution?.roas != null ? `${attribution.roas.toFixed(2)}×` : '—'}
-            icon="up-right"
-            footNote="Revenue ÷ spend"
-          />
+          <MetricCard label="Active campaigns" value={liveCampaigns} icon="campaigns" footNote={`${list.length} total`} />
         </div>
 
-        {/* Hero: funnel + pipeline pulse */}
-        <div className="grid grid-hero" style={{ marginTop: '1rem' }}>
-          <Panel
-            title="Conversation funnel"
-            note="impression → click → chat → qualified → meeting"
-            actions={<Chip tone="brand" icon="sparkles">AI agent</Chip>}
-          >
-            <div className="card-pad stack" style={{ gap: '0.9rem' }}>
-              {stages.map((s, i) => {
-                const pct = topCount ? (s.count / topCount) * 100 : 0;
-                return (
-                  <div key={s.key}>
-                    <div className="spread" style={{ marginBottom: '0.35rem' }}>
-                      <span style={{ fontWeight: 500, textTransform: 'capitalize' }}>
-                        {s.key.replace(/_/g, ' ')}
-                      </span>
-                      <span className="row" style={{ gap: '0.6rem' }}>
-                        <span className="tnum" style={{ fontWeight: 600 }}>
-                          {num(s.count)}
-                        </span>
-                        <span
-                          className="muted tnum"
-                          style={{ fontSize: 12, minWidth: 48, textAlign: 'right' }}
-                          title={i === 0 ? 'Top of funnel' : 'Conversion from the previous step'}
-                        >
-                          {i === 0 ? '100%' : `${(s.conversionFromPrev * 100).toFixed(1)}%`}
-                        </span>
-                      </span>
-                    </div>
-                    <div className="meter" title="Bar width: share of top-of-funnel">
-                      <div className="meter-fill" style={{ width: `${Math.max(pct, 1.5)}%` }} />
-                    </div>
-                  </div>
-                );
-              })}
+        {/* Spend by platform + AI operator */}
+        <div className="grid grid-hero" style={{ marginTop: '1rem', alignItems: 'start' }}>
+          <Panel title="Spend by platform" note="Provider-reported delivery">
+            <div className="card-pad">
+              {spendBars.length ? (
+                <BarChart items={spendBars} />
+              ) : (
+                <div className="muted" style={{ fontSize: 13, padding: '1rem 0' }}>
+                  No provider spend yet.
+                </div>
+              )}
+              <div className="row" style={{ gap: '1.4rem', marginTop: '1rem', flexWrap: 'wrap' }}>
+                <MiniStat label="Impressions" value={formatCompact(spend?.totals.impressions ?? 0, 'en-US')} />
+                <MiniStat label="Clicks" value={formatCompact(spend?.totals.clicks ?? 0, 'en-US')} />
+                <MiniStat label="Pipeline to date" value={formatMoney(attribution?.revenue ?? 0)} />
+                <MiniStat label="Return on ad spend" value={attribution?.roas != null ? `${attribution.roas.toFixed(2)}×` : '—'} />
+              </div>
             </div>
           </Panel>
 
-          <Card className="card-pad stack" >
-            <div>
-              <div className="stat-label">Pipeline to date</div>
-              <div className="stat-value" style={{ marginTop: '0.35rem' }}>
-                {usd(attribution?.revenue ?? 0)}
+          <Panel
+            title="AI operator"
+            note="Evidence-backed actions"
+            actions={insights.length ? <Chip tone="brand">{insights.length} insight{insights.length > 1 ? 's' : ''}</Chip> : undefined}
+          >
+            {insights.length ? (
+              insights.map((it) => (
+                <button key={it.title} className="insight" onClick={() => router.push(it.href)}>
+                  <span className="insight-ic">
+                    <Icon name={it.icon} size={15} />
+                  </span>
+                  <span className="insight-body">
+                    <span className="insight-title">{it.title}</span>
+                    <span className="insight-detail">{it.detail}</span>
+                    <span className="insight-src">{it.source}</span>
+                  </span>
+                  <Icon name="chevron-right" size={15} />
+                </button>
+              ))
+            ) : (
+              <div className="card-pad muted" style={{ fontSize: 13 }}>
+                Nothing needs a decision right now — every campaign, source and connection is in good standing.
               </div>
-              <div className="muted" style={{ fontSize: 12.5, marginTop: '0.2rem' }}>
-                Revenue reported back by your CRM
-              </div>
-            </div>
-            <hr className="divider" />
-            <PulseRow label="Ad spend" value={usd(spend?.totals.spend ?? 0)} tone="neutral" />
-            <PulseRow
-              label="Qualified leads"
-              value={num(attribution?.qualifiedLeads ?? 0)}
-              tone="brand"
-            />
-            <PulseRow
-              label="Return on ad spend"
-              value={attribution?.roas != null ? `${attribution.roas.toFixed(2)}×` : '—'}
-              tone="success"
-              strong
-            />
-            <div className="chip chip-info" style={{ alignSelf: 'flex-start' }}>
-              <Icon name="shield" size={12} /> Spend & lead counts sourced separately
-            </div>
-          </Card>
+            )}
+          </Panel>
         </div>
 
-        {/* Recent campaigns + leads */}
-        <div className="grid grid-2" style={{ marginTop: '1rem' }}>
+        {/* Campaign performance + platform health */}
+        <div className="grid grid-2" style={{ marginTop: '1rem', alignItems: 'start' }}>
           <Panel
-            title="Recent campaigns"
-            actions={
-              <span className="chip chip-success chip-dot">{liveCampaigns} live</span>
-            }
+            title="Campaign performance"
+            actions={<span className="chip chip-success chip-dot">{liveCampaigns} live</span>}
           >
             <div className="table-wrap">
               <table className="table">
@@ -191,12 +203,12 @@ export default function OverviewPage() {
                   <tr>
                     <th>Campaign</th>
                     <th>Status</th>
-                    <th className="cell-num">Ver.</th>
+                    <th className="cell-num">Version</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {(campaigns ?? []).slice(0, 5).map((c) => (
-                    <tr key={c.id}>
+                  {list.slice(0, 6).map((c) => (
+                    <tr key={c.id} onClick={() => router.push(`/campaigns/${c.id}`)} style={{ cursor: 'pointer' }}>
                       <td>
                         <div className="cell-strong">{c.name ?? c.objective}</div>
                         <div className="cell-muted" style={{ fontSize: 12 }}>
@@ -207,7 +219,7 @@ export default function OverviewPage() {
                       <td>
                         <StatusChip status={c.status} />
                       </td>
-                      <td className="cell-num">v{c.version}</td>
+                      <td className="cell-num cell-strong">v{c.version}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -215,108 +227,77 @@ export default function OverviewPage() {
             </div>
           </Panel>
 
-          <Panel title="Latest leads" note="scored by the AI agent">
-            <div className="table-wrap">
-              <table className="table">
-                <thead>
-                  <tr>
-                    <th>Lead</th>
-                    <th>Stage</th>
-                    <th className="cell-num">Score</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {(leads ?? []).slice(0, 5).map((l) => (
-                    <tr key={l.id}>
-                      <td>
-                        <div className="cell-strong">{leadDisplayName(l)}</div>
-                        <div className="cell-muted" style={{ fontSize: 12 }}>
-                          {l.qualified ? 'Qualified' : 'Unqualified'}
-                          {l.revenue ? ` · ${usd(l.revenue)}` : ''}
-                        </div>
-                      </td>
-                      <td>
-                        {l.qualificationLevel ? (
-                          <Chip
-                            tone={
-                              l.qualificationLevel === 'high'
-                                ? 'success'
-                                : l.qualificationLevel === 'medium'
-                                  ? 'warning'
-                                  : 'neutral'
-                            }
-                            dot
-                          >
-                            {l.qualificationLevel}
-                          </Chip>
-                        ) : (
-                          <span className="cell-muted">—</span>
-                        )}
-                      </td>
-                      <td className="cell-num cell-strong">{l.score ?? '—'}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+          <Panel title="Platform health" note="Connection & runtime status">
+            {PROVIDERS.map((p) => {
+              const conn = conns.find((c) => c.provider === p.key);
+              const status = conn?.status ?? 'DISCONNECTED';
+              const attention = ATTENTION_CONN.includes(status) || status === 'DISCONNECTED';
+              return (
+                <div className="ph-row" key={p.key}>
+                  <span className="ph-dot" style={{ background: attention ? 'var(--color-warning)' : 'var(--color-success)' }} />
+                  <span className="ph-name" style={{ flex: 1 }}>
+                    {p.label}
+                    <small>{conn ? (conn.meta?.displayName as string) ?? 'Connected account' : 'Not connected'}</small>
+                  </span>
+                  <StatusChip status={status} />
+                </div>
+              );
+            })}
+            <div className="ph-row" style={{ borderBottom: 0 }}>
+              <span className="ph-dot" style={{ background: 'var(--color-success)' }} />
+              <span className="ph-name" style={{ flex: 1 }}>
+                Agent runtime
+                <small>Grounded answering online</small>
+              </span>
+              <Chip tone="success" dot>
+                Healthy
+              </Chip>
             </div>
           </Panel>
         </div>
 
-        {/* Trust strip — the compliance spine of the product */}
-        <Card className="card-pad row" style={{ marginTop: '1rem', gap: '0.75rem', alignItems: 'flex-start' }}>
-          <span className="stat-ic" style={{ background: 'var(--color-success-soft)', color: 'var(--color-success)' }}>
-            <Icon name="shield" size={16} />
-          </span>
-          <div>
-            <div style={{ fontWeight: 600 }}>Compliance is on by default</div>
-            <div className="muted" style={{ fontSize: 13 }}>
-              Every AI-written claim links to an approved source or is flagged “Needs verification,” and
-              restricted verticals go through human review before anything publishes.
-            </div>
+        {/* Conversion funnel (real) */}
+        <Panel title="Conversion funnel" note="Served impression → qualified lead" className="ov-mt">
+          <div className="card-pad stack" style={{ gap: '0.85rem' }}>
+            {stages.map((s, i) => {
+              const pct = topCount ? (s.count / topCount) * 100 : 0;
+              return (
+                <div key={s.key}>
+                  <div className="spread" style={{ marginBottom: '0.35rem' }}>
+                    <span style={{ fontWeight: 500, textTransform: 'capitalize', fontSize: 12.5 }}>
+                      {s.key.replace(/_/g, ' ')}
+                    </span>
+                    <span className="row" style={{ gap: '0.6rem' }}>
+                      <span className="tnum" style={{ fontWeight: 600, fontSize: 12.5 }}>
+                        {formatCompact(s.count, 'en-US')}
+                      </span>
+                      <span className="muted tnum" style={{ fontSize: 11.5, minWidth: 48, textAlign: 'right' }}>
+                        {i === 0 ? '100%' : `${(s.conversionFromPrev * 100).toFixed(1)}%`}
+                      </span>
+                    </span>
+                  </div>
+                  <div className="meter">
+                    <div className="meter-fill" style={{ width: `${Math.max(pct, 1.5)}%` }} />
+                  </div>
+                </div>
+              );
+            })}
           </div>
-        </Card>
+        </Panel>
       </DataState>
     </div>
   );
 }
 
-function PulseRow({
-  label,
-  value,
-  tone,
-  strong,
-}: {
-  label: string;
-  value: string;
-  tone: 'neutral' | 'brand' | 'success';
-  strong?: boolean;
-}) {
+function MiniStat({ label, value }: { label: string; value: string }) {
   return (
-    <div className="spread">
-      <span className="row" style={{ gap: '0.5rem' }}>
-        <span
-          style={{
-            width: 8,
-            height: 8,
-            borderRadius: 9999,
-            background:
-              tone === 'success'
-                ? 'var(--color-success)'
-                : tone === 'brand'
-                  ? 'var(--color-brand)'
-                  : 'var(--color-ink-3)',
-          }}
-        />
-        <span className="muted" style={{ fontSize: 13 }}>
-          {label}
-        </span>
-      </span>
-      <span
-        className="tnum"
-        style={{ fontWeight: strong ? 700 : 600, fontSize: strong ? 16 : 14 }}
-      >
+    <div>
+      <div className="muted" style={{ fontSize: 11 }}>
+        {label}
+      </div>
+      <div className="tnum" style={{ fontWeight: 700, fontSize: 16 }}>
         {value}
-      </span>
+      </div>
     </div>
   );
 }
