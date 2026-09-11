@@ -21,3 +21,15 @@ export class AssignDto {
   @IsString()
   subjectId!: string;
 }
+
+export class ConvertDto {
+  @ApiProperty({ description: 'Key of the arm that converted' })
+  @IsString()
+  armKey!: string;
+}
+
+export class DecideDto {
+  @ApiProperty({ description: 'Key of the arm being approved as the winner' })
+  @IsString()
+  winnerKey!: string;
+}

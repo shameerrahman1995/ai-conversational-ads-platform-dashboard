@@ -556,6 +556,7 @@ model ExperimentArm {
   refId        String // creativeVariantId or agentVersion id
   weight       Int      @default(1)
   exposures    Int      @default(0)
+  conversions  Int      @default(0)
   createdAt    DateTime @default(now())
 
   org        Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)

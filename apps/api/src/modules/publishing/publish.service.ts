@@ -184,6 +184,15 @@ export class PublishService {
   /** Executed by the publish worker (or directly). Creates the draft + publishes. */
   async executePublish(orgId: string, planId: string) {
     const plan = await this.requirePlan(orgId, planId);
+    // Two-person control: a plan cannot go live from an un-approved state. It must
+    // have been approved by a publisher (approvePlan → status APPROVED, which records
+    // an Approval by a separate actor from the creator) first. This closes the gap
+    // where an unreviewed plan could be executed straight to a live platform.
+    if (plan.status === 'READY_FOR_REVIEW' || plan.status === 'REJECTED') {
+      throw new BadRequestException(
+        'This plan must be approved by a publisher before it can go live (two-person control).',
+      );
+    }
     const variant = await this.prisma.creativeVariant.findFirst({
       where: scopedWhere(orgId, { id: plan.variantId }),
     });

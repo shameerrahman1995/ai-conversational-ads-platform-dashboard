@@ -3,6 +3,10 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { AuditService } from '../../common/audit/audit.service';
 import { scopedWhere } from '../../common/tenant/scoped-where';
 import { pickArm } from './assignment';
+import { analyzeArms } from './stats';
+
+/** Minimum exposures per arm before a decision is allowed (blueprint §6). */
+const MIN_SESSIONS = 500;
 
 export interface ArmInput {
   key: string;
@@ -62,13 +66,98 @@ export class ExperimentsService {
     return { armKey: arm.key, kind: arm.kind, refId: arm.refId };
   }
 
+  /**
+   * Arm-level results + a real statistical analysis. `rate` is conversions per
+   * exposure; the analysis runs a two-proportion z-test (see ./stats) so a
+   * winner is only reported when the data honestly supports it.
+   */
   async results(orgId: string, experimentId: string) {
     const experiment = await this.prisma.experiment.findFirst({
       where: scopedWhere(orgId, { id: experimentId }),
       include: { arms: true },
     });
     if (!experiment) throw new NotFoundException('Experiment not found');
-    return experiment;
+
+    const arms = experiment.arms.map((a) => ({
+      id: a.id,
+      key: a.key,
+      kind: a.kind,
+      refId: a.refId,
+      weight: a.weight,
+      exposures: a.exposures,
+      conversions: a.conversions,
+      rate: a.exposures > 0 ? a.conversions / a.exposures : 0,
+    }));
+
+    const analysis = analyzeArms(arms, MIN_SESSIONS);
+
+    return {
+      experiment: {
+        id: experiment.id,
+        campaignId: experiment.campaignId,
+        hypothesis: experiment.hypothesis,
+        status: experiment.status,
+        createdAt: experiment.createdAt,
+      },
+      arms,
+      analysis: { ...analysis, minSessions: MIN_SESSIONS },
+    };
+  }
+
+  /** Record a conversion against an org-scoped arm (increments `conversions`). */
+  async convert(orgId: string, experimentId: string, armKey: string) {
+    const arm = await this.prisma.experimentArm.findFirst({
+      where: scopedWhere(orgId, { experimentId, key: armKey }),
+    });
+    if (!arm) throw new NotFoundException('Experiment or arm not found');
+    await this.prisma.experimentArm.update({
+      where: { id: arm.id, orgId },
+      data: { conversions: { increment: 1 } },
+    });
+    await this.audit.record({
+      orgId,
+      action: 'experiment.conversion',
+      target: experimentId,
+      metadata: { armKey },
+    });
+    return { ok: true as const };
+  }
+
+  /**
+   * Approve a winning arm and complete the experiment. Gated on the recomputed
+   * analysis: refuses unless there's a statistically significant winner, so a
+   * decision can never be rubber-stamped on thin data.
+   */
+  async decide(orgId: string, experimentId: string, winnerKey: string) {
+    const experiment = await this.prisma.experiment.findFirst({
+      where: scopedWhere(orgId, { id: experimentId }),
+      include: { arms: true },
+    });
+    if (!experiment) throw new NotFoundException('Experiment not found');
+
+    const analysis = analyzeArms(
+      experiment.arms.map((a) => ({
+        key: a.key,
+        exposures: a.exposures,
+        conversions: a.conversions,
+      })),
+      MIN_SESSIONS,
+    );
+    if (!analysis.winner) {
+      throw new BadRequestException('No statistically significant winner yet');
+    }
+
+    const updated = await this.prisma.experiment.update({
+      where: { id: experiment.id, orgId },
+      data: { status: 'completed' },
+    });
+    await this.audit.record({
+      orgId,
+      action: 'experiment.decided',
+      target: experiment.id,
+      metadata: { winnerKey, confidence: analysis.confidence },
+    });
+    return updated;
   }
 
   async list(orgId: string) {

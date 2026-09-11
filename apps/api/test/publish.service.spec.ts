@@ -119,12 +119,30 @@ describe('PublishService', () => {
     await expect(make(d).approvePlan('org_1', 'p1', 'x')).rejects.toThrow();
   });
 
+  const approvedPlan = {
+    id: 'p1',
+    orgId: 'org_1',
+    platform: 'google_ads',
+    variantId: 'v1',
+    accountId: 'acct',
+    idempotencyKey: 'v1:google_ads',
+    snapshotId: 'cv1',
+    status: 'APPROVED',
+    remoteId: null,
+  };
+
   it('executePublish creates a remote object and sets IN_REVIEW', async () => {
-    const d = deps();
+    const d = deps({ plan: approvedPlan });
     const out: any = await make(d).executePublish('org_1', 'p1');
     expect(d.prisma.remoteObject.create).toHaveBeenCalled();
     expect(out.status).toBe('IN_REVIEW');
     expect(out.remoteId).toBe('ad1');
+  });
+
+  it('executePublish refuses an un-approved plan (two-person control)', async () => {
+    const d = deps(); // default plan is READY_FOR_REVIEW
+    await expect(make(d).executePublish('org_1', 'p1')).rejects.toThrow(/approved by a publisher/i);
+    expect(d.prisma.remoteObject.create).not.toHaveBeenCalled();
   });
 
   it('syncReviewStatus maps an approved review to LIVE', async () => {

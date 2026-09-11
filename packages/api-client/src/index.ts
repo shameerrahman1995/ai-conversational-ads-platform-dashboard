@@ -236,6 +236,34 @@ export interface Experiment {
   createdAt: string;
 }
 
+// ---- A/B experiment results (U6.2) ----
+export interface ExperimentArmResult {
+  id: string;
+  key: string;
+  kind: string; // creative | agent
+  refId: string;
+  weight: number;
+  exposures: number;
+  conversions: number;
+  /** conversions / exposures (0 when no exposures). */
+  rate: number;
+}
+export interface ExperimentAnalysis {
+  /** Key of the current leading arm, or null when there's no signal yet. */
+  leaderKey: string | null;
+  /** Statistical confidence (0–100) that the leader beats the baseline. */
+  confidence: number;
+  /** True only when confidence ≥ 95 AND every arm has ≥ minSessions exposures. */
+  winner: boolean;
+  minSessionsMet: boolean;
+  minSessions: number;
+}
+export interface ExperimentResults {
+  experiment: Experiment;
+  arms: ExperimentArmResult[];
+  analysis: ExperimentAnalysis;
+}
+
 export interface SpendReport {
   source: 'provider';
   totals: { impressions: number; clicks: number; spend: number };
@@ -732,6 +760,26 @@ export function createApiClient(opts: ClientOptions) {
         request<Experiment>('/v1/experiments', {
           method: 'POST',
           body: JSON.stringify({ arms: [], ...body }),
+        }),
+      /** Arms with exposures/conversions/rate + confidence analysis. */
+      results: (id: string) => request<ExperimentResults>(`/v1/experiments/${id}/results`),
+      /** Deterministic weighted assignment for a subject; increments exposure. */
+      assign: (id: string, subjectId: string) =>
+        request<{ armKey: string }>(`/v1/experiments/${id}/assign`, {
+          method: 'POST',
+          body: JSON.stringify({ subjectId }),
+        }),
+      /** Record a conversion for an arm. */
+      convert: (id: string, body: { armKey: string }) =>
+        request<{ ok: boolean }>(`/v1/experiments/${id}/convert`, {
+          method: 'POST',
+          body: JSON.stringify(body),
+        }),
+      /** Approve the winning arm — allowed only when analysis.winner is true. */
+      decide: (id: string, body: { winnerKey: string }) =>
+        request<Experiment>(`/v1/experiments/${id}/decide`, {
+          method: 'POST',
+          body: JSON.stringify(body),
         }),
     },
 

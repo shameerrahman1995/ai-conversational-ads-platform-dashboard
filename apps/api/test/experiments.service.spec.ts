@@ -1,17 +1,19 @@
 import { describe, it, expect, vi } from 'vitest';
 import { ExperimentsService } from '../src/modules/experiments/experiments.service';
 
-function deps(opts: { arms?: any[]; experiment?: any } = {}) {
+function deps(opts: { arms?: any[]; experiment?: any; foundArm?: any } = {}) {
   const prisma = {
     campaign: { findFirst: vi.fn().mockResolvedValue({ id: 'c1' }) },
     experiment: {
       create: vi.fn().mockResolvedValue({ id: 'e1' }),
       findFirst: vi.fn().mockResolvedValue(opts.experiment ?? { id: 'e1', arms: [] }),
       findMany: vi.fn().mockResolvedValue([]),
+      update: vi.fn().mockResolvedValue({ id: 'e1', status: 'completed' }),
     },
     experimentArm: {
       createMany: vi.fn().mockResolvedValue({ count: 2 }),
       findMany: vi.fn().mockResolvedValue(opts.arms ?? []),
+      findFirst: vi.fn().mockResolvedValue(opts.foundArm ?? null),
       update: vi.fn().mockResolvedValue({}),
     },
   } as any;
@@ -58,6 +60,64 @@ describe('ExperimentsService', () => {
     });
     expect(d.prisma.experimentArm.update).toHaveBeenCalledWith(
       expect.objectContaining({ data: { exposures: { increment: 1 } } }),
+    );
+  });
+
+  it('convert increments the matched org-scoped arm conversions and audits it', async () => {
+    const d = deps({ foundArm: { id: 'a2', key: 'B' } });
+    const res = await make(d).convert('org_1', 'e1', 'B');
+    expect(res).toEqual({ ok: true });
+    expect(d.prisma.experimentArm.findFirst).toHaveBeenCalledWith({
+      where: { orgId: 'org_1', experimentId: 'e1', key: 'B' },
+    });
+    expect(d.prisma.experimentArm.update).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: 'a2', orgId: 'org_1' }, data: { conversions: { increment: 1 } } }),
+    );
+    expect(d.audit.record).toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'experiment.conversion', metadata: { armKey: 'B' } }),
+    );
+  });
+
+  it('convert throws NotFound when the arm is missing', async () => {
+    const d = deps({ foundArm: null });
+    await expect(make(d).convert('org_1', 'e1', 'nope')).rejects.toThrow();
+    expect(d.prisma.experimentArm.update).not.toHaveBeenCalled();
+  });
+
+  it('decide throws when there is no statistically significant winner', async () => {
+    // Tiny sample with a raw gap -> analysis.winner is false.
+    const d = deps({
+      experiment: {
+        id: 'e1',
+        arms: [
+          { key: 'A', exposures: 10, conversions: 1 },
+          { key: 'B', exposures: 10, conversions: 4 },
+        ],
+      },
+    });
+    await expect(make(d).decide('org_1', 'e1', 'B')).rejects.toThrow(/no statistically significant winner/i);
+    expect(d.prisma.experiment.update).not.toHaveBeenCalled();
+  });
+
+  it('decide completes the experiment and audits when there is a clear winner', async () => {
+    const d = deps({
+      experiment: {
+        id: 'e1',
+        arms: [
+          { key: 'A', exposures: 1000, conversions: 100 }, // 10%
+          { key: 'B', exposures: 1000, conversions: 220 }, // 22%
+        ],
+      },
+    });
+    await make(d).decide('org_1', 'e1', 'B');
+    expect(d.prisma.experiment.update).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: 'e1', orgId: 'org_1' }, data: { status: 'completed' } }),
+    );
+    expect(d.audit.record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'experiment.decided',
+        metadata: expect.objectContaining({ winnerKey: 'B' }),
+      }),
     );
   });
 });

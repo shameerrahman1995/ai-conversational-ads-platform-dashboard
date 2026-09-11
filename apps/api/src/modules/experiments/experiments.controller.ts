@@ -1,7 +1,7 @@
 import { Body, Controller, Get, Param, Post, Req, UseGuards } from '@nestjs/common';
 import { ApiHeader, ApiTags } from '@nestjs/swagger';
 import { ExperimentsService } from './experiments.service';
-import { AssignDto, CreateExperimentDto } from './dto';
+import { AssignDto, ConvertDto, CreateExperimentDto, DecideDto } from './dto';
 import { TenantGuard } from '../../common/tenant/tenant.guard';
 import { RolesGuard } from '../../common/rbac/roles.guard';
 import { Roles } from '../../common/rbac/roles.decorator';
@@ -36,5 +36,17 @@ export class ExperimentsController {
   @Roles('analyst')
   results(@Req() req: { orgId: string }, @Param('id') id: string) {
     return this.experiments.results(req.orgId, id);
+  }
+
+  @Post(':id/convert')
+  @Roles('analyst')
+  convert(@Req() req: { orgId: string }, @Param('id') id: string, @Body() dto: ConvertDto) {
+    return this.experiments.convert(req.orgId, id, dto.armKey);
+  }
+
+  @Post(':id/decide')
+  @Roles('publisher')
+  decide(@Req() req: { orgId: string }, @Param('id') id: string, @Body() dto: DecideDto) {
+    return this.experiments.decide(req.orgId, id, dto.winnerKey);
   }
 }
