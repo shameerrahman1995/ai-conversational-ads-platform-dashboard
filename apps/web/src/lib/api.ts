@@ -12,7 +12,7 @@ const BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:4000'
  * and can safely be used as a dependency for `useAsync`.
  */
 export function useApiClient(): ApiClient {
-  const { orgId, role, token } = useOrg();
+  const { orgId, role, token, signOut } = useOrg();
 
   return useMemo(
     () =>
@@ -24,8 +24,21 @@ export function useApiClient(): ApiClient {
           if (token) headers['authorization'] = `Bearer ${token}`;
           return headers;
         },
+        onUnauthorized: () => {
+          // The session token is invalid/expired (e.g. after an API restart or the
+          // 12h expiry): drop it and send the user to log in again. A fresh token
+          // then works across every page. Guard against a redirect loop on /login.
+          try {
+            signOut();
+          } catch {
+            /* ignore */
+          }
+          if (typeof window !== 'undefined' && window.location.pathname !== '/login') {
+            window.location.href = '/login';
+          }
+        },
       }),
-    [orgId, role, token],
+    [orgId, role, token, signOut],
   );
 }
 

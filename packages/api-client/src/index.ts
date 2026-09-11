@@ -10,6 +10,9 @@ export interface ClientOptions {
   baseUrl: string;
   /** Attach tenant/role headers (dev stub) or a session token later. */
   getHeaders?: () => Record<string, string> | Promise<Record<string, string>>;
+  /** Called when the API returns 401 (invalid/expired session) so the app can clear
+   *  the dead token and re-authenticate, instead of surfacing a dead error per page. */
+  onUnauthorized?: () => void;
 }
 
 export interface HealthResponse {
@@ -296,6 +299,9 @@ export function createApiClient(opts: ClientOptions) {
         code: 'unknown',
         message: res.statusText,
       }))) as ApiError;
+      // 401 = the session token is invalid/expired. Let the app clear it and
+      // re-authenticate rather than showing a generic error on every page.
+      if (res.status === 401) opts.onUnauthorized?.();
       throw new ApiClientError(res.status, body);
     }
     // Some endpoints return 204 / an empty body on success; res.json() would throw
