@@ -146,6 +146,8 @@ model User {
   status       UserStatus @default(invited)
   name         String?
   passwordHash String? // scrypt hash for password login (null = invite not yet accepted)
+  mfaEnabled   Boolean    @default(false) // TOTP two-factor is active for this user
+  mfaSecret    String? // base32 TOTP secret (set at enrollment; required to be verified before mfaEnabled)
   createdAt    DateTime   @default(now())
   updatedAt    DateTime   @updatedAt
 

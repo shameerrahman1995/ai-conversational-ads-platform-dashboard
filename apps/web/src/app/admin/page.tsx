@@ -21,6 +21,7 @@ import {
 } from '@/components/ui';
 import { Tabs, type TabItem } from './_components/Tabs';
 import { DeveloperTab } from './_components/DeveloperTab';
+import { TwoFactorPanel } from './_components/TwoFactorPanel';
 
 /* Roles that can be assigned when inviting a member (mirrors the API's set). */
 const INVITE_ROLES = ['creator', 'reviewer', 'publisher', 'analyst', 'admin'] as const;
@@ -977,6 +978,8 @@ function SecurityTab({ users }: { users: OrgUser[] }) {
 
   return (
     <div className="stack">
+      <TwoFactorPanel />
+
       <Panel
         title="Audit trail"
         note="privileged actions across the workspace"

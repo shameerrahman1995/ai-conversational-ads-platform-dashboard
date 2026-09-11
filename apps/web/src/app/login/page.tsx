@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { loginRequest } from '@/lib/api';
+import { loginRequest, LoginError } from '@/lib/api';
 import { useOrg } from '@/lib/org-context';
 import { Icon } from '@/components/Icon';
 
@@ -11,6 +11,9 @@ export default function LoginPage() {
   const { signIn } = useOrg();
   const [email, setEmail] = useState('srahman@hodos360.ai');
   const [password, setPassword] = useState('');
+  const [code, setCode] = useState('');
+  // Revealed once the API says this account needs a TOTP code (mfa_required).
+  const [mfaRequired, setMfaRequired] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -19,11 +22,27 @@ export default function LoginPage() {
     setBusy(true);
     setError(null);
     try {
-      const { token, user } = await loginRequest(email.trim(), password);
+      const trimmedCode = code.trim();
+      const { token, user } = await loginRequest(
+        email.trim(),
+        password,
+        trimmedCode ? trimmedCode : undefined,
+      );
       signIn(token, user.orgId, user.role);
       router.push('/');
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Login failed');
+      const errCode = err instanceof LoginError ? err.code : undefined;
+      if (errCode === 'mfa_required') {
+        // Account has MFA on but no code was sent yet — reveal the code field.
+        setMfaRequired(true);
+        setError(null);
+      } else if (errCode === 'mfa_invalid') {
+        // Wrong/expired code — keep the field, show an inline error.
+        setMfaRequired(true);
+        setError('That code didn’t match. Enter the current 6-digit code from your authenticator app.');
+      } else {
+        setError(err instanceof Error ? err.message : 'Login failed');
+      }
       setBusy(false);
     }
   }
@@ -78,6 +97,29 @@ export default function LoginPage() {
             />
           </label>
 
+          {mfaRequired ? (
+            <label className="field">
+              <span className="field-label">Authenticator code</span>
+              <input
+                className="input"
+                type="text"
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                value={code}
+                onChange={(e) => setCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                placeholder="6-digit code"
+                maxLength={6}
+                autoFocus
+                required
+                style={{ letterSpacing: '0.3em', fontFamily: 'ui-monospace, monospace' }}
+              />
+              <span className="muted" style={{ fontSize: 12 }}>
+                Enter the current code from your authenticator app (Google Authenticator, 1Password,
+                Authy…).
+              </span>
+            </label>
+          ) : null}
+
           {error ? (
             <div className="chip chip-danger" style={{ alignSelf: 'stretch', justifyContent: 'center' }}>
               <Icon name="alert" size={12} /> {error}
@@ -85,7 +127,7 @@ export default function LoginPage() {
           ) : null}
 
           <button className="btn btn-primary" type="submit" disabled={busy} style={{ width: '100%' }}>
-            {busy ? 'Signing in…' : 'Sign in'}
+            {busy ? 'Signing in…' : mfaRequired ? 'Verify & sign in' : 'Sign in'}
           </button>
         </form>
 
