@@ -134,6 +134,8 @@ model Organization {
   campaignVersions CampaignVersion[]
   agentVersions    AgentVersion[]
   deliveryAttempts DeliveryAttempt[]
+  apiKeys          ApiKey[]
+  webhooks         Webhook[]
 }
 
 model User {
@@ -718,4 +720,42 @@ model SourceFact {
 
   @@index([orgId])
   @@index([sourceDocId])
+}
+
+// ---- Developer platform: API keys + webhooks (V10 §governance / U7.1) ----
+
+/// A workspace API key. Only a SHA-256 `hash` is stored; the full secret is shown
+/// once at creation. `prefix` is the visible, non-secret leading segment.
+model ApiKey {
+  id         String    @id @default(cuid())
+  orgId      String
+  name       String
+  prefix     String
+  hash       String
+  lastUsedAt DateTime?
+  createdBy  String?
+  createdAt  DateTime  @default(now())
+  revokedAt  DateTime?
+
+  org Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@index([orgId])
+}
+
+/// An outbound webhook subscription. `secret` signs each delivery (HMAC-SHA256).
+model Webhook {
+  id             String    @id @default(cuid())
+  orgId          String
+  url            String
+  events         String[]
+  secret         String
+  status         String    @default("active") // active | paused
+  lastDeliveryAt DateTime?
+  lastStatus     String?
+  createdBy      String?
+  createdAt      DateTime  @default(now())
+
+  org Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@index([orgId])
 }

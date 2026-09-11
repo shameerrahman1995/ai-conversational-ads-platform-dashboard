@@ -20,6 +20,7 @@ import {
   Meter,
 } from '@/components/ui';
 import { Tabs, type TabItem } from './_components/Tabs';
+import { DeveloperTab } from './_components/DeveloperTab';
 
 /* Roles that can be assigned when inviting a member (mirrors the API's set). */
 const INVITE_ROLES = ['creator', 'reviewer', 'publisher', 'analyst', 'admin'] as const;
@@ -490,6 +491,7 @@ export default function AdminPage() {
       content: membersTab,
     },
     { id: 'billing', label: 'Billing', icon: 'billing', content: billingTab },
+    { id: 'developer', label: 'Developer', icon: 'code', content: <DeveloperTab /> },
     { id: 'security', label: 'Security & audit', icon: 'shield', content: <SecurityTab users={members} /> },
   ];
 

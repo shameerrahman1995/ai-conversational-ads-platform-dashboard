@@ -96,6 +96,58 @@ export async function assertPublicHttpUrl(raw: string): Promise<URL> {
   return url;
 }
 
+/**
+ * SSRF-guarded outbound delivery (e.g. signed webhook test events). Reuses the
+ * same connect-time `guardedLookup` and `assertPublicHttpUrl` guard as the
+ * fetch path, but issues a caller-chosen method (default POST) with a body and
+ * headers, and returns the HTTP status verbatim (2xx/3xx/4xx/5xx alike) so the
+ * caller can record the delivery result HONESTLY. Non-public targets, bad
+ * schemes, and timeouts reject — the caller records those as failures, never a
+ * faked 2xx. The response body is drained (bounded) and discarded.
+ */
+export async function safeFetchDeliver(
+  raw: string,
+  opts: {
+    method?: string;
+    headers?: Record<string, string>;
+    body?: string;
+    timeoutMs?: number;
+    maxBytes?: number;
+  } = {},
+): Promise<{ status: number }> {
+  const url = await assertPublicHttpUrl(raw);
+  const method = opts.method ?? 'POST';
+  const timeoutMs = opts.timeoutMs ?? 5_000;
+  const maxBytes = opts.maxBytes ?? 1_000_000;
+  const mod = url.protocol === 'https:' ? https : http;
+  const bodyBuf = opts.body != null ? Buffer.from(opts.body, 'utf8') : undefined;
+  const headers: Record<string, string> = { ...(opts.headers ?? {}) };
+  if (bodyBuf && headers['Content-Length'] == null) {
+    headers['Content-Length'] = String(bodyBuf.length);
+  }
+
+  return new Promise<{ status: number }>((resolve, reject) => {
+    const req = mod.request(
+      url,
+      { method, headers, lookup: guardedLookup as never, timeout: timeoutMs },
+      (res) => {
+        const status = res.statusCode ?? 0;
+        let received = 0;
+        res.on('data', (c: Buffer) => {
+          received += c.length;
+          if (received > maxBytes) req.destroy(new Error('Response too large'));
+        });
+        res.on('end', () => resolve({ status }));
+        res.on('error', reject);
+      },
+    );
+    req.on('timeout', () => req.destroy(new Error('Request timeout')));
+    req.on('error', reject);
+    if (bodyBuf) req.write(bodyBuf);
+    req.end();
+  });
+}
+
 interface RawResponse {
   status: number;
   location?: string;

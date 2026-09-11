@@ -195,6 +195,39 @@ export interface OrgUser {
   createdAt: string;
 }
 
+// ---- Developer platform: API keys + webhooks (U7.1) ----
+export interface ApiKeySummary {
+  id: string;
+  name: string;
+  /** Visible, non-secret leading segment (e.g. "ck_live_ab12cd"). */
+  prefix: string;
+  lastUsedAt: string | null;
+  createdAt: string;
+  revokedAt: string | null;
+}
+/** Returned ONLY at creation — the full secret is never retrievable again. */
+export interface ApiKeyCreated extends ApiKeySummary {
+  key: string;
+}
+export interface WebhookSummary {
+  id: string;
+  url: string;
+  events: string[];
+  status: string; // active | paused
+  lastDeliveryAt: string | null;
+  lastStatus: string | null;
+  createdAt: string;
+}
+/** Returned ONLY at creation — the signing secret is masked afterwards. */
+export interface WebhookCreated extends WebhookSummary {
+  secret: string;
+}
+export interface WebhookTestResult {
+  ok: boolean;
+  status: string;
+  deliveredAt: string;
+}
+
 export interface Experiment {
   id: string;
   campaignId: string;
@@ -668,6 +701,24 @@ export function createApiClient(opts: ClientOptions) {
       /** Change a member's role (admin only). */
       updateRole: (id: string, role: string) =>
         request<OrgUser>(`/v1/users/${id}/role`, { method: 'PATCH', body: JSON.stringify({ role }) }),
+    },
+
+    apiKeys: {
+      list: () => request<ApiKeySummary[]>('/v1/api-keys'),
+      /** Create a key — the full secret is in the response ONCE. */
+      create: (body: { name: string }) =>
+        request<ApiKeyCreated>('/v1/api-keys', { method: 'POST', body: JSON.stringify(body) }),
+      revoke: (id: string) => request<ApiKeySummary>(`/v1/api-keys/${id}/revoke`, { method: 'POST' }),
+    },
+
+    webhooks: {
+      list: () => request<WebhookSummary[]>('/v1/webhooks'),
+      /** Create a webhook — the signing secret is in the response ONCE. */
+      create: (body: { url: string; events: string[] }) =>
+        request<WebhookCreated>('/v1/webhooks', { method: 'POST', body: JSON.stringify(body) }),
+      remove: (id: string) => request<{ ok: boolean }>(`/v1/webhooks/${id}`, { method: 'DELETE' }),
+      /** Send a signed test delivery (HMAC-SHA256) and record the result. */
+      test: (id: string) => request<WebhookTestResult>(`/v1/webhooks/${id}/test`, { method: 'POST' }),
     },
 
     conversations: {

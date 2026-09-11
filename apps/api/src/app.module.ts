@@ -12,6 +12,8 @@ import { StorageModule } from './common/storage/storage.module';
 import { ScannerModule } from './common/scanner/scanner.module';
 import { KnowledgeModule } from './modules/knowledge/knowledge.module';
 import { IdentityModule } from './modules/identity/identity.module';
+import { ApiKeysModule } from './modules/api-keys/api-keys.module';
+import { WebhooksModule } from './modules/webhooks/webhooks.module';
 import { IngestionModule } from './modules/ingestion/ingestion.module';
 import { CampaignIntelModule } from './modules/campaign-intel/campaign-intel.module';
 import { CreativeModule } from './modules/creative/creative.module';
@@ -43,6 +45,8 @@ import { HealthModule } from './health/health.module';
     ScannerModule,
     KnowledgeModule,
     IdentityModule,
+    ApiKeysModule,
+    WebhooksModule,
     IngestionModule,
     CampaignIntelModule,
     CreativeModule,
