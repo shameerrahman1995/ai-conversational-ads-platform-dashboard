@@ -17,10 +17,23 @@ export class LoginDto {
   code?: string;
 }
 
-/** A 6-digit TOTP code (MFA enable/disable). */
-export class MfaCodeDto {
+/** Password step-up to begin MFA enrollment. */
+export class EnrollMfaDto {
+  @ApiProperty({ description: 'Account password (re-authentication for this sensitive change)' })
+  @IsString()
+  @MinLength(6)
+  password!: string;
+}
+
+/** A 6-digit TOTP code + password step-up (MFA enable/disable). */
+export class MfaVerifyDto {
   @ApiProperty({ example: '123456' })
   @IsString()
   @Matches(/^\d{6}$/, { message: 'code must be 6 digits' })
   code!: string;
+
+  @ApiProperty({ description: 'Account password (re-authentication for this sensitive change)' })
+  @IsString()
+  @MinLength(6)
+  password!: string;
 }

@@ -80,15 +80,17 @@ export function TwoFactorPanel() {
 function DisabledView({ onChanged }: { onChanged: () => void }) {
   const client = useAuthApiClient();
   const toast = useToast();
+  const [password, setPassword] = useState('');
   const [enrollment, setEnrollment] = useState<{ secret: string; otpauthUri: string } | null>(null);
   const [enrolling, setEnrolling] = useState(false);
   const [code, setCode] = useState('');
   const [verifying, setVerifying] = useState(false);
 
   async function beginEnroll() {
+    if (password.length < 6) return;
     setEnrolling(true);
     try {
-      const res = await client.auth.enrollMfa();
+      const res = await client.auth.enrollMfa(password); // password step-up
       setEnrollment(res);
     } catch (e) {
       toast.error(
@@ -103,8 +105,9 @@ function DisabledView({ onChanged }: { onChanged: () => void }) {
     if (code.length !== 6) return;
     setVerifying(true);
     try {
-      await client.auth.enableMfa(code);
+      await client.auth.enableMfa(code, password);
       toast.success('Two-factor authentication enabled');
+      setPassword('');
       onChanged();
     } catch (e) {
       toast.error(
@@ -122,10 +125,26 @@ function DisabledView({ onChanged }: { onChanged: () => void }) {
       <div className="stack" style={{ gap: '0.9rem' }}>
         <p className="muted" style={{ margin: 0, fontSize: 13, maxWidth: '62ch' }}>
           Add a second step at sign-in with a time-based code from an authenticator app. You&apos;ll
-          be asked for a 6-digit code each time you log in.
+          be asked for a 6-digit code each time you log in. Confirm your password to begin.
         </p>
+        <div className="field" style={{ maxWidth: 300 }}>
+          <label className="field-label" htmlFor="mfa-enroll-pw">
+            Confirm your password
+          </label>
+          <input
+            id="mfa-enroll-pw"
+            className="input"
+            type="password"
+            autoComplete="current-password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') beginEnroll();
+            }}
+          />
+        </div>
         <div>
-          <Button variant="primary" icon="shield" onClick={beginEnroll} disabled={enrolling}>
+          <Button variant="primary" icon="shield" onClick={beginEnroll} disabled={enrolling || password.length < 6}>
             {enrolling ? 'Starting…' : 'Enable two-factor'}
           </Button>
         </div>
@@ -190,13 +209,14 @@ function EnabledView({ onChanged }: { onChanged: () => void }) {
   const toast = useToast();
   const [confirming, setConfirming] = useState(false);
   const [code, setCode] = useState('');
+  const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
 
   async function disable() {
-    if (code.length !== 6) return;
+    if (code.length !== 6 || password.length < 6) return;
     setBusy(true);
     try {
-      await client.auth.disableMfa(code);
+      await client.auth.disableMfa(code, password);
       toast.success('Two-factor authentication disabled');
       onChanged();
     } catch (e) {
@@ -248,12 +268,25 @@ function EnabledView({ onChanged }: { onChanged: () => void }) {
             </label>
             <CodeInput id="mfa-disable-code" value={code} onChange={setCode} autoFocus />
           </div>
+          <div className="field" style={{ maxWidth: 300 }}>
+            <label className="field-label" htmlFor="mfa-disable-pw">
+              Confirm your password
+            </label>
+            <input
+              id="mfa-disable-pw"
+              className="input"
+              type="password"
+              autoComplete="current-password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+            />
+          </div>
           <div className="row" style={{ gap: '0.4rem' }}>
             <Button
               variant="danger"
               icon="check"
               onClick={disable}
-              disabled={busy || code.length !== 6}
+              disabled={busy || code.length !== 6 || password.length < 6}
             >
               {busy ? 'Disabling…' : 'Disable two-factor'}
             </Button>

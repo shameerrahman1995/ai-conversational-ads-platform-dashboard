@@ -73,8 +73,33 @@ export function totp(secretBase32: string, atMs: number = Date.now(), stepSecond
 
 /**
  * Verify a submitted code against a secret, allowing ±`window` steps for clock
- * skew. Constant-time compare per candidate. Returns false for malformed input.
+ * skew. Constant-time compare per candidate. Returns the matched time-step
+ * (counter) so callers can enforce single-use (replay) — or `null` if no match
+ * or the input is malformed.
  */
+export function verifyTotpWithStep(
+  secretBase32: string,
+  code: string,
+  window = 1,
+  atMs: number = Date.now(),
+  stepSeconds = 30,
+  digits = 6,
+): number | null {
+  const cleaned = (code ?? '').replace(/\s/g, '');
+  if (!/^\d{6}$/.test(cleaned) || !secretBase32) return null;
+  const secret = base32Decode(secretBase32);
+  const base = Math.floor(atMs / 1000 / stepSeconds);
+  const submitted = Buffer.from(cleaned);
+  for (let i = -window; i <= window; i++) {
+    const candidate = Buffer.from(hotp(secret, base + i, digits));
+    if (candidate.length === submitted.length && timingSafeEqual(candidate, submitted)) {
+      return base + i;
+    }
+  }
+  return null;
+}
+
+/** Boolean convenience wrapper over {@link verifyTotpWithStep}. */
 export function verifyTotp(
   secretBase32: string,
   code: string,
@@ -83,18 +108,7 @@ export function verifyTotp(
   stepSeconds = 30,
   digits = 6,
 ): boolean {
-  const cleaned = (code ?? '').replace(/\s/g, '');
-  if (!/^\d{6}$/.test(cleaned) || !secretBase32) return false;
-  const secret = base32Decode(secretBase32);
-  const base = Math.floor(atMs / 1000 / stepSeconds);
-  const submitted = Buffer.from(cleaned);
-  for (let i = -window; i <= window; i++) {
-    const candidate = Buffer.from(hotp(secret, base + i, digits));
-    if (candidate.length === submitted.length && timingSafeEqual(candidate, submitted)) {
-      return true;
-    }
-  }
-  return false;
+  return verifyTotpWithStep(secretBase32, code, window, atMs, stepSeconds, digits) !== null;
 }
 
 /** otpauth:// URI an authenticator app scans/imports. */

@@ -147,7 +147,8 @@ model User {
   name         String?
   passwordHash String? // scrypt hash for password login (null = invite not yet accepted)
   mfaEnabled   Boolean    @default(false) // TOTP two-factor is active for this user
-  mfaSecret    String? // base32 TOTP secret (set at enrollment; required to be verified before mfaEnabled)
+  mfaSecret    String? // base32 TOTP secret, ENCRYPTED AT REST (field-crypto); shown once at enrollment
+  mfaLastStep  Int? // last consumed TOTP time-step — a code at or below this is rejected (replay guard)
   createdAt    DateTime   @default(now())
   updatedAt    DateTime   @updatedAt
 

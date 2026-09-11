@@ -531,15 +531,25 @@ export function createApiClient(opts: ClientOptions) {
     request,
     health: () => request<HealthResponse>('/health'),
 
-    /** TOTP two-factor self-service for the signed-in user. */
+    /** TOTP two-factor self-service for the signed-in user (password step-up required). */
     auth: {
       mfaStatus: () => request<{ enabled: boolean }>('/v1/auth/mfa/status'),
-      /** Begin enrollment — returns the secret + otpauth URI (shown once). */
-      enrollMfa: () => request<{ secret: string; otpauthUri: string }>('/v1/auth/mfa/enroll', { method: 'POST' }),
-      enableMfa: (code: string) =>
-        request<{ enabled: boolean }>('/v1/auth/mfa/enable', { method: 'POST', body: JSON.stringify({ code }) }),
-      disableMfa: (code: string) =>
-        request<{ enabled: boolean }>('/v1/auth/mfa/disable', { method: 'POST', body: JSON.stringify({ code }) }),
+      /** Begin enrollment — returns the secret + otpauth URI (shown once). Requires the account password. */
+      enrollMfa: (password: string) =>
+        request<{ secret: string; otpauthUri: string }>('/v1/auth/mfa/enroll', {
+          method: 'POST',
+          body: JSON.stringify({ password }),
+        }),
+      enableMfa: (code: string, password: string) =>
+        request<{ enabled: boolean }>('/v1/auth/mfa/enable', {
+          method: 'POST',
+          body: JSON.stringify({ code, password }),
+        }),
+      disableMfa: (code: string, password: string) =>
+        request<{ enabled: boolean }>('/v1/auth/mfa/disable', {
+          method: 'POST',
+          body: JSON.stringify({ code, password }),
+        }),
     },
 
     analytics: {
