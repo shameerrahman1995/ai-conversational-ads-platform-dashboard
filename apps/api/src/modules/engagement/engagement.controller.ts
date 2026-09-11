@@ -46,6 +46,12 @@ export class EngagementController {
     return this.handoff.request(req.orgId, dto.conversationId, dto.reason);
   }
 
+  @Get('conversations')
+  @Roles('analyst')
+  conversations(@Req() req: { orgId: string }) {
+    return this.handoff.list(req.orgId);
+  }
+
   @Get('conversations/:id/transcript')
   @Roles('analyst')
   transcript(@Req() req: { orgId: string }, @Param('id') id: string) {

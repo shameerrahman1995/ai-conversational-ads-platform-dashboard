@@ -286,6 +286,26 @@ function qs(params: Record<string, string | undefined>): string {
   return q ? `?${q}` : '';
 }
 
+export interface ConversationSummary {
+  id: string;
+  agentId: string;
+  visitorId: string;
+  consent: boolean;
+  startedAt: string;
+  messageCount: number;
+  outcome: 'open' | 'converted' | 'qualified';
+  intentScore: number | null;
+  qualificationLevel: QualificationLevel | null;
+}
+
+export interface TranscriptMessage {
+  id: string;
+  conversationId: string;
+  role: string;
+  contentRef: string;
+  createdAt: string;
+}
+
 export function createApiClient(opts: ClientOptions) {
   async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     const headers = {
@@ -485,6 +505,11 @@ export function createApiClient(opts: ClientOptions) {
       list: () => request<OrgUser[]>('/v1/users'),
       invite: (body: { email: string; role: string }) =>
         request<OrgUser>('/v1/users', { method: 'POST', body: JSON.stringify(body) }),
+    },
+
+    conversations: {
+      list: () => request<ConversationSummary[]>('/v1/conversations'),
+      transcript: (id: string) => request<TranscriptMessage[]>(`/v1/conversations/${id}/transcript`),
     },
 
     experiments: {

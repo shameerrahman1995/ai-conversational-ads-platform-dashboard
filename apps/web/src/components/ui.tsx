@@ -195,6 +195,12 @@ const STATUS_TONE: Record<string, Tone> = {
   validation_failed: 'danger',
   approved: 'success',
   pending: 'warning',
+  // conversation outcomes + experiment status
+  converted: 'success',
+  qualified: 'brand',
+  open: 'neutral',
+  abandoned: 'neutral',
+  running: 'info',
 };
 
 export function StatusChip({ status }: { status: string }) {

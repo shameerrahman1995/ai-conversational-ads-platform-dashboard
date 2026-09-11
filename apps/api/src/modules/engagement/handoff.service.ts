@@ -65,6 +65,31 @@ export class HandoffService {
     return messages.map((m) => ({ ...m, contentRef: decryptField(m.contentRef) }));
   }
 
+  /** Org-scoped conversation index for the Conversations screen (summary only —
+   *  no transcript content, which stays behind the per-conversation transcript route). */
+  async list(orgId: string, limit = 100) {
+    const convos = await this.prisma.conversation.findMany({
+      where: scopedWhere(orgId),
+      orderBy: { startedAt: 'desc' },
+      take: limit,
+      include: {
+        _count: { select: { messages: true } },
+        lead: { select: { score: true, qualificationLevel: true, qualified: true } },
+      },
+    });
+    return convos.map((c) => ({
+      id: c.id,
+      agentId: c.agentId,
+      visitorId: c.visitorId,
+      consent: c.consent,
+      startedAt: c.startedAt.toISOString(),
+      messageCount: c._count.messages,
+      outcome: c.lead ? (c.lead.qualified ? 'qualified' : 'converted') : 'open',
+      intentScore: c.lead?.score ?? null,
+      qualificationLevel: c.lead?.qualificationLevel ?? null,
+    }));
+  }
+
   private async require(orgId: string, handoffId: string) {
     const h = await this.prisma.handoff.findFirst({ where: scopedWhere(orgId, { id: handoffId }) });
     if (!h) throw new NotFoundException('Handoff not found');
