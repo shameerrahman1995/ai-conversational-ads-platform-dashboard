@@ -2,6 +2,7 @@ import { Body, Controller, Get, Param, Post, Put, Req, UseGuards } from '@nestjs
 import { ApiHeader, ApiTags } from '@nestjs/swagger';
 import { AgentBuilderService } from './agent-builder.service';
 import { AgentConfigService } from './agent-config.service';
+import { AgentRegressionService } from './regression.service';
 import {
   CreateAgentDto,
   EvaluateAgentDto,
@@ -22,6 +23,7 @@ export class AgentController {
   constructor(
     private readonly builder: AgentBuilderService,
     private readonly config: AgentConfigService,
+    private readonly regression: AgentRegressionService,
   ) {}
 
   @Get('models')
@@ -64,6 +66,12 @@ export class AgentController {
   @Roles('publisher')
   publishAgent(@Req() req: { orgId: string }, @Param('id') id: string) {
     return this.config.publish(req.orgId, id);
+  }
+
+  @Post(':id/regression')
+  @Roles('creator')
+  runRegression(@Req() req: { orgId: string }, @Param('id') id: string) {
+    return this.regression.run(req.orgId, id);
   }
 
   @Post(':id/evaluate')

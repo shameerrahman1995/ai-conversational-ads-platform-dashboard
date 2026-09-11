@@ -240,6 +240,19 @@ export interface ModelOption {
   recommendedFor: string[];
 }
 
+/**
+ * Per-model capability registry entry. The Model & runtime tab consults this so
+ * it never offers (or sends) a param the model rejects — e.g. temperature on the
+ * Claude 5 reasoning family (Opus 5 / Sonnet 5 / Fable 5.1), which 400s on it.
+ */
+export interface ModelCapabilities {
+  provider: string;
+  supportsSampling: boolean;
+  temperatureRange: [number, number];
+  maxOutputTokens: number;
+  reasoningControl: 'effort' | 'budget_tokens' | 'none';
+}
+
 export interface AgentVoiceSettings {
   enabled: boolean;
   provider?: string;
@@ -251,6 +264,81 @@ export interface AgentAvatarSettings {
   provider?: string;
   style?: string;
 }
+
+// ---- V10 AI Agent Studio config sections (optional; drive the studio tabs) ----
+export type AgentReasoningEffort = 'none' | 'low' | 'medium' | 'high';
+export interface AgentRuntimeSettings {
+  reasoningEffort: AgentReasoningEffort;
+  topP: number;
+  memoryTurns: number;
+  streaming: boolean;
+  caching: boolean;
+  structured: boolean;
+  responseTimeoutMs: number;
+  targetLatencyMs: number;
+  targetFirstTokenMs: number;
+  costCapUsd: number;
+  routingPriority: string;
+  fallbackModel: string | null;
+}
+export interface AgentRetrievalSettings {
+  strategy: string;
+  topK: number;
+  minScore: number;
+  requireGrounding: boolean;
+  answerOnEmpty: boolean;
+  rerank: boolean;
+  marketFilter: string;
+  languageFilter: string;
+  freshnessPolicy: string;
+}
+export type AgentQualificationFieldType = 'text' | 'email' | 'phone' | 'number' | 'select' | 'boolean';
+export interface AgentQualificationField {
+  id: string;
+  label: string;
+  type: AgentQualificationFieldType;
+  required: boolean;
+  options?: string[];
+}
+export interface AgentQualificationSettings {
+  fields: AgentQualificationField[];
+  threshold: number;
+  timing: string;
+  maxQuestions: number;
+  consentWording: string;
+  crmRouting: string;
+}
+export interface AgentSafetySettings {
+  promptInjectionProtection: boolean;
+  approvedClaimsOnly: boolean;
+  piiMinimization: boolean;
+  competitorPolicy: boolean;
+  humanEscalation: boolean;
+  rateLimiting: boolean;
+  guardrails: string[];
+  prohibitedClaims: string[];
+  adversarialPrompts: string[];
+}
+export interface AgentSetupMeta {
+  product: string;
+  industry: string;
+  primaryMarket: string;
+  primaryLanguage: string;
+  productWebsite: string;
+  privacyUrl: string;
+  dataRegion: string;
+  businessHours: string;
+  handoffPhone: string;
+  escalationEmail: string;
+  humanSla: string;
+  productApprover: string;
+  legalApprover: string;
+  requiredDisclaimers: string;
+  prohibitedClaimsText: string;
+  qualifiedLeadDefinition: string;
+  handoffRules: string;
+}
+
 export interface AgentSettings {
   name: string;
   persona: string;
@@ -264,6 +352,31 @@ export interface AgentSettings {
   voice: AgentVoiceSettings;
   avatar: AgentAvatarSettings;
   tools: { booking: boolean; crm: boolean; pricing: boolean };
+  // V10 studio sections (server defaults these, so they're present on reads).
+  noAnswerMessage?: string;
+  knowledgeSourceIds?: string[];
+  runtime?: AgentRuntimeSettings;
+  retrieval?: AgentRetrievalSettings;
+  qualification?: AgentQualificationSettings;
+  safety?: AgentSafetySettings;
+  setup?: AgentSetupMeta;
+}
+
+// ---- Agent regression battery (V10 §9 / U4.4) ----
+export type RegressionCaseType = 'Grounding' | 'Safety' | 'Fallback' | 'Tool' | 'Language';
+export type RegressionStatus = 'Passed' | 'Warning' | 'Failed';
+export interface RegressionCaseResult {
+  id: string;
+  name: string;
+  type: RegressionCaseType;
+  status: RegressionStatus;
+  latencyMs: number;
+  sources: number;
+  detail: string;
+}
+export interface RegressionRunResult {
+  results: RegressionCaseResult[];
+  summary: { passed: number; warnings: number; failed: number };
 }
 
 export interface AgentSummary {
@@ -367,7 +480,10 @@ export function createApiClient(opts: ClientOptions) {
     },
 
     agents: {
-      models: () => request<{ models: ModelOption[]; defaults: AgentSettings }>('/v1/agents/models'),
+      models: () =>
+        request<{ models: ModelOption[]; defaults: AgentSettings; capabilities: Record<string, ModelCapabilities> }>(
+          '/v1/agents/models',
+        ),
       list: () => request<AgentSummary[]>('/v1/agents'),
       get: (id: string) => request<AgentDetail>(`/v1/agents/${id}`),
       create: (body: { campaignId: string }) =>
@@ -382,6 +498,9 @@ export function createApiClient(opts: ClientOptions) {
           method: 'POST',
           body: JSON.stringify({ message }),
         }),
+      /** Run the fixed 6-case regression battery against the agent. */
+      regression: (id: string) =>
+        request<RegressionRunResult>(`/v1/agents/${id}/regression`, { method: 'POST' }),
       publish: (id: string) =>
         request<{ id: string; status: string }>(`/v1/agents/${id}/publish`, { method: 'POST' }),
     },

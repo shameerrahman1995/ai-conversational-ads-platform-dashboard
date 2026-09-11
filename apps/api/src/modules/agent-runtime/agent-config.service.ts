@@ -8,6 +8,7 @@ import { FALLBACK_REPLY, SYSTEM_POLICY, isDisallowedTopic, redactPII, wrapUntrus
 import {
   DEFAULT_AGENT_SETTINGS,
   MODEL_CATALOG,
+  MODEL_CAPABILITIES,
   normalizeSettings,
   type AgentSettings,
 } from './models';
@@ -27,7 +28,9 @@ export class AgentConfigService {
   ) {}
 
   models() {
-    return { models: MODEL_CATALOG, defaults: DEFAULT_AGENT_SETTINGS };
+    // Expose the per-model capability registry so the studio can disable (never
+    // send) an unsupported param — e.g. temperature on the Claude 5 reasoning family.
+    return { models: MODEL_CATALOG, defaults: DEFAULT_AGENT_SETTINGS, capabilities: MODEL_CAPABILITIES };
   }
 
   async list(orgId: string) {
@@ -73,6 +76,12 @@ export class AgentConfigService {
       voice: { ...(stored.voice ?? {}), ...(patch.voice ?? {}) },
       avatar: { ...(stored.avatar ?? {}), ...(patch.avatar ?? {}) },
       tools: { ...(stored.tools ?? {}), ...(patch.tools ?? {}) },
+      // Deep-merge the V10 studio sections so saving one tab never wipes another.
+      runtime: { ...(stored.runtime ?? {}), ...(patch.runtime ?? {}) },
+      retrieval: { ...(stored.retrieval ?? {}), ...(patch.retrieval ?? {}) },
+      qualification: { ...(stored.qualification ?? {}), ...(patch.qualification ?? {}) },
+      safety: { ...(stored.safety ?? {}), ...(patch.safety ?? {}) },
+      setup: { ...(stored.setup ?? {}), ...(patch.setup ?? {}) },
     } as Partial<AgentSettings>);
     const updated = await this.prisma.agentConfig.update({
       where: { id: agentId, orgId },

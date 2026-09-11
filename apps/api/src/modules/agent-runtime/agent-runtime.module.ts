@@ -3,6 +3,7 @@ import { Redis } from 'ioredis';
 import { AgentRuntimeService } from './agent-runtime.service';
 import { AgentBuilderService } from './agent-builder.service';
 import { AgentConfigService } from './agent-config.service';
+import { AgentRegressionService } from './regression.service';
 import { AgentController } from './agent.controller';
 import { AgentSessionController } from './agent-session.controller';
 import { Logger } from '@nestjs/common';
@@ -49,6 +50,7 @@ const adSessionRedisProvider = {
     AgentRuntimeService,
     AgentBuilderService,
     AgentConfigService,
+    AgentRegressionService,
     VoiceSessionService,
     { provide: MODEL_GATEWAY, useFactory: modelGatewayFactory },
     { provide: SPEECH_TO_TEXT, useClass: StubSpeechToText },
