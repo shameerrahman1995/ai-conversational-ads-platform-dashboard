@@ -29,8 +29,18 @@ const NAV: NavGroup[] = [
     section: 'Create',
     items: [
       { href: '/campaigns', label: 'Campaigns', icon: 'campaigns' },
+      { href: '/templates', label: 'Templates', icon: 'doc' },
       { href: '/creative', label: 'Creative Studio', icon: 'creative' },
       { href: '/agents', label: 'Agents', icon: 'agents' },
+      { href: '/knowledge', label: 'Knowledge', icon: 'database' },
+      { href: '/audiences', label: 'Audiences', icon: 'users' },
+    ],
+  },
+  {
+    section: 'Test',
+    items: [
+      { href: '/testing', label: 'Testing & QA', icon: 'check' },
+      { href: '/preview', label: 'Placement Preview', icon: 'globe' },
     ],
   },
   {
@@ -38,13 +48,21 @@ const NAV: NavGroup[] = [
     items: [
       { href: '/publishing', label: 'Publishing', icon: 'publishing' },
       { href: '/leads', label: 'Leads', icon: 'leads' },
+      { href: '/conversations', label: 'Conversations', icon: 'message' },
     ],
   },
-  { section: 'Measure', items: [{ href: '/analytics', label: 'Analytics', icon: 'analytics' }] },
+  {
+    section: 'Measure',
+    items: [
+      { href: '/analytics', label: 'Analytics', icon: 'analytics' },
+      { href: '/experiments', label: 'Experiments', icon: 'bolt' },
+    ],
+  },
   {
     section: 'Workspace',
     items: [
       { href: '/connections', label: 'Connections', icon: 'connections' },
+      { href: '/api-logs', label: 'API Logs', icon: 'clock' },
       { href: '/admin', label: 'Admin', icon: 'admin' },
     ],
   },
