@@ -296,3 +296,182 @@ export function Meter({ pct }: { pct: number }) {
     </div>
   );
 }
+
+/* ---- U0 design-system additions (V10 upgrade) --------------------- */
+
+/** KPI tile with a value, up/down delta and an optional sparkline node.
+ *  Chart-agnostic: pass `spark={<Sparkline .../>}` from '@/components/charts'. */
+export function MetricCard({
+  label,
+  value,
+  icon,
+  delta,
+  footNote,
+  spark,
+}: {
+  label: string;
+  value: ReactNode;
+  icon?: IconName;
+  /** `good` overrides the color: a down cost can be "good" (green). */
+  delta?: { dir: 'up' | 'down'; value: string; good?: boolean };
+  footNote?: string;
+  spark?: ReactNode;
+}) {
+  const good = delta ? (delta.good ?? delta.dir === 'up') : false;
+  return (
+    <div className="metric">
+      <div className="metric-top">
+        <span className="metric-label">{label}</span>
+        {icon ? (
+          <span className="metric-ic">
+            <Icon name={icon} size={15} />
+          </span>
+        ) : null}
+      </div>
+      <div className="metric-value">{value}</div>
+      {delta || footNote ? (
+        <div className="metric-foot">
+          {delta ? (
+            <span className={`metric-delta ${good ? 'up' : 'down'}`}>
+              <Icon name={delta.dir === 'up' ? 'up-right' : 'down-right'} size={12} />
+              {delta.value}
+            </span>
+          ) : null}
+          {footNote ? <span className="metric-note">{footNote}</span> : null}
+        </div>
+      ) : null}
+      {spark ? <div className="metric-spark">{spark}</div> : null}
+    </div>
+  );
+}
+
+/** Segmented control (tab-style single select). */
+export function Segmented<T extends string>({
+  options,
+  value,
+  onChange,
+}: {
+  options: { value: T; label: string }[];
+  value: T;
+  onChange: (v: T) => void;
+}) {
+  return (
+    <div className="seg" role="tablist">
+      {options.map((o) => (
+        <button
+          key={o.value}
+          type="button"
+          role="tab"
+          aria-selected={o.value === value}
+          className={`seg-item ${o.value === value ? 'on' : ''}`}
+          onClick={() => onChange(o.value)}
+        >
+          {o.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/** Vertical numbered step rail for multi-step wizards. */
+export function StepRail({ steps, current }: { steps: { label: string; sub?: string }[]; current: number }) {
+  return (
+    <ol className="steprail">
+      {steps.map((s, i) => {
+        const state = i < current ? 'done' : i === current ? 'on' : 'todo';
+        return (
+          <li key={s.label} className={`steprail-item ${state}`}>
+            <span className="steprail-dot">{i < current ? <Icon name="check" size={12} /> : i + 1}</span>
+            <span className="steprail-tx">
+              <b>{s.label}</b>
+              {s.sub ? <small>{s.sub}</small> : null}
+            </span>
+          </li>
+        );
+      })}
+    </ol>
+  );
+}
+
+/** Compact label/value list. */
+export function DefinitionList({ items }: { items: { label: string; value: ReactNode }[] }) {
+  return (
+    <dl className="deflist">
+      {items.map((it, i) => (
+        <div className="deflist-row" key={`${it.label}-${i}`}>
+          <dt>{it.label}</dt>
+          <dd>{it.value}</dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
+
+/** Pretty-printed, scrollable JSON block (traces, request/response bodies). */
+export function JsonViewer({ data }: { data: unknown }) {
+  let text: string;
+  try {
+    text = JSON.stringify(data, null, 2);
+  } catch {
+    text = String(data);
+  }
+  return (
+    <pre className="jsonv">
+      <code>{text}</code>
+    </pre>
+  );
+}
+
+export interface Column<Row> {
+  key: string;
+  header: ReactNode;
+  render: (row: Row) => ReactNode;
+  align?: 'left' | 'right';
+}
+
+/** Generic table over the shared `.table` styles, with an empty state. */
+export function DataTable<Row>({
+  columns,
+  rows,
+  rowKey,
+  onRowClick,
+  empty,
+}: {
+  columns: Column<Row>[];
+  rows: Row[];
+  rowKey: (row: Row) => string;
+  onRowClick?: (row: Row) => void;
+  empty?: ReactNode;
+}) {
+  if (rows.length === 0) return <>{empty ?? <EmptyState title="Nothing here yet" />}</>;
+  return (
+    <div className="table-wrap">
+      <table className="table">
+        <thead>
+          <tr>
+            {columns.map((c) => (
+              <th key={c.key} className={c.align === 'right' ? 'cell-num' : undefined}>
+                {c.header}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r) => (
+            <tr
+              key={rowKey(r)}
+              onClick={onRowClick ? () => onRowClick(r) : undefined}
+              style={onRowClick ? { cursor: 'pointer' } : undefined}
+            >
+              {columns.map((c) => (
+                <td key={c.key} className={c.align === 'right' ? 'cell-num' : undefined}>
+                  {c.render(r)}
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}

@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import type { ReactNode } from 'react';
 import { Inter, Space_Grotesk } from 'next/font/google';
+import { ThemeProvider } from '@/lib/theme';
 import { OrgProvider } from '@/lib/org-context';
 import { AppShell } from '@/components/AppShell';
 import './globals.css';
@@ -26,9 +27,11 @@ export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="en" className={`${inter.variable} ${spaceGrotesk.variable}`}>
       <body>
-        <OrgProvider>
-          <AppShell>{children}</AppShell>
-        </OrgProvider>
+        <ThemeProvider>
+          <OrgProvider>
+            <AppShell>{children}</AppShell>
+          </OrgProvider>
+        </ThemeProvider>
       </body>
     </html>
   );

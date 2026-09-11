@@ -5,7 +5,11 @@ import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { Icon, type IconName } from './Icon';
 import { OrgSwitcher } from './OrgSwitcher';
-import { SearchBar } from './SearchBar';
+import { TopbarSearch } from './CommandPalette';
+import { EnvSwitcher } from './EnvSwitcher';
+import { NotificationsBell } from './NotificationsBell';
+import { WorkspaceMenu } from './WorkspaceMenu';
+import { ThemeToggle } from './ThemeToggle';
 import { ToastProvider } from './feedback';
 import { useOrg } from '@/lib/org-context';
 
@@ -24,46 +28,46 @@ interface NavGroup {
 
 /** Blueprint §3 navigation, grouped by workflow stage. */
 const NAV: NavGroup[] = [
-  { items: [{ href: '/', label: 'Overview', icon: 'overview' }] },
   {
-    section: 'Create',
+    section: 'Workspace',
     items: [
+      { href: '/', label: 'Overview', icon: 'overview' },
       { href: '/campaigns', label: 'Campaigns', icon: 'campaigns' },
       { href: '/templates', label: 'Templates', icon: 'doc' },
-      { href: '/creative', label: 'Creative Studio', icon: 'creative' },
-      { href: '/agents', label: 'Agents', icon: 'agents' },
+    ],
+  },
+  {
+    section: 'Build',
+    items: [
+      { href: '/creative', label: 'AI Creative Studio', icon: 'creative' },
+      { href: '/agents', label: 'AI Agents', icon: 'agents' },
       { href: '/knowledge', label: 'Knowledge', icon: 'database' },
       { href: '/audiences', label: 'Audiences', icon: 'users' },
     ],
   },
   {
-    section: 'Test',
+    section: 'Operate',
     items: [
+      { href: '/connections', label: 'Integrations', icon: 'connections' },
       { href: '/testing', label: 'Testing & QA', icon: 'check' },
-      { href: '/preview', label: 'Placement Preview', icon: 'globe' },
-    ],
-  },
-  {
-    section: 'Deliver',
-    items: [
-      { href: '/publishing', label: 'Publishing', icon: 'publishing' },
-      { href: '/leads', label: 'Leads', icon: 'leads' },
-      { href: '/conversations', label: 'Conversations', icon: 'message' },
+      { href: '/preview', label: 'Placement preview', icon: 'globe' },
+      { href: '/publishing', label: 'Deployments', icon: 'publishing' },
     ],
   },
   {
     section: 'Measure',
     items: [
+      { href: '/leads', label: 'Leads', icon: 'leads' },
+      { href: '/conversations', label: 'Conversations', icon: 'message' },
       { href: '/analytics', label: 'Analytics', icon: 'analytics' },
       { href: '/experiments', label: 'Experiments', icon: 'bolt' },
     ],
   },
   {
-    section: 'Workspace',
+    section: 'Platform',
     items: [
-      { href: '/connections', label: 'Connections', icon: 'connections' },
-      { href: '/api-logs', label: 'API Logs', icon: 'clock' },
-      { href: '/admin', label: 'Admin', icon: 'admin' },
+      { href: '/api-logs', label: 'API logs', icon: 'clock' },
+      { href: '/admin', label: 'Settings', icon: 'admin' },
     ],
   },
 ];
@@ -75,7 +79,7 @@ function isActive(pathname: string, href: string): boolean {
 export function AppShell({ children }: { children: ReactNode }) {
   const pathname = usePathname() || '/';
   const router = useRouter();
-  const { orgId, token, ready, signOut } = useOrg();
+  const { token, ready, signOut } = useOrg();
   const [drawer, setDrawer] = useState(false);
 
   // Client-side auth guard. Only acts once localStorage is hydrated (`ready`),
@@ -96,6 +100,10 @@ export function AppShell({ children }: { children: ReactNode }) {
     router.push('/login');
   }
 
+  const paletteRoutes = NAV.flatMap((group) =>
+    group.items.map((item) => ({ href: item.href, label: item.label, group: group.section })),
+  );
+
   return (
     <ToastProvider>
     <div className="app-shell">
@@ -112,6 +120,8 @@ export function AppShell({ children }: { children: ReactNode }) {
             <span className="rail-brand-sub">AI Ads Console</span>
           </span>
         </div>
+
+        <WorkspaceMenu variant="rail" />
 
         <nav className="rail-nav" aria-label="Primary">
           {NAV.map((group, gi) => (
@@ -132,6 +142,17 @@ export function AppShell({ children }: { children: ReactNode }) {
             </div>
           ))}
         </nav>
+
+        <div className="rail-usage">
+          <div className="rail-usage-top">
+            <span>AI interactions</span>
+            <b>68,342 / 100,000</b>
+          </div>
+          <div className="rail-usage-track">
+            <span style={{ width: '68%' }} />
+          </div>
+          <div className="rail-usage-sub">Resets in 19 days</div>
+        </div>
 
         <div className="rail-foot">
           <span className="rail-avatar">SR</span>
@@ -160,13 +181,12 @@ export function AppShell({ children }: { children: ReactNode }) {
           >
             <Icon name="menu" size={18} />
           </button>
-          <SearchBar />
+          <TopbarSearch routes={paletteRoutes} />
 
           <div className="topbar-actions">
-            <span className="ctx" title="Active organization">
-              <span className="ctx-dot" />
-              {orgId}
-            </span>
+            <EnvSwitcher />
+            <NotificationsBell />
+            <ThemeToggle />
             {IS_DEV ? (
               <div className="topbar-orgswitcher">
                 <OrgSwitcher />
