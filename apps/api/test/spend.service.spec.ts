@@ -55,8 +55,40 @@ describe('SpendService', () => {
     const out = await make(d).getSpend('org_1', {});
     expect(d.prisma.spendMetric.findMany).toHaveBeenCalledWith({ where: { orgId: 'org_1' } });
     expect(out.source).toBe('provider');
-    expect(out.totals).toEqual({ impressions: 150, clicks: 14, spend: 8 });
+    expect(out.totals).toEqual({ impressions: 150, clicks: 14, spend: 8, currency: 'USD' });
     expect(out.byProvider.google_ads.spend).toBe(5);
+    expect(out.mixedCurrency).toBe(false);
+  });
+
+  // B7 (currency integrity): spend must NEVER be summed across unlike currencies.
+  // The scalar total resolves to a single reporting currency (prefer INR); the full
+  // per-currency truth lives in byCurrency and the mix is flagged.
+  it('getSpend does not sum spend across currencies — groups by currency, flags the mix', async () => {
+    const rows = [
+      { provider: 'google_ads', impressions: 100, clicks: 10, spend: 5000, currency: 'INR' },
+      { provider: 'meta', impressions: 50, clicks: 4, spend: 100, currency: 'USD' },
+    ];
+    const d = deps({ rows });
+    const out: any = await make(d).getSpend('org_1', {});
+    // Scalar total is the INR subtotal ONLY — not the meaningless 5100 cross-sum.
+    expect(out.totals.spend).toBe(5000);
+    expect(out.totals.currency).toBe('INR');
+    expect(out.mixedCurrency).toBe(true);
+    // The full, un-mixed breakdown is preserved.
+    expect(out.byCurrency.INR.spend).toBe(5000);
+    expect(out.byCurrency.USD.spend).toBe(100);
+    // Impressions/clicks are currency-agnostic and still sum across everything.
+    expect(out.totals.impressions).toBe(150);
+  });
+
+  it('getSpend flags a single provider whose rows span currencies as MIXED', async () => {
+    const rows = [
+      { provider: 'google_ads', impressions: 10, clicks: 1, spend: 500, currency: 'INR' },
+      { provider: 'google_ads', impressions: 10, clicks: 1, spend: 20, currency: 'USD' },
+    ];
+    const d = deps({ rows });
+    const out: any = await make(d).getSpend('org_1', {});
+    expect(out.byProvider.google_ads.currency).toBe('MIXED');
   });
 
   it('getSpend filters by provider + date range', async () => {

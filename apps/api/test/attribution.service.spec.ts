@@ -37,4 +37,24 @@ describe('AttributionService', () => {
     expect(out.costPerQualifiedLead).toBeNull();
     expect(out.roas).toBeNull();
   });
+
+  // B7 (currency integrity): CPQL/ROAS are only meaningful against single-currency
+  // spend. A ₹+$ mix must resolve to one reporting currency (INR), never a raw sum.
+  it('does not derive ratios from a cross-currency spend sum', async () => {
+    const d = deps({
+      spend: [
+        { spend: 10000, currency: 'INR' },
+        { spend: 200, currency: 'USD' },
+      ],
+      qualified: [{ revenue: 5000 }, { revenue: null }],
+    });
+    const out: any = await make(d).report('org_1', {});
+    expect(out.currency).toBe('INR');
+    expect(out.mixedCurrency).toBe(true);
+    // spend is the INR subtotal (10000), NOT 10200; CPQL = 10000 / 2 qualified leads.
+    expect(out.spend).toBe(10000);
+    expect(out.qualifiedLeads).toBe(2);
+    expect(out.costPerQualifiedLead).toBe(5000);
+    expect(out.spendByCurrency).toEqual({ INR: 10000, USD: 200 });
+  });
 });

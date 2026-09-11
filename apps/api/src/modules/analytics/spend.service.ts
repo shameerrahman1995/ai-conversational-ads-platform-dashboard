@@ -75,17 +75,47 @@ export class SpendService {
       currency: string;
     }>;
 
-    const totals = { impressions: 0, clicks: 0, spend: 0 };
-    const byProvider: Record<string, { impressions: number; clicks: number; spend: number }> = {};
+    // Currency-aware aggregation. Spend must NEVER be summed across unlike currencies
+    // (₹ + $ = a meaningless number). Impressions/clicks are currency-agnostic and
+    // sum freely; spend is grouped per currency in `byCurrency` (the source of truth),
+    // and the scalar `totals.spend` is resolved to a single reporting currency below.
+    const totals = { impressions: 0, clicks: 0, spend: 0, currency: 'INR' as string };
+    const byProvider: Record<string, { impressions: number; clicks: number; spend: number; currency: string }> = {};
+    const byCurrency: Record<string, { impressions: number; clicks: number; spend: number }> = {};
+    const providerCurrencies: Record<string, Set<string>> = {};
     for (const r of rows) {
+      const cur = r.currency || 'INR';
       totals.impressions += r.impressions;
       totals.clicks += r.clicks;
-      totals.spend += r.spend;
-      const p = (byProvider[r.provider] ??= { impressions: 0, clicks: 0, spend: 0 });
+      const c = (byCurrency[cur] ??= { impressions: 0, clicks: 0, spend: 0 });
+      c.impressions += r.impressions;
+      c.clicks += r.clicks;
+      c.spend += r.spend;
+      const p = (byProvider[r.provider] ??= { impressions: 0, clicks: 0, spend: 0, currency: cur });
       p.impressions += r.impressions;
       p.clicks += r.clicks;
       p.spend += r.spend;
+      (providerCurrencies[r.provider] ??= new Set()).add(cur);
     }
-    return { source: 'provider' as const, totals, byProvider };
+
+    // Resolve the scalar total to ONE currency instead of a cross-currency sum:
+    // prefer the org default (INR); otherwise the currency carrying the most spend.
+    const currencies = Object.keys(byCurrency);
+    const reportingCurrency =
+      currencies.length === 0
+        ? 'INR'
+        : currencies.includes('INR')
+          ? 'INR'
+          : [...currencies].sort((a, b) => byCurrency[b].spend - byCurrency[a].spend)[0];
+    totals.currency = reportingCurrency;
+    totals.spend = byCurrency[reportingCurrency]?.spend ?? 0;
+    const mixedCurrency = currencies.length > 1;
+    // Flag any provider whose rows span currencies — its scalar spend is not a
+    // single-currency figure and must be read via byCurrency instead.
+    for (const [prov, set] of Object.entries(providerCurrencies)) {
+      if (set.size > 1) byProvider[prov].currency = 'MIXED';
+    }
+
+    return { source: 'provider' as const, totals, byProvider, byCurrency, mixedCurrency };
   }
 }
