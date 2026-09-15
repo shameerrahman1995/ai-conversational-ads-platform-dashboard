@@ -35,6 +35,9 @@ export class JwtAuthGuard implements CanActivate {
           orgId: payload.orgId,
           role: payload.role,
           email: payload.email,
+          // Cross-org super-admin, only from a verified JWT. The dev-header fallback
+          // path below never sets this, so platform access always requires a real token.
+          platformAdmin: payload.platformAdmin === true,
         };
         req.orgId = payload.orgId;
         const ctx = getContext();

@@ -503,6 +503,32 @@ export interface TranscriptMessage {
   createdAt: string;
 }
 
+/** One organization row in the platform (cross-tenant) super-admin directory. */
+export interface PlatformOrg {
+  id: string;
+  name: string;
+  plan: string;
+  status: string;
+  region: string;
+  createdAt: string;
+  members: number;
+  campaigns: number;
+  leads: number;
+}
+
+/** A single organization's detail for the platform super-admin. */
+export interface PlatformOrgDetail {
+  id: string;
+  name: string;
+  plan: string;
+  status: string;
+  region: string;
+  createdAt: string;
+  updatedAt: string;
+  budget: { monthlyLimitUsd: number; alertThresholdPct: number } | null;
+  counts: { users: number; campaigns: number; leads: number; publishJobs: number; agentVersions: number };
+}
+
 export function createApiClient(opts: ClientOptions) {
   async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     const headers = {
@@ -808,6 +834,31 @@ export function createApiClient(opts: ClientOptions) {
       status: () => request<BudgetStatus>('/v1/budget'),
       setBudget: (body: { monthlyLimitUsd: number; alertThresholdPct?: number }) =>
         request<BudgetStatus>('/v1/budget', { method: 'POST', body: JSON.stringify(body) }),
+    },
+
+    /**
+     * Platform (cross-tenant) super-admin surface. Every call requires a JWT with
+     * the `platformAdmin` claim; the server enforces it with PlatformAdminGuard
+     * (a tenant admin gets 403). See apps/api/src/modules/platform.
+     */
+    platform: {
+      listOrgs: () => request<PlatformOrg[]>('/v1/platform/orgs'),
+      getOrg: (id: string) => request<PlatformOrgDetail>(`/v1/platform/orgs/${id}`),
+      suspendOrg: (id: string) =>
+        request<{ id: string; status: string }>(`/v1/platform/orgs/${id}/suspend`, { method: 'POST' }),
+      reactivateOrg: (id: string) =>
+        request<{ id: string; status: string }>(`/v1/platform/orgs/${id}/reactivate`, { method: 'POST' }),
+      changePlan: (id: string, plan: string) =>
+        request<{ id: string; plan: string }>(`/v1/platform/orgs/${id}/plan`, {
+          method: 'PATCH',
+          body: JSON.stringify({ plan }),
+        }),
+      /** Start a "view as org" session — returns a short-lived token scoped to that tenant. */
+      impersonate: (id: string) =>
+        request<{ token: string; org: { id: string; name: string }; expiresIn: number }>(
+          `/v1/platform/orgs/${id}/impersonate`,
+          { method: 'POST' },
+        ),
     },
 
     // DSAR / data-subject actions (admin). Export or erase one lead's PII.

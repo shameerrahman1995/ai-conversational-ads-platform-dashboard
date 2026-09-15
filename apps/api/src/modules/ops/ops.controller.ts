@@ -30,7 +30,7 @@ export class OpsController {
   @Get('counts')
   @Roles('admin')
   counts(@Req() req: { orgId: string }) {
-    void req.orgId; // tenant-scoped access enforced by TenantGuard; view is platform-wide.
+    void req.orgId; // aggregate queue depth only — numbers, no tenant job payloads.
     return this.jobsAdmin.getCounts();
   }
 
@@ -42,10 +42,10 @@ export class OpsController {
     @Param('queue') queue: string,
     @Query('limit') limit?: string,
   ) {
-    void req.orgId;
     this.assertQueue(queue);
     const parsedLimit = this.parseLimit(limit);
-    return this.jobsAdmin.getFailed(queue, parsedLimit);
+    // Scope the dead-letter view to the caller's org (no cross-tenant job payloads).
+    return this.jobsAdmin.getFailed(queue, req.orgId, parsedLimit);
   }
 
   /** Replay a single failed job (re-enqueue for a worker to retry). */
@@ -56,9 +56,9 @@ export class OpsController {
     @Param('queue') queue: string,
     @Param('id') id: string,
   ) {
-    void req.orgId;
     this.assertQueue(queue);
-    return this.jobsAdmin.retryJob(queue, id);
+    // Only the owning org may replay a job.
+    return this.jobsAdmin.retryJob(queue, id, req.orgId);
   }
 
   private assertQueue(queue: string): void {

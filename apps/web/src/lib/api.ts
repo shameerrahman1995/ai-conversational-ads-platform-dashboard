@@ -91,7 +91,10 @@ export async function loginRequest(
   email: string,
   password: string,
   code?: string,
-): Promise<{ token: string; user: { orgId: string; role: string; email: string; name?: string } }> {
+): Promise<{
+  token: string;
+  user: { orgId: string; role: string; email: string; name?: string; platformAdmin?: boolean };
+}> {
   const res = await fetch(`${BASE_URL}/v1/auth/login`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },

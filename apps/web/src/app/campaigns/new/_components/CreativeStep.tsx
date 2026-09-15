@@ -117,6 +117,42 @@ export function CreativeStep({ state, patch }: StepProps) {
           Sets the tone for headlines, ad copy and how the agent talks to visitors.
         </span>
       </label>
+
+      {/* Deep-dive entry point: the wizard captures the essentials; the full studio is
+          where you compose the ad by hand. Opens in a new tab so wizard state is kept. */}
+      <div className="field">
+        <span className="field-label">Want full creative control?</span>
+        <a
+          href="/creative"
+          target="_blank"
+          rel="noreferrer"
+          style={{
+            textAlign: 'left',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '0.75rem',
+            padding: '0.9rem 1rem',
+            borderRadius: 'var(--radius-card)',
+            border: '1px solid var(--color-line)',
+            background: 'var(--color-surface)',
+            textDecoration: 'none',
+            color: 'inherit',
+          }}
+        >
+          <span className="stat-ic">
+            <Icon name="wand" size={16} />
+          </span>
+          <span style={{ minWidth: 0 }}>
+            <span style={{ display: 'block', fontWeight: 600 }}>Open AI Creative Studio</span>
+            <span className="muted" style={{ fontSize: 12.5 }}>
+              Compose an ad block-by-block with a live preview and generate a richer blueprint for this campaign. Opens
+              in a new tab — your wizard choices are kept. It&apos;s a separate design space, not a continuation of the
+              quick creative that Launch generates.
+            </span>
+          </span>
+          <Icon name="external" size={15} style={{ marginLeft: 'auto', flex: 'none', color: 'var(--color-ink-3)' }} />
+        </a>
+      </div>
     </div>
   );
 }

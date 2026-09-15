@@ -476,7 +476,10 @@ export class PublishService {
       );
     }
 
-    const idempotencyKey = `${next.id}:${plan.platform}`;
+    // Keep the same variant:platform:accountId shape createPlan uses, so dedup stays
+    // consistent after a creative swap (a 2-part key here would never collide with a
+    // later createPlan for the same variant+platform+account).
+    const idempotencyKey = `${next.id}:${plan.platform}:${plan.accountId ?? ''}`;
     try {
       const updated = await this.prisma.publishJob.update({
         where: { id: planId, orgId },

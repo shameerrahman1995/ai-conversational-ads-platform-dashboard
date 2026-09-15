@@ -24,7 +24,7 @@ function deps(user: any) {
   return { svc: new AuthService(prisma, jwt, audit), prisma };
 }
 
-const base = { id: 'u1', orgId: 'org_1', email: 'a@b.co', role: 'admin', name: 'A', passwordHash: 'h', mfaEnabled: false, mfaSecret: null, mfaLastStep: null };
+const base = { id: 'u1', orgId: 'org_1', email: 'a@b.co', role: 'admin', platformAdmin: false, name: 'A', passwordHash: 'h', mfaEnabled: false, mfaSecret: null, mfaLastStep: null, org: { status: 'active' } };
 
 describe('AuthService MFA (hardened)', () => {
   beforeEach(() => vi.clearAllMocks());
@@ -32,6 +32,18 @@ describe('AuthService MFA (hardened)', () => {
   it('logs in without a code when MFA is disabled', async () => {
     const out = await deps(base).svc.login('a@b.co', 'pw');
     expect(out.token).toBe('signed.jwt.token');
+  });
+
+  it('refuses login when the tenant org is suspended', async () => {
+    const { svc } = deps({ ...base, org: { status: 'suspended' } });
+    await expect(svc.login('a@b.co', 'pw')).rejects.toThrow(/suspended/i);
+  });
+
+  it('lets a platform super-admin log in even when their org is suspended (to reactivate it)', async () => {
+    const { svc } = deps({ ...base, platformAdmin: true, org: { status: 'suspended' } });
+    const out = await svc.login('a@b.co', 'pw');
+    expect(out.token).toBe('signed.jwt.token');
+    expect(out.user.platformAdmin).toBe(true);
   });
 
   it('requires a code when MFA is enabled (mfa_required)', async () => {

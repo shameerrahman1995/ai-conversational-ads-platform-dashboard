@@ -6,7 +6,7 @@ import { verifyPassword } from '../../common/auth/password';
 import { encryptField, decryptField } from '../../common/crypto/field-crypto';
 import { generateTotpSecret, otpauthUri, verifyTotpWithStep } from '../../common/auth/totp';
 
-type UserRow = { id: string; orgId: string; email: string; role: string; name: string | null; passwordHash: string | null; mfaEnabled: boolean; mfaSecret: string | null; mfaLastStep: number | null };
+type UserRow = { id: string; orgId: string; email: string; role: string; platformAdmin: boolean; name: string | null; passwordHash: string | null; mfaEnabled: boolean; mfaSecret: string | null; mfaLastStep: number | null };
 
 /**
  * Password login → signed JWT carrying the verified principal, with optional TOTP
@@ -46,9 +46,15 @@ export class AuthService {
   async login(email: string, password: string, code?: string) {
     const user = (await this.prisma.user.findFirst({
       where: { email, status: { not: 'suspended' } },
-    })) as UserRow | null;
+      include: { org: { select: { status: true } } },
+    })) as (UserRow & { org: { status: string } }) | null;
     if (!user || !verifyPassword(password, user.passwordHash)) {
       throw new UnauthorizedException('Invalid email or password');
+    }
+    // A suspended tenant's members cannot log in. Platform admins are exempt so a
+    // super-admin can still sign in to a suspended workspace to reactivate it.
+    if (user.org.status === 'suspended' && !user.platformAdmin) {
+      throw new UnauthorizedException('This workspace is suspended. Contact your administrator.');
     }
     if (user.mfaEnabled) {
       if (!code) {
@@ -62,11 +68,26 @@ export class AuthService {
       }
       await this.prisma.user.update({ where: { id: user.id }, data: { mfaLastStep: step } });
     }
-    const token = await this.jwt.signAsync({ sub: user.id, orgId: user.orgId, role: user.role, email: user.email });
+    const token = await this.jwt.signAsync({
+      sub: user.id,
+      orgId: user.orgId,
+      role: user.role,
+      email: user.email,
+      // Cross-org super-admin claim — read by PlatformAdminGuard. Only ever true for
+      // a user explicitly flagged platformAdmin; it never widens a tenant query.
+      platformAdmin: user.platformAdmin === true,
+    });
     await this.audit.record({ orgId: user.orgId, actorId: user.id, action: 'auth.login', target: user.id });
     return {
       token,
-      user: { id: user.id, email: user.email, role: user.role, orgId: user.orgId, name: user.name },
+      user: {
+        id: user.id,
+        email: user.email,
+        role: user.role,
+        orgId: user.orgId,
+        name: user.name,
+        platformAdmin: user.platformAdmin === true,
+      },
     };
   }
 

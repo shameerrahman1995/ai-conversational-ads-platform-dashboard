@@ -68,22 +68,35 @@ export class JobsAdminService {
     return Object.fromEntries(entries);
   }
 
-  /** Newest-first slice of the retained failed (dead-letter) set for one queue. */
-  async getFailed(queueName: string, limit = 50): Promise<FailedJobView[]> {
+  /**
+   * Newest-first slice of the retained failed (dead-letter) set for one queue,
+   * scoped to the caller's org. Job payloads carry other tenants' identifiers, so
+   * the failed set is filtered by `data.orgId` — a tenant admin only ever sees
+   * their own jobs. Failed (dead-letter) sets are small, so we scan a wide window
+   * and filter, rather than returning a raw cross-tenant slice.
+   */
+  async getFailed(queueName: string, orgId: string, limit = 50): Promise<FailedJobView[]> {
     const queue = this.resolveQueue(queueName);
     const safeLimit = Math.max(1, Math.min(Math.floor(limit), 200));
-    const jobs = await queue.getFailed(0, safeLimit - 1);
-    return jobs.map((job) => this.toView(job));
+    const jobs = await queue.getFailed(0, 499);
+    return jobs
+      .filter((job) => (job.data as { orgId?: string } | null)?.orgId === orgId)
+      .slice(0, safeLimit)
+      .map((job) => this.toView(job));
   }
 
-  /** Re-enqueue a single failed job so a worker retries it. */
+  /** Re-enqueue a single failed job so a worker retries it — only for the owning org. */
   async retryJob(
     queueName: string,
     jobId: string,
+    orgId: string,
   ): Promise<{ queue: string; jobId: string; retried: true }> {
     const queue = this.resolveQueue(queueName);
     const job = await queue.getJob(jobId);
-    if (!job) {
+    // A tenant may only replay its OWN job. Treat a foreign/missing job identically
+    // (404) so job existence across tenants is not revealed, and no tenant can
+    // re-enqueue another tenant's work.
+    if (!job || (job.data as { orgId?: string } | null)?.orgId !== orgId) {
       throw new NotFoundException(`Job "${jobId}" not found in queue "${queueName}"`);
     }
     // Moves the job from the failed set back to wait so a worker picks it up.

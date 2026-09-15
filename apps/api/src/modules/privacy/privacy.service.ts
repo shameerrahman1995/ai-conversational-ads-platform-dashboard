@@ -24,7 +24,10 @@ export class PrivacyService {
       include: {
         fieldValues: true,
         consentRecords: true,
-        conversation: { include: { messages: { orderBy: { createdAt: 'asc' } } } },
+        // Org-scope the transcript so a subject export can never leak another
+        // tenant's messages (defense-in-depth alongside the conversationId
+        // ownership check on lead creation).
+        conversation: { include: { messages: { where: { orgId }, orderBy: { createdAt: 'asc' } } } },
       },
     });
     if (!lead) throw new NotFoundException('Lead not found');

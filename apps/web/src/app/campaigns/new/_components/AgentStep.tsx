@@ -125,6 +125,37 @@ export function AgentStep({ state, patch, models }: StepProps) {
                 The agent is created as a <strong>draft</strong>. Review and publish it on the Agents page before it can answer click-throughs — until then, clicks land on your page as usual.
               </span>
             </div>
+
+            {/* Deep-dive entry point: the wizard picks the model; full knowledge, guardrails,
+                tools, qualification and safety live in the Agent Studio. New tab keeps wizard state. */}
+            <a
+              href="/agents"
+              target="_blank"
+              rel="noreferrer"
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.75rem',
+                padding: '0.9rem 1rem',
+                borderRadius: 'var(--radius-card)',
+                border: '1px solid var(--color-line)',
+                background: 'var(--color-surface)',
+                textDecoration: 'none',
+                color: 'inherit',
+              }}
+            >
+              <span className="stat-ic">
+                <Icon name="settings" size={16} />
+              </span>
+              <span style={{ minWidth: 0 }}>
+                <span style={{ display: 'block', fontWeight: 600 }}>Set up the agent in AI Agent Studio</span>
+                <span className="muted" style={{ fontSize: 12.5 }}>
+                  Add knowledge, guardrails, tools, qualification and safety, then run the test suite. Opens in a new
+                  tab — you&apos;ll finish and publish this campaign&apos;s agent there after launch.
+                </span>
+              </span>
+              <Icon name="external" size={15} style={{ marginLeft: 'auto', flex: 'none', color: 'var(--color-ink-3)' }} />
+            </a>
           </div>
         ) : (
           <div className="row" style={{ gap: '0.6rem', alignItems: 'flex-start', marginTop: '0.85rem', padding: '0.85rem 1rem', borderRadius: 'var(--radius-card)', background: 'var(--color-inset)' }}>

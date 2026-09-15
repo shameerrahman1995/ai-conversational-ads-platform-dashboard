@@ -79,7 +79,7 @@ function isActive(pathname: string, href: string): boolean {
 export function AppShell({ children }: { children: ReactNode }) {
   const pathname = usePathname() || '/';
   const router = useRouter();
-  const { token, ready, signOut } = useOrg();
+  const { token, ready, signOut, impersonating, exitImpersonation } = useOrg();
   const [drawer, setDrawer] = useState(false);
 
   // Client-side auth guard. Only acts once localStorage is hydrated (`ready`),
@@ -95,6 +95,11 @@ export function AppShell({ children }: { children: ReactNode }) {
   // Redirecting to /login — don't flash the authenticated shell.
   if (unauthenticated) return null;
 
+  // The platform super-admin surface is a SEPARATE console with its own shell
+  // (see app/superadmin/layout.tsx) — render it bare, without the tenant nav.
+  // Auth (token) is still enforced above; the platform-admin check lives in that layout.
+  if (pathname.startsWith('/superadmin')) return <>{children}</>;
+
   function logout() {
     signOut();
     router.push('/login');
@@ -106,6 +111,49 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   return (
     <ToastProvider>
+    {impersonating ? (
+      <div
+        role="status"
+        style={{
+          position: 'sticky',
+          top: 0,
+          zIndex: 60,
+          display: 'flex',
+          alignItems: 'center',
+          gap: '0.6rem',
+          padding: '0.5rem 1rem',
+          background: 'var(--color-warning, #b45309)',
+          color: '#fff',
+          fontSize: 13,
+          fontWeight: 500,
+        }}
+      >
+        <Icon name="eye" size={15} />
+        <span>
+          Viewing <strong>{impersonating.orgName}</strong> as a platform admin — actions are audited.
+        </span>
+        <button
+          type="button"
+          onClick={() => {
+            exitImpersonation();
+            router.push('/superadmin');
+          }}
+          style={{
+            marginLeft: 'auto',
+            background: 'rgba(255,255,255,0.16)',
+            color: '#fff',
+            border: '1px solid rgba(255,255,255,0.35)',
+            borderRadius: 7,
+            padding: '0.25rem 0.7rem',
+            fontSize: 12.5,
+            fontWeight: 600,
+            cursor: 'pointer',
+          }}
+        >
+          Exit to console
+        </button>
+      </div>
+    ) : null}
     <div className="app-shell">
       {drawer ? <div className="rail-backdrop" onClick={() => setDrawer(false)} /> : null}
       <aside className={`rail ${drawer ? 'rail--open' : ''}`}>

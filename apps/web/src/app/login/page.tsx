@@ -28,7 +28,7 @@ export default function LoginPage() {
         password,
         trimmedCode ? trimmedCode : undefined,
       );
-      signIn(token, user.orgId, user.role);
+      signIn(token, user.orgId, user.role, user.platformAdmin === true);
       router.push('/');
     } catch (err) {
       const errCode = err instanceof LoginError ? err.code : undefined;

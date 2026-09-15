@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { LeadService } from '../src/modules/lead/lead.service';
 import { decryptField, encryptField } from '../src/common/crypto/field-crypto';
 
-function deps(opts: { lead?: any; dup?: any } = {}) {
+function deps(opts: { lead?: any; dup?: any; conversation?: any; messages?: any[] } = {}) {
   const prisma = {
     // Interactive-transaction callbacks run against the same mock.
     $transaction: (fn: any) => fn(prisma),
@@ -22,6 +22,12 @@ function deps(opts: { lead?: any; dup?: any } = {}) {
       createMany: vi.fn().mockResolvedValue({ count: 1 }),
       updateMany: vi.fn().mockResolvedValue({ count: 0 }),
     },
+    // Ownership check for a supplied conversationId (default: owned by the org).
+    conversation: {
+      findFirst: vi.fn().mockResolvedValue('conversation' in opts ? opts.conversation : { id: 'c1' }),
+    },
+    // Transcript read for getLead.
+    message: { findMany: vi.fn().mockResolvedValue(opts.messages ?? []) },
   } as any;
   const audit = { record: vi.fn() } as any;
   return { prisma, audit };
@@ -64,6 +70,43 @@ describe('LeadService', () => {
     expect(d.prisma.leadFieldValue.findFirst).toHaveBeenCalledWith({
       where: { OR: [{ field: 'email', value: 'a@b.com' }], lead: { orgId: 'org_1' } },
     });
+  });
+
+  // SECURITY (cross-tenant transcript disclosure): a caller-supplied conversationId
+  // must be verified to belong to the org, else a spoofed id would link a lead to
+  // another tenant's conversation and leak its decrypted transcript via getLead.
+  it('createLead drops a conversationId that does not belong to the org', async () => {
+    const d = deps({ conversation: null }); // ownership check finds nothing
+    await make(d).createLead('org_1', { conversationId: 'convo-from-org-B', fields: { email: 'a@b.com' } });
+    expect(d.prisma.conversation.findFirst).toHaveBeenCalledWith({
+      where: { orgId: 'org_1', id: 'convo-from-org-B' },
+      select: { id: true },
+    });
+    expect(d.prisma.lead.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ conversationId: undefined }) }),
+    );
+  });
+
+  it('createLead keeps a conversationId owned by the org', async () => {
+    const d = deps({ conversation: { id: 'c1' } });
+    await make(d).createLead('org_1', { conversationId: 'c1', fields: { email: 'a@b.com' } });
+    expect(d.prisma.lead.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ conversationId: 'c1' }) }),
+    );
+  });
+
+  it('getLead org-scopes the transcript read (never surfaces another tenant’s messages)', async () => {
+    const d = deps({ messages: [{ role: 'user', contentRef: encryptField('hi'), createdAt: new Date() }] });
+    d.prisma.lead.findFirst.mockResolvedValue({
+      id: 'l1', orgId: 'org_1', conversationId: 'c1',
+      fieldValues: [], consentRecords: [], deliveryAttempts: [],
+    });
+    const lead: any = await make(d).getLead('org_1', 'l1');
+    expect(d.prisma.message.findMany).toHaveBeenCalledWith({
+      where: { conversationId: 'c1', orgId: 'org_1' },
+      orderBy: { createdAt: 'asc' },
+    });
+    expect(lead.transcript[0].content).toBe('hi');
   });
 
   it('getLead decrypts stored PII before returning it to the caller', async () => {

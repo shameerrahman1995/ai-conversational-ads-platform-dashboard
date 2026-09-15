@@ -23,6 +23,11 @@ enum OrgPlan {
   enterprise
 }
 
+enum OrgStatus {
+  active
+  suspended
+}
+
 enum UserRole {
   creator
   reviewer
@@ -100,8 +105,9 @@ enum DeliveryStatus {
 model Organization {
   id        String   @id @default(cuid())
   name      String
-  plan      OrgPlan  @default(trial)
-  region    String   @default("us")
+  plan      OrgPlan   @default(trial)
+  status    OrgStatus @default(active) // tenant lifecycle; a suspended org's users cannot log in
+  region    String    @default("us")
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -144,6 +150,7 @@ model User {
   email        String
   role         UserRole   @default(creator)
   status       UserStatus @default(invited)
+  platformAdmin Boolean   @default(false) // cross-org super-admin (grants PlatformAdminGuard). NOT a tenant role — scopedWhere still fully applies to tenant endpoints.
   name         String?
   passwordHash String? // scrypt hash for password login (null = invite not yet accepted)
   mfaEnabled   Boolean    @default(false) // TOTP two-factor is active for this user

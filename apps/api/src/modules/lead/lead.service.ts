@@ -38,7 +38,19 @@ export class LeadService {
   async createLead(orgId: string, input: CreateLeadInput) {
     // `fields` is optional over the wire; never dereference it undefined.
     const fields = input.fields ?? {};
-    input = { ...input, fields };
+    // Never link a lead to another tenant's conversation. conversationId is
+    // caller-supplied and unvalidated; a spoofed id would otherwise expose that
+    // conversation's decrypted transcript through getLead()/privacy export. Drop an
+    // id that doesn't belong to this org instead of storing it.
+    let conversationId = input.conversationId;
+    if (conversationId) {
+      const owned = await this.prisma.conversation.findFirst({
+        where: scopedWhere(orgId, { id: conversationId }),
+        select: { id: true },
+      });
+      if (!owned) conversationId = undefined;
+    }
+    input = { ...input, fields, conversationId };
     const dupId = await this.findDuplicate(orgId, fields);
     if (dupId) {
       await this.audit.record({ orgId, action: 'lead.deduped', target: dupId });
@@ -115,7 +127,9 @@ export class LeadService {
     let transcript: Array<{ role: string; content: string; createdAt: Date }> = [];
     if (lead.conversationId) {
       const messages = await this.prisma.message.findMany({
-        where: { conversationId: lead.conversationId },
+        // Defense-in-depth: org-scope the transcript read so a lead can never surface
+        // another tenant's messages even if a foreign conversationId were ever stored.
+        where: { conversationId: lead.conversationId, orgId },
         orderBy: { createdAt: 'asc' },
       });
       transcript = messages.map((m) => ({
