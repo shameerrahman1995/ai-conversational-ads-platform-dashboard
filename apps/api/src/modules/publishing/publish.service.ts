@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@acp/db';
 import { loadEnv } from '@acp/config';
 import type { AdConnector } from '@acp/connectors';
@@ -36,6 +36,22 @@ export type BulkDeploymentAction = 'activate' | 'pause';
  * from a plain cancel while preserving the row, its remote-object map and audit.
  */
 export const ROLLED_BACK_MARKER = 'Rolled back';
+
+/**
+ * TTL for the creative token BAKED into a SERVED creative's manifest.
+ *
+ * The published HTML5 ZIP is STATIC: whatever token we mint here is frozen into
+ * the bundle Google serves for the life of the ad. The default 15-minute (900s)
+ * token used elsewhere (e.g. bootstrap's per-load token) would already be expired
+ * by the time Google serves the ad, so every ad-session would 401. A served
+ * creative therefore has to carry a deliberately long-lived token.
+ *
+ * Tradeoff: a long TTL widens the window in which a leaked token stays valid, so
+ * the token is scoped to exactly ONE creativeId (+ tenant/org). Its blast radius
+ * is a single creative's PUBLIC, visitor-facing ad-session endpoints — never
+ * broad account access — which keeps a long-lived served token acceptable.
+ */
+export const SERVED_CREATIVE_TOKEN_TTL_SECONDS = 60 * 60 * 24 * 90; // 90 days
 
 // ---- Remote-object tree (V10 U5.3) --------------------------------------
 // RemoteObject is stored flat (campaign/adGroup/ad remote ids on one row).
@@ -107,6 +123,8 @@ export function buildRemoteObjectTree(rows: RemoteObjectRowLike[]): RemoteObject
  */
 @Injectable()
 export class PublishService {
+  private readonly logger = new Logger(PublishService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
@@ -967,14 +985,37 @@ export class PublishService {
     });
     const spec = (variant.spec ?? {}) as Record<string, unknown>;
     const settings = (campaign?.settings ?? {}) as Record<string, unknown>;
+    // Prefer an explicit, publicly-reachable landing/final URL configured on the
+    // creative (variant spec) or the campaign (settings/blueprint); only fall back
+    // to API_BASE_URL as a last resort — it is http://localhost:4000 in dev and is
+    // NOT a valid public final URL for a live serve.
     const finalUrl =
       (typeof spec.finalUrl === 'string' && spec.finalUrl) ||
       (typeof spec.landingUrl === 'string' && spec.landingUrl) ||
+      (typeof settings.finalUrl === 'string' && settings.finalUrl) ||
       (typeof settings.landingUrl === 'string' && settings.landingUrl) ||
       env.API_BASE_URL;
-    // Every published bundle gets a FRESH short-lived creative token (never the
-    // persisted '' placeholder).
-    const signedCreativeToken = mintCreativeToken({ creativeId: variant.id, tenantId: orgId, orgId });
+    // Google rejects non-public / non-https final URLs for a live ad. Don't hard
+    // crash (local + preview + stub flows must keep working), but surface a clear
+    // warning so a real serve that would be rejected for a bad final URL is
+    // diagnosable up front. A public https finalUrl is required for live serving.
+    if (!/^https:\/\//i.test(finalUrl)) {
+      this.logger.warn(
+        `Publish ${plan.platform} (creative ${variant.id}): finalUrl "${finalUrl}" is not a public https:// URL. ` +
+          'Google will reject a live ad whose final URL is not public — configure a public landing URL ' +
+          'on the creative (spec.finalUrl/landingUrl) or campaign (settings.finalUrl/landingUrl).',
+      );
+    }
+    // Every published bundle gets a FRESH creative token minted at publish time
+    // (never the persisted '' placeholder). It is LONG-LIVED and scoped to this one
+    // creative because it is frozen into the static served ZIP — see
+    // SERVED_CREATIVE_TOKEN_TTL_SECONDS for the rationale + tradeoff.
+    const signedCreativeToken = mintCreativeToken({
+      creativeId: variant.id,
+      tenantId: orgId,
+      orgId,
+      ttlSeconds: SERVED_CREATIVE_TOKEN_TTL_SECONDS,
+    });
     // Prefer the blueprint-synced manifest (its agentId is the campaign's REAL
     // agent). Only legacy variants with no CreativeManifest fall back to the
     // synthesized manifest + `agent:<campaignId>` placeholder (back-compat).

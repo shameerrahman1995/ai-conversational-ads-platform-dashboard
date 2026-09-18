@@ -42,8 +42,8 @@ describe('buildCreativeBundle', () => {
     expect(b.files['manifest.json']).toBeTruthy();
     expect(Buffer.isBuffer(b.zip)).toBe(true);
     expect(b.zipBytes).toBe(b.zip.length);
-    // Tiny thin creative — comfortably under Google's 600KB limit.
-    expect(b.zipBytes).toBeLessThan(600_000);
+    // Tiny thin creative — comfortably under Google's 150KB uploaded-HTML5 limit.
+    expect(b.zipBytes).toBeLessThan(150_000);
   });
 
   it('emits a valid ZIP whose entries match the source files', async () => {
@@ -95,6 +95,39 @@ describe('buildCreativeBundle', () => {
     expect(/\beval\s*\(/.test(js)).toBe(false);
     expect(/document\.write\s*\(/.test(js)).toBe(false);
     expect(/getUserMedia|navigator\.mediaDevices|navigator\.geolocation/.test(js)).toBe(false);
+  });
+
+  it('declares a Google clickTag global (defaulted to the final URL) before app.js', async () => {
+    const b = await buildCreativeBundle({ manifest: manifest(), copy });
+    const html = b.files['index.html'];
+    // clickTag declared with the finalUrl as its default value.
+    expect(html).toContain('var clickTag = "https://acme.example.com/landing";');
+    // The clickTag <script> must appear before the app.js <script> so app.js can read it.
+    expect(html.indexOf('var clickTag')).toBeLessThan(html.indexOf('src="app.js"'));
+    // data-final-url is kept as the fallback.
+    expect(html).toContain('data-final-url="https://acme.example.com/landing"');
+  });
+
+  it('routes the click-through through window.clickTag (data-final-url is only a fallback)', async () => {
+    const js = (await buildCreativeBundle({ manifest: manifest(), copy })).files['app.js'];
+    // The exit navigates via window.clickTag, falling back to data-final-url.
+    expect(js).toContain('window.clickTag');
+    expect(js).toMatch(/window\.open\(url, '_blank'\)/);
+    expect(js).toContain("getAttribute('data-final-url')");
+    // The destination is NOT hardcoded as the only path in window.open.
+    expect(/window\.open\(\s*["']https?:\/\//i.test(js)).toBe(false);
+  });
+
+  it('sends the shared-contract request bodies (text / fields+consent / creativeId+mode)', async () => {
+    const js = (await buildCreativeBundle({ manifest: manifest(), copy })).files['app.js'];
+    // POST /messages -> { text }
+    expect(js).toContain('JSON.stringify({ text: text })');
+    expect(js).not.toContain('{ message: text }');
+    // POST /lead -> { fields: { phone }, consent: true }
+    expect(js).toContain('JSON.stringify({ fields: { phone: phone }, consent: true })');
+    expect(js).not.toContain('{ phone: phone, consent: true }');
+    // POST /ad-sessions -> { creativeId, mode } (unchanged)
+    expect(js).toContain('JSON.stringify({ creativeId: manifest.creativeId, mode: manifest.mode })');
   });
 
   it('combined source passes the same shape the static-analysis gate reads', async () => {

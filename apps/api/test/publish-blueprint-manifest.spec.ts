@@ -133,9 +133,22 @@ describe('publish uses the blueprint-synced variant manifest', () => {
     // REAL agent id shipped — not the placeholder.
     expect(arg.manifest.agentId).toBe('agent_real_1');
     expect(arg.manifest.agentId).not.toMatch(/^agent:/);
-    // A fresh short-lived token is minted at publish (never the persisted blank).
+    // A fresh token is minted at publish (never the persisted blank).
     expect(arg.manifest.signedCreativeToken).toBeTruthy();
     expect(arg.manifest.signedCreativeToken).not.toBe('');
+    // ...and it is LONG-LIVED: the token is frozen into the STATIC ZIP Google
+    // serves, so a 15-minute default would already be expired at serve time and
+    // every ad-session would 401. It is scoped to exactly this one creative.
+    const claims = JSON.parse(
+      Buffer.from(
+        (arg.manifest.signedCreativeToken as string).split('.')[0].replace(/-/g, '+').replace(/_/g, '/'),
+        'base64',
+      ).toString('utf8'),
+    );
+    const ttlSeconds = claims.exp - Math.floor(Date.now() / 1000);
+    expect(ttlSeconds).toBeGreaterThan(80 * 24 * 3600); // ≈ 90 days, not 15 min
+    expect(claims.creativeId).toBe('v1'); // single-creative blast radius
+    expect(claims.scope).toBe('creative');
     // Copy is built from the blueprint-derived spec.
     expect(arg.copy.hook).toBe('Talk to our AI');
     expect(arg.copy.subhead).toBe('Ask anything');

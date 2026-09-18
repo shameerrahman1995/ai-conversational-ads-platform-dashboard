@@ -29,8 +29,12 @@ export interface CompileBundleInput {
   copy: BundleCopy;
 }
 
-/** Google's uploaded-HTML5 hard limit on the ZIP size (blueprint §3). */
-const GOOGLE_MAX_ZIP_BYTES = 600_000;
+/**
+ * Google's uploaded-HTML5 hard limit on the ZIP size (blueprint §3).
+ * Google Ads uploaded-HTML5 display limit is 150KB; DV360/Studio allows more —
+ * this code targets the Google Ads API HTML5_UPLOAD_AD path.
+ */
+const GOOGLE_MAX_ZIP_BYTES = 150_000;
 
 /**
  * The compiler runs ahead of any publish plan, so it has no target connector's
@@ -108,13 +112,29 @@ export class Html5CompilerService {
     const bundle = await buildCreativeBundle({ manifest: input.manifest, copy: input.copy });
 
     // Same static-analysis gate as inline compile, run over the generated source.
-    const analysis = analyzeHtml5(combinedSource(bundle.files), { network: input.network });
+    // For the real uploaded-HTML5 deliverable we additionally require the
+    // Google-mandated clickTag and the <meta name="ad.size"> tag (guards the
+    // generated template from regressing on either).
+    const analysis = analyzeHtml5(combinedSource(bundle.files), {
+      network: input.network,
+      requireClickTag: true,
+      requireAdSize: true,
+    });
     const issues = [...analysis.issues];
     // Enforce the real deliverable (ZIP) size, not just the source size.
     if (bundle.zipBytes > GOOGLE_MAX_ZIP_BYTES) {
       issues.push({
         code: 'oversize',
         message: `zip ${bundle.zipBytes} exceeds ${GOOGLE_MAX_ZIP_BYTES} bytes`,
+      });
+    }
+    // Google's HTML5_UPLOAD_AD requires index.html at the ZIP root. The analyzer
+    // only sees combined source, so assert the root-index at the compiler level
+    // where the file list is available.
+    if (!bundle.files['index.html']) {
+      issues.push({
+        code: 'missing_root_index',
+        message: 'index.html must be present at the ZIP root',
       });
     }
     const ok = issues.length === 0;

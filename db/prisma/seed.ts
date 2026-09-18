@@ -18,7 +18,10 @@
  *       srahman@hodos360.ai  (admin)      <- the demo login
  *       creator@demo.co      (creator)
  *       reviewer@demo.co     (reviewer)
- *   - 2 campaigns, 1 agent config, 2 creative variants
+ *       publisher@demo.co    (publisher)  <- approves plans (two-person publish)
+ *   - 3 campaigns, 1 agent config, 3 creative variants
+ *       incl. one GENERATED campaign with a committed CampaignVersion snapshot, so
+ *       a fresh publish plan can be created against it WITHOUT first calling generate
  *   - 2 publish plans (one LIVE, one IN_REVIEW) so the Publishing queue is populated
  *   - 1 conversation, 2 leads, and a set of funnel events so the dashboard shows data
  *
@@ -56,6 +59,11 @@ async function seedOrgAndUsers() {
     { id: 'user_demo_admin', email: 'srahman@hodos360.ai', role: 'admin', name: 'Shameer Rahman' },
     { id: 'user_demo_creator', email: 'creator@demo.co', role: 'creator', name: 'Demo Creator' },
     { id: 'user_demo_reviewer', email: 'reviewer@demo.co', role: 'reviewer', name: 'Demo Reviewer' },
+    // A `publisher` is required to APPROVE a publish plan (approve requires role
+    // `publisher`; `reviewer` does NOT satisfy it, and admin is only a superuser
+    // fallback). Without this user the two-person publish flow (create as creator,
+    // approve as publisher) has no non-admin approver — a governance dead-end.
+    { id: 'user_demo_publisher', email: 'publisher@demo.co', role: 'publisher', name: 'Demo Publisher' },
   ];
   for (const u of users) {
     await prisma.user.upsert({
@@ -144,6 +152,78 @@ async function seedCampaignsAndCreative() {
       format: 'image_1_1',
       status: 'draft',
       spec: { headline: 'Meet the future of advertising', body: 'Conversations that convert' },
+    },
+  });
+
+  // Campaign 3 — GENERATED with a committed CampaignVersion snapshot. This is the
+  // "ready to publish" demo: PublishService.createPlan HARD-REQUIRES a
+  // CampaignVersion snapshot ("Generate the campaign before creating a publish
+  // plan"), which only CampaignService.commitVersion normally writes. Seeding the
+  // snapshot here lets a fresh publish plan be created against this campaign
+  // WITHOUT first calling generate. Status GENERATED + version 1 mirrors exactly
+  // what commitVersion leaves behind (see campaign-intel/campaign.service.ts).
+  await prisma.campaign.upsert({
+    where: { id: 'camp_demo_3' },
+    update: { name: 'AI Advisor — Ready to Publish', status: 'GENERATED', objective: 'lead_generation', version: 1 },
+    create: {
+      id: 'camp_demo_3',
+      orgId: ORG_ID,
+      name: 'AI Advisor — Ready to Publish',
+      objective: 'lead_generation',
+      status: 'GENERATED',
+      version: 1,
+      settings: { platforms: ['google_ads'], budget: { dailyUsd: 150 } },
+    },
+  });
+
+  // A publishable HTML5 / Google-Ads variant for campaign 3. Mirrors var_demo_1's
+  // spec (html5 + runtimeProfile 'live-conversation') so it clears the publish
+  // runtime-profile capability gate for google_ads.
+  await prisma.creativeVariant.upsert({
+    where: { id: 'var_demo_3' },
+    update: { status: 'draft', format: 'html5' },
+    create: {
+      id: 'var_demo_3',
+      orgId: ORG_ID,
+      campaignId: 'camp_demo_3',
+      format: 'html5',
+      status: 'draft',
+      spec: { headline: 'Talk to our AI advisor', body: 'Get a quote in 60 seconds', runtimeProfile: 'live-conversation' },
+    },
+  });
+
+  // The committed CampaignVersion snapshot. Shape mirrors CampaignSnapshot exactly
+  // (campaign.service.ts): { copy, claims[], generation? }. `claims` carries one
+  // annotation per copy field + each proof point, matching annotate()'s output;
+  // `supported: false` is the honest value because no approved SourceFacts are
+  // seeded (annotate() would mark every claim "Needs verification"). The write
+  // (orgId, campaignId, version, snapshot) matches commitVersion's create.
+  const demoCopy = {
+    headline: 'Talk to our AI advisor',
+    offer: 'Get a personalized quote in 60 seconds',
+    cta: 'Start the conversation',
+    proofPoints: ['Real answers in real time', 'No forms — just a conversation'],
+  };
+  const asClaim = (text: string) => ({ text, supported: false });
+  const demoSnapshot = {
+    copy: demoCopy,
+    claims: [
+      asClaim(demoCopy.headline),
+      asClaim(demoCopy.offer),
+      asClaim(demoCopy.cta),
+      ...demoCopy.proofPoints.map(asClaim),
+    ],
+    generation: { model: 'claude-sonnet-5', brandVoice: 'Default' },
+  };
+  await prisma.campaignVersion.upsert({
+    where: { id: 'cver_demo_3' },
+    update: { snapshot: demoSnapshot as never, version: 1 },
+    create: {
+      id: 'cver_demo_3',
+      orgId: ORG_ID,
+      campaignId: 'camp_demo_3',
+      version: 1,
+      snapshot: demoSnapshot as never,
     },
   });
 }
@@ -270,16 +350,19 @@ async function main() {
   await seedPublishPlans();
   await seedConversationsLeadsEvents();
 
-  const [users, campaigns, plans, leads, events] = await Promise.all([
+  const [users, campaigns, versions, plans, leads, events] = await Promise.all([
     prisma.user.count({ where: { orgId: ORG_ID } }),
     prisma.campaign.count({ where: { orgId: ORG_ID } }),
+    prisma.campaignVersion.count({ where: { orgId: ORG_ID } }),
     prisma.publishJob.count({ where: { orgId: ORG_ID } }),
     prisma.lead.count({ where: { orgId: ORG_ID } }),
     prisma.event.count({ where: { orgId: ORG_ID } }),
   ]);
 
   console.log('Seed complete for org_demo (Demo Advertiser Co.)');
-  console.log(`  users=${users} campaigns=${campaigns} publishPlans=${plans} leads=${leads} events=${events}`);
+  console.log(
+    `  users=${users} campaigns=${campaigns} campaignVersions=${versions} publishPlans=${plans} leads=${leads} events=${events}`,
+  );
   console.log('  login: srahman@hodos360.ai / demo1234');
 }
 

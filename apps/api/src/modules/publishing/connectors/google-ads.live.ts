@@ -79,6 +79,32 @@ export function assertNumericId(value: string | undefined | null, label = 'id'):
   return v;
 }
 
+/**
+ * Derive a DETERMINISTIC, injection-safe marker from an arbitrary key (e.g. the
+ * plan's idempotencyKey `variant:platform:account`). Collapses every run of
+ * non-alphanumerics to a single `_` so the result is strictly `[A-Za-z0-9_]+` and
+ * is safe to interpolate into a GAQL string literal. Stable for a given key, so it
+ * lets ensure*-create paths QUERY the resource they would create and reuse it on a
+ * retry instead of building a second campaign/ad-group/ad tree.
+ */
+export function safeMarker(input: string): string {
+  const m = (input ?? '').replace(/[^A-Za-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+  if (!m) throw new Error('Google Ads: cannot derive a deterministic label from an empty key');
+  return m.slice(0, 80);
+}
+
+/**
+ * GAQL has NO parameter binding, so any value interpolated into a string literal
+ * must be allowlist-validated first. Resource NAMES we build ourselves (a constant
+ * prefix + safeMarker) contain only letters, digits, spaces and `_ . -` — reject
+ * anything else (notably quotes/backslashes) before it reaches a query.
+ */
+export function assertSafeLabel(value: string, label = 'label'): string {
+  const v = String(value ?? '');
+  if (!/^[A-Za-z0-9 _.\-]+$/.test(v)) throw new Error(`Google Ads: invalid ${label} "${v}"`);
+  return v;
+}
+
 /** GAQL date literals must be strict YYYY-MM-DD (no injection surface). */
 function assertGaqlDate(value: string, label: string): string {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
@@ -269,11 +295,51 @@ export class GoogleAdsLiveClient {
   }
 
   /**
-   * Create a fresh budget + a PAUSED DISPLAY campaign to contain the upload ad
-   * (call #2, campaign half). Named `ensure*` for the create-if-needed contract;
-   * it currently creates a new container per draft (safe + injection-free — a
-   * reuse-by-label lookup would interpolate free-text names into GAQL, so it is
-   * deferred: TODO reuse an existing display campaign by a numeric label id).
+   * Look up a non-removed campaign by its EXACT (deterministic) name. Returns the
+   * campaign + its budget so a retry can resume instead of building a duplicate.
+   */
+  private async findDisplayCampaignByName(
+    customerId: string,
+    name: string,
+  ): Promise<CreatedCampaign | null> {
+    const cid = normalizeCustomerId(customerId);
+    const safe = assertSafeLabel(name, 'campaign name');
+    const res = await this.search<{
+      campaign?: { id?: string; resourceName?: string; campaignBudget?: string };
+    }>(
+      cid,
+      `SELECT campaign.id, campaign.resource_name, campaign.campaign_budget ` +
+        `FROM campaign WHERE campaign.name = '${safe}' AND campaign.status != 'REMOVED' LIMIT 1`,
+    );
+    const c = res.results?.[0]?.campaign;
+    if (!c?.resourceName) return null;
+    return {
+      customerId: cid,
+      campaignId: c.id ?? (c.resourceName.split('/').pop() as string),
+      budgetResourceName: c.campaignBudget ?? '',
+      campaignResourceName: c.resourceName,
+    };
+  }
+
+  /** Look up a non-removed campaign budget by its EXACT (deterministic) name. */
+  private async findBudgetByName(customerId: string, name: string): Promise<string | null> {
+    const cid = normalizeCustomerId(customerId);
+    const safe = assertSafeLabel(name, 'budget name');
+    const res = await this.search<{ campaignBudget?: { resourceName?: string } }>(
+      cid,
+      `SELECT campaign_budget.resource_name ` +
+        `FROM campaign_budget WHERE campaign_budget.name = '${safe}' AND campaign_budget.status != 'REMOVED' LIMIT 1`,
+    );
+    return res.results?.[0]?.campaignBudget?.resourceName ?? null;
+  }
+
+  /**
+   * Ensure a budget + PAUSED DISPLAY campaign exists to contain the upload ad
+   * (call #2, campaign half). IDEMPOTENT by deterministic name: `input.name` must
+   * be a stable, injection-safe label (see `safeMarker`) derived from the plan, so
+   * a retry after a partial failure REUSES the existing campaign/budget instead of
+   * orphaning the first and creating a second tree. Budget + campaign are each
+   * queried-before-created, so a crash between the two writes still resumes.
    */
   async ensureDisplayCampaign(input: {
     customerId: string;
@@ -281,29 +347,39 @@ export class GoogleAdsLiveClient {
     dailyBudgetMicros?: string;
   }): Promise<CreatedCampaign> {
     const customerId = normalizeCustomerId(input.customerId);
-    // Google requires campaign/budget names to be unique among enabled/paused
-    // campaigns, so append a compact unique token (ms + random) to the base name.
-    const uniqueSuffix = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`;
-    const campaignName = `${input.name} · ${uniqueSuffix}`.slice(0, 128);
-    const budgetRes = await this.call<{ results?: Array<{ resourceName: string }> }>(
-      `/customers/${customerId}/campaignBudgets:mutate`,
-      {
-        method: 'POST',
-        body: JSON.stringify({
-          operations: [
-            {
-              create: {
-                name: `${input.name} budget ${uniqueSuffix}`.slice(0, 128),
-                amountMicros: input.dailyBudgetMicros ?? '1000000',
-                deliveryMethod: 'STANDARD',
+    // Deterministic names (no random suffix) are what makes this idempotent. Google
+    // requires campaign/budget names unique among enabled/paused campaigns — the
+    // query-before-create below satisfies that by reusing rather than colliding.
+    const campaignName = input.name.slice(0, 128);
+    const budgetName = `${input.name} budget`.slice(0, 128);
+
+    const existing = await this.findDisplayCampaignByName(customerId, campaignName);
+    if (existing) return existing;
+
+    // Reuse a budget left behind by a prior partial run (campaign create failed
+    // after the budget was created), else create it.
+    let budgetResourceName = await this.findBudgetByName(customerId, budgetName);
+    if (!budgetResourceName) {
+      const budgetRes = await this.call<{ results?: Array<{ resourceName: string }> }>(
+        `/customers/${customerId}/campaignBudgets:mutate`,
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            operations: [
+              {
+                create: {
+                  name: budgetName,
+                  amountMicros: input.dailyBudgetMicros ?? '1000000',
+                  deliveryMethod: 'STANDARD',
+                },
               },
-            },
-          ],
-        }),
-      },
-    );
-    const budgetResourceName = budgetRes.results?.[0]?.resourceName;
-    if (!budgetResourceName) throw new Error('Google Ads: budget create returned no resourceName');
+            ],
+          }),
+        },
+      );
+      budgetResourceName = budgetRes.results?.[0]?.resourceName ?? null;
+      if (!budgetResourceName) throw new Error('Google Ads: budget create returned no resourceName');
+    }
 
     const campaignRes = await this.call<{ results?: Array<{ resourceName: string }> }>(
       `/customers/${customerId}/campaigns:mutate`,
@@ -332,10 +408,32 @@ export class GoogleAdsLiveClient {
     return { customerId, campaignId, budgetResourceName, campaignResourceName };
   }
 
+  /** Look up a non-removed ad group by EXACT name within a campaign. */
+  private async findAdGroupByName(
+    customerId: string,
+    campaignResourceName: string,
+    name: string,
+  ): Promise<CreatedAdGroup | null> {
+    const cid = normalizeCustomerId(customerId);
+    const safe = assertSafeLabel(name, 'ad group name');
+    // campaignResourceName is server-generated; validate its numeric tail before
+    // interpolating (belt-and-braces against GAQL injection).
+    const campaignId = assertNumericId(campaignResourceName.split('/').pop(), 'campaignId');
+    const res = await this.search<{ adGroup?: { id?: string; resourceName?: string } }>(
+      cid,
+      `SELECT ad_group.id, ad_group.resource_name FROM ad_group ` +
+        `WHERE ad_group.name = '${safe}' AND ad_group.campaign = 'customers/${cid}/campaigns/${campaignId}' ` +
+        `AND ad_group.status != 'REMOVED' LIMIT 1`,
+    );
+    const g = res.results?.[0]?.adGroup;
+    if (!g?.resourceName) return null;
+    return { adGroupId: g.id ?? (g.resourceName.split('/').pop() as string), adGroupResourceName: g.resourceName };
+  }
+
   /**
-   * Create an ENABLED DISPLAY_STANDARD ad group in the given campaign (call #2,
-   * ad-group half). Named `ensure*` for parity with ensureDisplayCampaign; it
-   * currently creates a fresh ad group per draft (see the TODO above).
+   * Ensure an ENABLED DISPLAY_STANDARD ad group exists in the given campaign (call
+   * #2, ad-group half). IDEMPOTENT by deterministic name (see ensureDisplayCampaign):
+   * a retry reuses the existing ad group rather than creating a duplicate.
    */
   async ensureDisplayAdGroup(input: {
     customerId: string;
@@ -343,7 +441,9 @@ export class GoogleAdsLiveClient {
     name: string;
   }): Promise<CreatedAdGroup> {
     const customerId = normalizeCustomerId(input.customerId);
-    const uniqueSuffix = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`;
+    const adGroupName = input.name.slice(0, 128);
+    const existing = await this.findAdGroupByName(customerId, input.campaignResourceName, adGroupName);
+    if (existing) return existing;
     const res = await this.call<{ results?: Array<{ resourceName: string }> }>(
       `/customers/${customerId}/adGroups:mutate`,
       {
@@ -352,7 +452,7 @@ export class GoogleAdsLiveClient {
           operations: [
             {
               create: {
-                name: `${input.name} ad group ${uniqueSuffix}`.slice(0, 128),
+                name: adGroupName,
                 campaign: input.campaignResourceName,
                 status: 'ENABLED',
                 type: 'DISPLAY_STANDARD',
@@ -368,14 +468,45 @@ export class GoogleAdsLiveClient {
     return { adGroupId, adGroupResourceName };
   }
 
+  /** Look up a non-removed adGroupAd by EXACT ad name within an ad group. */
+  private async findDisplayUploadAdByName(
+    customerId: string,
+    adGroupResourceName: string,
+    name: string,
+  ): Promise<CreatedDisplayAd | null> {
+    const cid = normalizeCustomerId(customerId);
+    const safe = assertSafeLabel(name, 'ad name');
+    const adGroupId = assertNumericId(adGroupResourceName.split('/').pop(), 'adGroupId');
+    const res = await this.search<{
+      adGroupAd?: { resourceName?: string; ad?: { id?: string } };
+    }>(
+      cid,
+      `SELECT ad_group_ad.resource_name, ad_group_ad.ad.id FROM ad_group_ad ` +
+        `WHERE ad_group_ad.ad.name = '${safe}' AND ad_group_ad.ad_group = 'customers/${cid}/adGroups/${adGroupId}' ` +
+        `AND ad_group_ad.status != 'REMOVED' LIMIT 1`,
+    );
+    const a = res.results?.[0]?.adGroupAd;
+    if (!a?.resourceName) return null;
+    return { adGroupAdResourceName: a.resourceName, adId: a.ad?.id ?? (a.resourceName.split('~').pop() ?? '') };
+  }
+
   /**
-   * Create a PAUSED HTML5 display upload ad in the ad group (call #3).
+   * Ensure a PAUSED HTML5 display upload ad exists in the ad group (call #3).
    * REST field names confirmed against the display-upload-ads docs:
    * `displayUploadAd.displayUploadProductType:"HTML5_UPLOAD_AD"` +
    * `displayUploadAd.mediaBundle.asset` referencing the MEDIA_BUNDLE asset RN.
    * The returned adGroupAd RN is `.../adGroupAds/{adGroupId}~{adId}`.
+   *
+   * IDEMPOTENT by deterministic ad name (see ensureDisplayCampaign): a retry after
+   * a partial failure REUSES the existing ad rather than creating a duplicate
+   * ENABLED ad (which would mean double review + double spend). NOTE: the freshly
+   * re-uploaded MEDIA_BUNDLE asset from a retry is left unreferenced when an
+   * existing ad is reused — the asset is uploaded upstream (resolvePublishSpec)
+   * before this call, so de-duplicating it is out of this method's scope; see the
+   * "remaining" note in the connector for why the ad-tree duplication (the real
+   * spend/orphan risk) is closed while asset dedup is deferred.
    */
-  async createDisplayUploadAd(input: {
+  async ensureDisplayUploadAd(input: {
     customerId: string;
     adGroupResourceName: string;
     assetResourceName: string;
@@ -383,6 +514,9 @@ export class GoogleAdsLiveClient {
     name: string;
   }): Promise<CreatedDisplayAd> {
     const customerId = normalizeCustomerId(input.customerId);
+    const adName = input.name.slice(0, 255);
+    const existing = await this.findDisplayUploadAdByName(customerId, input.adGroupResourceName, adName);
+    if (existing) return existing;
     const res = await this.call<{ results?: Array<{ resourceName: string }> }>(
       `/customers/${customerId}/adGroupAds:mutate`,
       {
@@ -394,7 +528,7 @@ export class GoogleAdsLiveClient {
                 status: 'PAUSED',
                 adGroup: input.adGroupResourceName,
                 ad: {
-                  name: input.name.slice(0, 255),
+                  name: adName,
                   finalUrls: [input.finalUrl],
                   displayUploadAd: {
                     displayUploadProductType: 'HTML5_UPLOAD_AD',

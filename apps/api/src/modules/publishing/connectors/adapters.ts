@@ -20,6 +20,7 @@ import {
   GoogleAdsLiveClient,
   normalizeCustomerId,
   readGoogleAdsConfig,
+  safeMarker,
 } from './google-ads.live';
 
 /**
@@ -126,7 +127,8 @@ export class GoogleAdsConnector extends BaseAdConnectorStub {
   protected formats: CreativeFormat[] = ['image_1_1', 'image_4_5', 'html5'];
   protected html5 = true;
   protected nativeLeadForms = true;
-  protected maxBundleBytes = 600_000; // Google display bundle limit
+  // Google Ads uploaded-HTML5 display limit is 150KB; DV360/Studio allows more.
+  protected maxBundleBytes = 150_000;
 
   private client: GoogleAdsLiveClient | null | undefined; // undefined = not yet resolved
 
@@ -173,16 +175,6 @@ export class GoogleAdsConnector extends BaseAdConnectorStub {
   /** Numeric ad id from an adGroupAd resource name `.../adGroupAds/{adGroupId}~{adId}`. */
   private static adIdFrom(adResourceName: string): string {
     return adResourceName.split('~').pop() ?? '';
-  }
-
-  /** Best-effort creative name from the provider-agnostic creative spec. */
-  private campaignName(spec: unknown, fallbackKey: string): string {
-    const s = (spec ?? {}) as Record<string, unknown>;
-    const copy = (s.copy ?? {}) as Record<string, unknown>;
-    const name = s.name ?? s.headline ?? s.title ?? copy.headline ?? copy.title;
-    return typeof name === 'string' && name.trim()
-      ? `ConvoAds — ${name.trim()}`.slice(0, 120)
-      : `ConvoAds campaign ${fallbackKey}`;
   }
 
   /**
@@ -322,20 +314,26 @@ export class GoogleAdsConnector extends BaseAdConnectorStub {
         'Google Ads: createDraft requires campaignSpec.finalUrl (or campaignSpec.landingUrl)',
       );
     }
-    const name = this.campaignName(input.campaignSpec, input.idempotencyKey);
-    // Calls #2 (campaign + ad group) then #3 (the display upload ad, PAUSED).
-    const campaign = await client.ensureDisplayCampaign({ customerId, name });
+    // Deterministic, injection-safe base label derived from the plan's idempotency
+    // key (variant:platform:account). It is STABLE across retries, so the ensure*
+    // calls below can query-before-create and RESUME a partially-failed deploy
+    // instead of building a second campaign/ad-group/ad tree (which would orphan
+    // the first tree + its uploaded media bundle and double ad-spend).
+    const baseName = `ConvoAds ${safeMarker(input.idempotencyKey)}`.slice(0, 120);
+    // Calls #2 (campaign + ad group) then #3 (the display upload ad, PAUSED). All
+    // three are keyed by baseName, so a retry reuses them rather than duplicating.
+    const campaign = await client.ensureDisplayCampaign({ customerId, name: baseName });
     const adGroup = await client.ensureDisplayAdGroup({
       customerId,
       campaignResourceName: campaign.campaignResourceName,
-      name,
+      name: `${baseName} ad group`,
     });
-    const ad = await client.createDisplayUploadAd({
+    const ad = await client.ensureDisplayUploadAd({
       customerId,
       adGroupResourceName: adGroup.adGroupResourceName,
       assetResourceName,
       finalUrl,
-      name,
+      name: `${baseName} ad`,
     });
     const packed = GoogleAdsConnector.pack(customerId, ad.adGroupAdResourceName);
     return {

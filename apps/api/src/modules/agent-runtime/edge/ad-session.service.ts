@@ -95,9 +95,17 @@ export class AdSessionService {
     const creativeId = claims.creativeId;
 
     const resolved = await this.resolveAgent(orgId, creativeId);
-    const voiceEnabled = Boolean(resolved?.settings.voice.enabled) && this.clientAllowsVoice(dto.capabilities);
+    // Publish gate at session start — the SAME live check bootstrap() enforces.
+    // Only a LIVE (published) agent may drive a real conversation from the public
+    // edge; a missing/draft/paused agent must not be reachable, otherwise the RBAC
+    // publish gate is meaningless (a leaked/pre-publish token could start a session
+    // against an unpublished agent). Refuse BEFORE creating any AdSession row.
+    if (!resolved || resolved.status !== 'live') {
+      throw new NotFoundException('This creative is not live');
+    }
+    const voiceEnabled = Boolean(resolved.settings.voice.enabled) && this.clientAllowsVoice(dto.capabilities);
     const conversationEnabled = true;
-    const disclosure = resolved?.settings.disclosure ?? DEFAULT_AGENT_SETTINGS.disclosure;
+    const disclosure = resolved.settings.disclosure ?? DEFAULT_AGENT_SETTINGS.disclosure;
 
     const row = await this.prisma.adSession.create({
       data: {
@@ -114,7 +122,7 @@ export class AdSessionService {
       orgId,
       creativeId,
       platform: dto.platform,
-      agentId: resolved?.agentId ?? null,
+      agentId: resolved.agentId,
       conversationId: null,
       disclosure,
       conversationEnabled,
@@ -395,7 +403,10 @@ export class AdSessionService {
       mode: 'interactive_ai',
       features,
       allowedActions: ['show_specs', 'capture_lead', 'open_url'],
-      edgeApiBase: `${env.API_BASE_URL}/v1`,
+      // API base WITHOUT a trailing `/v1` — the served app.js appends `/v1/...`
+      // itself (matches the baked-manifest convention). Baking `/v1` here would
+      // yield `/v1/v1/...` 404s if bootstrap were ever wired into app.js.
+      edgeApiBase: `${env.API_BASE_URL}`,
       disclosure: settings.disclosure,
       signedCreativeToken: mintCreativeToken({ creativeId, tenantId: orgId, orgId }),
     };
@@ -526,7 +537,7 @@ export class AdSessionService {
   private async resolveAgent(
     orgId: string,
     creativeId: string,
-  ): Promise<{ agentId: string; settings: AgentSettings } | null> {
+  ): Promise<{ agentId: string; status: string; settings: AgentSettings } | null> {
     const variant = await this.prisma.creativeVariant.findFirst({
       where: scopedWhere(orgId, { id: creativeId }),
     });
@@ -535,7 +546,9 @@ export class AdSessionService {
       where: scopedWhere(orgId, { campaignId: variant.campaignId }),
     });
     if (!agent) return null;
-    return { agentId: agent.id, settings: normalizeSettings(agent.settings) };
+    // Surface `status` so the caller can enforce the publish gate (live-only). The
+    // cross-tenant scopedWhere above stays intact — resolution is always org-scoped.
+    return { agentId: agent.id, status: agent.status, settings: normalizeSettings(agent.settings) };
   }
 
   /** Load a session and enforce that it belongs to the token's org (multi-tenant). */

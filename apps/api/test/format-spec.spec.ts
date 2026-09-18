@@ -17,8 +17,9 @@ describe('validateOutputs', () => {
     expect(r.issues.some((i) => i.code === 'bad_width')).toBe(true);
   });
 
-  it('flags an html5 bundle over 600KB (Google limit)', () => {
-    const r = validateOutputs([{ format: 'html5', bytes: 700_000, storageKey: 'k' }]);
+  it('flags an html5 bundle over 150KB (Google uploaded-HTML5 limit)', () => {
+    // 200KB is under the old 600KB gate but over Google's real 150KB limit.
+    const r = validateOutputs([{ format: 'html5', bytes: 200_000, storageKey: 'k' }]);
     expect(r.ok).toBe(false);
     expect(r.issues[0].code).toBe('oversize');
   });

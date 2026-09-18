@@ -31,9 +31,46 @@ describe('analyzeHtml5', () => {
     expect(r.issues.some((i) => i.code === 'unsafe_js')).toBe(true);
   });
 
-  it('flags oversize for the Google 600KB limit', () => {
-    const r = analyzeHtml5('a'.repeat(700_000), { network: 'google_ads' });
+  it('flags oversize for the Google 150KB uploaded-HTML5 limit', () => {
+    // 200KB is under the old 600KB gate but over Google's real 150KB limit.
+    const r = analyzeHtml5('a'.repeat(200_000), { network: 'google_ads' });
     expect(r.issues.some((i) => i.code === 'oversize')).toBe(true);
+  });
+});
+
+describe('analyzeHtml5 — uploaded-HTML5 structural gate (opt-in)', () => {
+  const has = (r: ReturnType<typeof analyzeHtml5>, code: string) => r.issues.some((i) => i.code === code);
+  const goodBundle =
+    '<meta name="ad.size" content="width=300,height=250">' +
+    '<div id="acp-ad"></div>' +
+    '<script>var clickTag = "https://x.example/landing";</script>' +
+    '<script>window.open(window.clickTag, "_blank");</script>';
+
+  it('passes a bundle that declares clickTag and ad.size', () => {
+    const r = analyzeHtml5(goodBundle, { network: 'google_ads', requireClickTag: true, requireAdSize: true });
+    expect(r.ok).toBe(true);
+  });
+
+  it('flags a missing clickTag when required', () => {
+    const r = analyzeHtml5('<meta name="ad.size" content="width=300,height=250"><div></div>', {
+      network: 'google_ads',
+      requireClickTag: true,
+    });
+    expect(has(r, 'missing_clicktag')).toBe(true);
+  });
+
+  it('flags a missing ad.size meta when required', () => {
+    const r = analyzeHtml5('<script>var clickTag = "https://x.example";</script>', {
+      network: 'google_ads',
+      requireAdSize: true,
+    });
+    expect(has(r, 'missing_ad_size')).toBe(true);
+  });
+
+  it('does not require clickTag / ad.size unless opted in (inline compile path)', () => {
+    const r = analyzeHtml5('<div><script>var x=1;</script></div>', { network: 'google_ads' });
+    expect(has(r, 'missing_clicktag')).toBe(false);
+    expect(has(r, 'missing_ad_size')).toBe(false);
   });
 });
 

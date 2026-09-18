@@ -17,7 +17,8 @@ export class StubRenderer implements RenderPort {
       { format: 'image_4_5', width: 1080, height: 1350, bytes: 140_000, storageKey: 'render/4_5.png' },
       { format: 'image_9_16', width: 1080, height: 1920, bytes: 160_000, storageKey: 'render/9_16.png' },
       { format: 'video', bytes: 2_000_000, storageKey: 'render/storyboard.mp4' },
-      { format: 'html5', bytes: 550_000, storageKey: 'render/google_display.zip' },
+      // Under the 150KB Google Ads uploaded-HTML5 display limit (format-spec.ts).
+      { format: 'html5', bytes: 120_000, storageKey: 'render/google_display.zip' },
     ];
   }
 }

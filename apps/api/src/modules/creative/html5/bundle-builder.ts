@@ -13,7 +13,10 @@
  * The bundle references ONLY local assets (no external/CDN JS or CSS) so it is
  * valid for Google's uploaded-HTML5 requirements, and it degrades gracefully:
  * if the edge API is unreachable the ad still works as a normal interactive
- * creative (Explore CTA opens the final URL).
+ * creative (Explore CTA opens the click-through). The click-through routes via
+ * the Google-mandated global `clickTag` (which Google overrides with the ad's
+ * Final URL and uses to measure the click), falling back to the baked-in
+ * `data-final-url` only when clickTag is unset.
  *
  * Output is deterministic (fixed timestamps + stable file order) so identical
  * inputs reproduce byte-identical ZIPs.
@@ -75,6 +78,16 @@ function escapeHtml(value: string): string {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
+}
+
+/**
+ * Produce a safe, double-quoted JS string literal for inlining inside an
+ * HTML `<script>` element. JSON.stringify handles JS-string escaping; the
+ * extra `<`/`>` escapes make it impossible for the value to terminate the
+ * script element early (e.g. a `</script>` in the URL).
+ */
+function jsStringLiteral(value: string): string {
+  return JSON.stringify(String(value)).replace(/</g, '\\u003c').replace(/>/g, '\\u003e');
 }
 
 /** Serialize the manifest with a stable key order and no extra fields. */
@@ -154,6 +167,7 @@ ${askButton}    </div>
   <p id="acp-status" class="acp-status" hidden></p>
 </div>
 <script type="application/json" id="acp-manifest">${inlineManifest(manifest)}</script>
+<script>var clickTag = ${jsStringLiteral(copy.finalUrl)};</script>
 <script src="app.js"></script>
 </body>
 </html>
@@ -264,8 +278,13 @@ export function renderAppJs(): string {
   }
 
   function openFinalUrl() {
+    // Google's HTML5 upload ads override the global clickTag with the ad's
+    // Final URL and measure the click through it, so the exit MUST route via
+    // window.clickTag. Fall back to the baked-in data-final-url only when
+    // clickTag is unset (e.g. rendered outside Google Ads).
     var ad = byId('acp-ad');
-    var url = ad && ad.getAttribute('data-final-url');
+    var fallback = (ad && ad.getAttribute('data-final-url')) || '';
+    var url = window.clickTag || fallback;
     if (url) { try { window.open(url, '_blank'); } catch (e) { /* noop */ } }
   }
 
@@ -309,7 +328,7 @@ export function renderAppJs(): string {
       method: 'POST',
       credentials: 'omit',
       headers: authHeaders(manifest),
-      body: JSON.stringify({ message: text })
+      body: JSON.stringify({ text: text })
     });
   }
 
@@ -318,7 +337,7 @@ export function renderAppJs(): string {
       method: 'POST',
       credentials: 'omit',
       headers: authHeaders(manifest),
-      body: JSON.stringify({ phone: phone, consent: true })
+      body: JSON.stringify({ fields: { phone: phone }, consent: true })
     });
   }
 

@@ -243,6 +243,39 @@ describe('AdSessionService (edge)', () => {
     );
   });
 
+  // A2 (publish gate at session start): a draft/paused/unpublished agent must not be
+  // able to drive a real conversation from the public edge — the SAME live check
+  // bootstrap enforces, applied to the session-creation path. No AdSession row and
+  // no telemetry may be written when the agent is not live.
+  it('createSession 404s and writes NO session when the resolved agent is not live (draft)', async () => {
+    const d = deps({ agent: { id: 'ag_1', orgId: 'org_1', campaignId: 'camp_1', status: 'draft', settings: {} } });
+    const svc = make(d);
+    await expect(
+      svc.createSession(CLAIMS, { creativeId: 'cr_1', platform: 'google_ads' }),
+    ).rejects.toThrow(/not live|not found/i);
+    expect(d.prisma.adSession.create).not.toHaveBeenCalled();
+    expect(d.events.emit).not.toHaveBeenCalled();
+  });
+
+  it('createSession 404s and writes NO session when the creative has no agent at all', async () => {
+    const d = deps({ agent: null });
+    const svc = make(d);
+    await expect(
+      svc.createSession(CLAIMS, { creativeId: 'cr_1', platform: 'google_ads' }),
+    ).rejects.toThrow(/not live|not found/i);
+    expect(d.prisma.adSession.create).not.toHaveBeenCalled();
+    expect(d.events.emit).not.toHaveBeenCalled();
+  });
+
+  it('createSession 404s (does not throw a raw error) when the creative variant is missing', async () => {
+    const d = deps({ variant: null });
+    const svc = make(d);
+    await expect(
+      svc.createSession(CLAIMS, { creativeId: 'cr_1', platform: 'google_ads' }),
+    ).rejects.toThrow(/not live|not found/i);
+    expect(d.prisma.adSession.create).not.toHaveBeenCalled();
+  });
+
   // P2 security (lead without session): a Lead must never be written for a
   // missing/expired/cross-tenant session id — that is an unauthenticated write
   // path. submitLead requires a valid owned session first.
@@ -293,7 +326,7 @@ describe('AdSessionService (edge)', () => {
   });
 
   it('voice-token mints a short-lived token when voice is enabled + client has mic', async () => {
-    const d = deps({ agent: { id: 'ag_1', orgId: 'org_1', campaignId: 'camp_1', settings: { voice: { enabled: true } } } });
+    const d = deps({ agent: { id: 'ag_1', orgId: 'org_1', campaignId: 'camp_1', status: 'live', settings: { voice: { enabled: true } } } });
     const svc = make(d);
     await svc.createSession(CLAIMS, { creativeId: 'cr_1', capabilities: { mic: true } });
     const out = await svc.voiceToken(CLAIMS, 'sess_1');
@@ -309,7 +342,11 @@ describe('AdSessionService (edge)', () => {
     expect(boot.creativeId).toBe('cr_1');
     expect(boot.mode).toBe('interactive_ai');
     expect(boot.features.textChat).toBe(true);
-    expect(boot.edgeApiBase).toContain('/v1');
+    // edgeApiBase is the API base WITHOUT a trailing /v1 — the served app.js
+    // appends /v1/... itself (matches the baked-manifest convention). A baked /v1
+    // here would produce /v1/v1/... 404s.
+    expect(boot.edgeApiBase).toMatch(/^https?:\/\//);
+    expect(boot.edgeApiBase).not.toMatch(/\/v1\/?$/);
     expect(boot.signedCreativeToken.split('.')).toHaveLength(2);
     expect(JSON.stringify(boot)).not.toMatch(/secret|apiKey|password/i);
   });

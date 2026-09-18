@@ -152,14 +152,26 @@ function extractCssUrls(css: string): string[] {
   return out;
 }
 
-export function analyzeHtml5(html: string, opts: { network: string; maxBytes?: number }): Html5Analysis {
+export function analyzeHtml5(
+  html: string,
+  opts: {
+    network: string;
+    maxBytes?: number;
+    /** Uploaded-HTML5 (Google) requires a clickTag — fail if absent. */
+    requireClickTag?: boolean;
+    /** Uploaded-HTML5 requires a <meta name="ad.size"> tag — fail if absent. */
+    requireAdSize?: boolean;
+  },
+): Html5Analysis {
   const issues: Html5Issue[] = [];
   const add = (code: string, message: string) => {
     if (!issues.some((i) => i.code === code)) issues.push({ code, message });
   };
 
   const sizeBytes = Buffer.byteLength(html, 'utf8');
-  const maxBytes = opts.maxBytes ?? (opts.network === 'google_ads' ? 600_000 : 5_000_000);
+  // Google Ads uploaded-HTML5 display limit is 150KB; DV360/Studio allows more —
+  // this code targets the Google Ads API HTML5_UPLOAD_AD path.
+  const maxBytes = opts.maxBytes ?? (opts.network === 'google_ads' ? 150_000 : 5_000_000);
   if (sizeBytes > maxBytes) add('oversize', `bundle ${sizeBytes} exceeds ${maxBytes} bytes`);
 
   const policy = policyFor(opts.network);
@@ -201,6 +213,16 @@ export function analyzeHtml5(html: string, opts: { network: string; maxBytes?: n
       add('secret', `possible secret in bundle (${code})`);
       break;
     }
+  }
+
+  // 4) Uploaded-HTML5 (Google) structural requirements. Opt-in so the inline
+  // compile path (arbitrary user templates on any network) is unaffected; the
+  // real ZIP compiler enables these to guard the generated creative.
+  if (opts.requireClickTag && !/\bclickTag\b/.test(html)) {
+    add('missing_clicktag', 'uploaded HTML5 must declare/use a clickTag for the click-through');
+  }
+  if (opts.requireAdSize && !/<meta\s+[^>]*name\s*=\s*["']ad\.size["']/i.test(html)) {
+    add('missing_ad_size', 'uploaded HTML5 must include a <meta name="ad.size"> tag');
   }
 
   return { ok: issues.length === 0, issues, sizeBytes };

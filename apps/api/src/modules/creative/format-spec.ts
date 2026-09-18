@@ -13,7 +13,9 @@ export const FORMAT_SPECS: Record<string, FormatSpec> = {
   image_16_9: { width: 1920, height: 1080 },
   video: { maxBytes: 50_000_000 },
   audio: { maxBytes: 10_000_000 },
-  html5: { maxBytes: 600_000 }, // Google display upload bundle limit
+  // Google Ads uploaded-HTML5 display limit is 150KB; DV360/Studio allows more —
+  // this code targets the Google Ads API HTML5_UPLOAD_AD path.
+  html5: { maxBytes: 150_000 },
 };
 
 export interface RenderOutput {

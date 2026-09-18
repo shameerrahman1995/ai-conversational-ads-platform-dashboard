@@ -22,7 +22,56 @@ async function bootstrap(): Promise<void> {
   // Security headers.
   app.use(helmet());
 
-  // CORS: explicit allowlist in production; reflect origin in dev.
+  // Public-edge CORS (blueprint §4/§5). The in-ad creative's served app.js runs on
+  // ARBITRARY publisher domains and calls the public edge (`/v1/ad-sessions*` and
+  // `/v1/creatives/:id/bootstrap`) cross-origin. The dashboard's allowlist CORS
+  // (below) would reject every one of those origins in production, so no session
+  // could ever start. These edge routes are credential-less (the app.js fetches
+  // with credentials:'omit') and carry only a signed creative token in the
+  // Authorization header — never cookies — so reflecting the request Origin
+  // WITHOUT Access-Control-Allow-Credentials is safe: it exposes no ambient
+  // credentials and cannot be paired with `origin:'*' + credentials`. This narrow
+  // middleware is scoped ONLY to those path prefixes and runs BEFORE enableCors so
+  // the preflight (OPTIONS) is answered here, before the CreativeTokenGuard would
+  // otherwise 401 a header-less preflight. Everything else falls through to the
+  // dashboard allowlist unchanged.
+  const EDGE_CORS_PREFIXES = ['/v1/ad-sessions', '/v1/creatives'];
+  app.use(
+    (
+      req: {
+        method?: string;
+        url?: string;
+        originalUrl?: string;
+        headers: Record<string, string | string[] | undefined>;
+      },
+      res: { setHeader(name: string, value: string): void; statusCode: number; end(): void },
+      next: () => void,
+    ): void => {
+      const path = (req.originalUrl ?? req.url ?? '').split('?')[0];
+      const isEdge = EDGE_CORS_PREFIXES.some((p) => path === p || path.startsWith(`${p}/`));
+      if (isEdge) {
+        const origin = req.headers.origin;
+        if (typeof origin === 'string' && origin.length > 0) {
+          res.setHeader('Access-Control-Allow-Origin', origin); // reflect, no wildcard
+          res.setHeader('Vary', 'Origin'); // cache-correctness for the reflected value
+          res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
+          res.setHeader('Access-Control-Allow-Headers', 'authorization,content-type');
+          res.setHeader('Access-Control-Max-Age', '600');
+          // Deliberately NO Access-Control-Allow-Credentials — these routes need none.
+          if (req.method === 'OPTIONS') {
+            res.statusCode = 204;
+            res.end();
+            return;
+          }
+        }
+      }
+      next();
+    },
+  );
+
+  // CORS: explicit allowlist in production; reflect origin in dev. (Dashboard API
+  // only — the credential-less public-edge middleware above already handled the
+  // ad-session/bootstrap routes and left everything else for this allowlist.)
   const origins = env.CORS_ORIGINS.split(',').map((s) => s.trim()).filter(Boolean);
   app.enableCors({
     origin: env.NODE_ENV === 'production' ? origins : true,

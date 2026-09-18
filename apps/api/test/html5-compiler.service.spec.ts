@@ -95,13 +95,15 @@ describe('Html5CompilerService.compileBundle', () => {
     expect(out.ok).toBe(true);
     expect(out.files.map((f) => f.name)).toEqual(['index.html', 'styles.css', 'app.js', 'manifest.json']);
     expect(out.zipBytes).toBeGreaterThan(0);
-    expect(out.zipBytes).toBeLessThan(600_000);
+    expect(out.zipBytes).toBeLessThan(150_000);
     expect(typeof out.zipBase64).toBe('string');
 
     // The returned base64 is a real, readable ZIP.
     const zip = await JSZip.loadAsync(Buffer.from(out.zipBase64 as string, 'base64'));
     const idx = await zip.file('index.html')!.async('string');
     expect(idx).toContain('ad.size');
+    // Google-mandated clickTag is present in the compiled creative.
+    expect(idx).toContain('var clickTag =');
     const persisted = d.prisma.creativeVariant.update.mock.calls[0][0];
     expect(persisted.data.status).toBe('compiled');
     expect(persisted.data.manifest.html5Bundle.zipBase64).toBe(out.zipBase64);
