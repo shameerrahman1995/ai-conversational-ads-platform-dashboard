@@ -21,6 +21,21 @@ describe('model capability registry', () => {
     expect(getModelCapabilities('gpt-vapor-9').provider).toBe('unknown');
   });
 
+  it('OpenAI + Gemini models are registered with sampling support', () => {
+    expect(getModelCapabilities('gpt-4o').provider).toBe('openai');
+    expect(getModelCapabilities('gpt-4o-mini').provider).toBe('openai');
+    expect(getModelCapabilities('gemini-2.5-pro').provider).toBe('google');
+    expect(getModelCapabilities('gemini-2.5-flash').provider).toBe('google');
+    for (const id of ['gpt-4o', 'gpt-4o-mini', 'gemini-2.5-pro', 'gemini-2.5-flash']) {
+      expect(modelSupportsSampling(id)).toBe(true);
+    }
+  });
+
+  it('sanitize keeps temperature for OpenAI/Gemini (they accept 0–2)', () => {
+    expect(sanitizeModelParams('gpt-4o', { temperature: 0.7, maxTokens: 512 }).temperature).toBe(0.7);
+    expect(sanitizeModelParams('gemini-2.5-pro', { temperature: 1.5, maxTokens: 512 }).temperature).toBe(1.5);
+  });
+
   it('sanitize strips temperature for reasoning models (would 400)', () => {
     const p = sanitizeModelParams('claude-sonnet-5', { temperature: 0.4, maxTokens: 1024 });
     expect(p.temperature).toBeUndefined();

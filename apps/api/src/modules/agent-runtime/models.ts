@@ -45,10 +45,57 @@ export const MODEL_CATALOG: ModelOption[] = [
     description: 'Creative copy specialist — punchy, on-brand ad variants.',
     recommendedFor: ['copywriter'],
   },
+  // ---- OpenAI (GPT) ----
+  {
+    id: 'gpt-4o',
+    label: 'GPT-4o',
+    provider: 'openai',
+    tier: 'frontier',
+    description: 'OpenAI flagship — strong general reasoning for sales conversations.',
+    recommendedFor: ['agent', 'copywriter'],
+  },
+  {
+    id: 'gpt-4o-mini',
+    label: 'GPT-4o mini',
+    provider: 'openai',
+    tier: 'fast',
+    description: 'Fast, low-cost OpenAI model — high-volume, short interactions.',
+    recommendedFor: ['agent'],
+  },
+  // ---- Google Gemini ----
+  {
+    id: 'gemini-2.5-pro',
+    label: 'Gemini 2.5 Pro',
+    provider: 'google',
+    tier: 'frontier',
+    description: 'Google flagship — long-context reasoning and nuanced replies.',
+    recommendedFor: ['agent', 'copywriter'],
+  },
+  {
+    id: 'gemini-2.5-flash',
+    label: 'Gemini 2.5 Flash',
+    provider: 'google',
+    tier: 'fast',
+    description: 'Fast, low-cost Google model — high-volume interactions.',
+    recommendedFor: ['agent'],
+  },
 ];
 
 export function isKnownModel(id: string): boolean {
   return MODEL_CATALOG.some((m) => m.id === id);
+}
+
+/**
+ * Resolve which provider owns a model id (for the RoutingModelGateway). Prefers
+ * the catalog, falls back to the capability registry, and returns 'unknown' when
+ * the id is not recognised (the router then routes it to the stub, fail-safe).
+ */
+export function providerForModel(id: string): string {
+  return (
+    MODEL_CATALOG.find((m) => m.id === id)?.provider ??
+    MODEL_CAPABILITIES[id]?.provider ??
+    'unknown'
+  );
 }
 
 /**
@@ -82,6 +129,12 @@ export const MODEL_CAPABILITIES: Record<string, ModelCapabilities> = {
   'claude-sonnet-5': { provider: 'anthropic', supportsSampling: false, temperatureRange: [0, 1], maxOutputTokens: APP_MAX_OUTPUT_TOKENS, reasoningControl: 'effort' },
   'claude-fable-5-1': { provider: 'anthropic', supportsSampling: false, temperatureRange: [0, 1], maxOutputTokens: APP_MAX_OUTPUT_TOKENS, reasoningControl: 'effort' },
   'claude-haiku-4-5': { provider: 'anthropic', supportsSampling: true, temperatureRange: [0, 1], maxOutputTokens: APP_MAX_OUTPUT_TOKENS, reasoningControl: 'budget_tokens' },
+  // OpenAI GPT-4o family accepts sampling (temperature 0–2).
+  'gpt-4o': { provider: 'openai', supportsSampling: true, temperatureRange: [0, 2], maxOutputTokens: APP_MAX_OUTPUT_TOKENS, reasoningControl: 'none' },
+  'gpt-4o-mini': { provider: 'openai', supportsSampling: true, temperatureRange: [0, 2], maxOutputTokens: APP_MAX_OUTPUT_TOKENS, reasoningControl: 'none' },
+  // Google Gemini 2.5 accepts sampling (temperature 0–2).
+  'gemini-2.5-pro': { provider: 'google', supportsSampling: true, temperatureRange: [0, 2], maxOutputTokens: APP_MAX_OUTPUT_TOKENS, reasoningControl: 'none' },
+  'gemini-2.5-flash': { provider: 'google', supportsSampling: true, temperatureRange: [0, 2], maxOutputTokens: APP_MAX_OUTPUT_TOKENS, reasoningControl: 'none' },
 };
 
 /**

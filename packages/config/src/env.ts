@@ -73,9 +73,19 @@ export const envSchema = z.object({
   S3_SECRET_ACCESS_KEY: z.string().optional(),
   S3_BUCKET: z.string().default('acp-assets'),
 
-  // AI model gateway (provider-neutral)
+  // AI model gateway (provider-neutral). Each provider's adapter activates only
+  // when PROVIDERS_MODE=live AND that provider's API key is present; the runtime
+  // routes a request to the adapter that owns the chosen model (see
+  // RoutingModelGateway / MODEL_CATALOG). Keys are read server-side only and must
+  // never reach the browser (blueprint §12/§17).
   ANTHROPIC_API_KEY: z.string().optional(),
   ANTHROPIC_BASE_URL: z.string().url().optional(),
+  // OpenAI (GPT) provider.
+  OPENAI_API_KEY: z.string().optional(),
+  OPENAI_BASE_URL: z.string().url().optional(),
+  // Google Gemini provider (Generative Language API).
+  GEMINI_API_KEY: z.string().optional(),
+  GEMINI_BASE_URL: z.string().url().optional(),
   MODEL_GATEWAY_DEFAULT_MODEL: z.string().default('claude-sonnet-5'),
 
   // Provider selection: 'stub' (default) or 'live' — 'live' requires real creds.

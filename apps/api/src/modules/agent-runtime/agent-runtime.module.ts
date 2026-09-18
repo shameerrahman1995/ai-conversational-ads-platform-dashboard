@@ -8,9 +8,12 @@ import { AgentController } from './agent.controller';
 import { AgentSessionController } from './agent-session.controller';
 import { Logger } from '@nestjs/common';
 import { loadEnv } from '@acp/config';
-import { MODEL_GATEWAY } from './model-gateway.port';
+import { MODEL_GATEWAY, type ModelGatewayPort } from './model-gateway.port';
 import { StubModelGateway } from './stub-model-gateway';
 import { AnthropicModelGateway } from './anthropic-model-gateway';
+import { OpenAiModelGateway } from './openai-model-gateway';
+import { GeminiModelGateway } from './gemini-model-gateway';
+import { RoutingModelGateway } from './routing-model-gateway';
 import { VoiceSessionService } from './voice/voice-session.service';
 import { SPEECH_TO_TEXT, TEXT_TO_SPEECH } from './voice/speech.port';
 import { StubSpeechToText, StubTextToSpeech } from './voice/stub-speech';
@@ -22,15 +25,29 @@ import { AdSessionService } from './edge/ad-session.service';
 import { AdSessionStore, AD_SESSION_REDIS } from './edge/ad-session.store';
 import { EdgeEventsService } from './edge/edge-events.service';
 
-// Provider selection: use the real Anthropic adapter when PROVIDERS_MODE=live and
-// a key is present; otherwise the deterministic stub (so dev/test never call out).
-function modelGatewayFactory() {
+// Provider selection: when PROVIDERS_MODE=live, register a live adapter for EACH
+// provider whose API key is present (Anthropic / OpenAI / Gemini) behind a router
+// that dispatches by the chosen model's provider; a model whose provider is not
+// configured (or an unknown model) falls back to the deterministic stub. When not
+// live, everything is the stub so dev/test never call out.
+function modelGatewayFactory(): ModelGatewayPort {
   const env = loadEnv();
-  if (env.PROVIDERS_MODE === 'live' && env.ANTHROPIC_API_KEY) {
-    new Logger('AgentRuntimeModule').log('MODEL_GATEWAY: Anthropic (live)');
-    return new AnthropicModelGateway();
+  const stub = new StubModelGateway();
+  if (env.PROVIDERS_MODE !== 'live') return stub;
+
+  const providers: Partial<Record<string, ModelGatewayPort>> = {};
+  if (env.ANTHROPIC_API_KEY) providers.anthropic = new AnthropicModelGateway();
+  if (env.OPENAI_API_KEY) providers.openai = new OpenAiModelGateway();
+  if (env.GEMINI_API_KEY) providers.google = new GeminiModelGateway();
+
+  const configured = Object.keys(providers);
+  const log = new Logger('AgentRuntimeModule');
+  if (configured.length === 0) {
+    log.warn('MODEL_GATEWAY: PROVIDERS_MODE=live but no provider key set — using stub');
+    return stub;
   }
-  return new StubModelGateway();
+  log.log(`MODEL_GATEWAY: routing (live) → ${configured.join(', ')}`);
+  return new RoutingModelGateway(providers, stub, env.MODEL_GATEWAY_DEFAULT_MODEL);
 }
 
 // Dedicated ioredis connection for the ad-session store. lazyConnect so the API
