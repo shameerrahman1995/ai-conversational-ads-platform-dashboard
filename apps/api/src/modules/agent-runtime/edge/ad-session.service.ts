@@ -16,6 +16,7 @@ import type {
 import { PrismaService } from '../../../prisma/prisma.service';
 import { scopedWhere } from '../../../common/tenant/scoped-where';
 import { mintCreativeToken } from '../../../common/auth/creative-token';
+import { BudgetService } from '../../cost/budget.service';
 import { LeadService } from '../../lead/lead.service';
 import type { LeadFields } from '../../lead/lead-scoring';
 import { FORMAT_SPECS } from '../../creative/format-spec';
@@ -78,12 +79,20 @@ export class AdSessionService {
     private readonly lead: LeadService,
     private readonly store: AdSessionStore,
     private readonly events: EdgeEventsService,
+    private readonly budget: BudgetService,
   ) {}
 
   // ---- POST /v1/ad-sessions ----
   async createSession(claims: CreativeTokenClaims, dto: CreateAdSessionDto): Promise<CreateAdSessionResult> {
     const orgId = claims.orgId;
-    const creativeId = dto.creativeId || claims.creativeId;
+    // A creative token is scoped to ONE creative (claims.creativeId). The request
+    // body must not be allowed to widen that scope: a token minted for creative A
+    // must never drive a session for creative B. Require the body's creativeId to
+    // match the token and use the TOKEN as the source of truth (never the dto).
+    if (dto.creativeId && dto.creativeId !== claims.creativeId) {
+      throw new ForbiddenException('creativeId does not match the creative token');
+    }
+    const creativeId = claims.creativeId;
 
     const resolved = await this.resolveAgent(orgId, creativeId);
     const voiceEnabled = Boolean(resolved?.settings.voice.enabled) && this.clientAllowsVoice(dto.capabilities);
@@ -153,34 +162,76 @@ export class AdSessionService {
       payload: { length: dto.text.length },
     });
 
-    // Lazily create the lightweight Conversation the runtime needs, keyed to this
-    // ad session. AI-disclosure consent is satisfied by the creative showing the
-    // disclosure; marketing/lead consent is captured separately at /lead.
-    let conversationId = state.conversationId;
-    if (!conversationId && state.agentId) {
-      try {
-        conversationId = (await this.runtime.startSession(orgId, state.agentId, sessionId, true)).conversationId;
-      } catch {
-        conversationId = null;
-      }
+    // Per-org AI-cost guard (blueprint §22 / risk register "AI/voice cost exceeds
+    // revenue"): the public edge lets ANYONE holding a live creativeId drive the
+    // model, so before spending model tokens we consult the org's budget READ-ONLY
+    // and, when the org is over budget, degrade to the approved fallback reply
+    // instead of invoking the runtime. Best-effort: a budget-check failure fails
+    // OPEN (never breaks a paying org's reply), and budget internals are never
+    // surfaced to the visitor — they simply get the safe canned answer.
+    let overBudget = false;
+    try {
+      overBudget = (await this.budget.getStatus(orgId)).overBudget;
+    } catch {
+      overBudget = false;
     }
 
+    let conversationId = state.conversationId;
     let reply: AgentReply;
-    try {
-      reply = conversationId
-        ? await this.runtime.sendMessage(orgId, conversationId, dto.text)
-        : this.fallbackReply(state.disclosure);
-    } catch (err) {
-      await this.events.emit(orgId, sessionId, {
-        type: EDGE_EVENT_TYPES.errorAi,
-        payload: { message: (err as Error).message },
-      });
+    // Tracks whether the runtime actually persisted an assistant Message for THIS
+    // turn. Every return path of AgentRuntimeService.sendMessage writes one via
+    // respond(); only an outer throw (or the no-conversation/over-budget fallback)
+    // does not — in those cases there is no fresh row to attach grounding meta to,
+    // and we must not overwrite a prior turn's row.
+    let assistantPersisted = false;
+    // Model round-trip latency (ms) for THIS turn, or null when no model call was
+    // made (fallback / over-budget). Emitted on answer_rendered so the
+    // platform-health p95 (projections.agentRuntimeHealth) can populate.
+    let latencyMs: number | null = null;
+
+    if (overBudget) {
+      // Refuse the model spend; the visitor still gets a safe, disclosed answer.
       reply = this.fallbackReply(state.disclosure);
+    } else {
+      // Lazily create the lightweight Conversation the runtime needs, keyed to this
+      // ad session. AI-disclosure consent is satisfied by the creative showing the
+      // disclosure; marketing/lead consent is captured separately at /lead.
+      if (!conversationId && state.agentId) {
+        try {
+          conversationId = (await this.runtime.startSession(orgId, state.agentId, sessionId, true)).conversationId;
+        } catch {
+          conversationId = null;
+        }
+      }
+
+      try {
+        if (conversationId) {
+          const startedAt = Date.now();
+          reply = await this.runtime.sendMessage(orgId, conversationId, dto.text);
+          latencyMs = Date.now() - startedAt;
+          assistantPersisted = true;
+        } else {
+          reply = this.fallbackReply(state.disclosure);
+        }
+      } catch (err) {
+        await this.events.emit(orgId, sessionId, {
+          type: EDGE_EVENT_TYPES.errorAi,
+          payload: { message: (err as Error).message },
+        });
+        reply = this.fallbackReply(state.disclosure);
+      }
     }
 
     const qualification = this.updateQualification(state.qualification, dto.text);
     const next: AdSessionState = { ...state, conversationId, qualification };
     await this.store.save(next);
+
+    // Grounding capture (blueprint §5 / V10 U2.3): stamp the runtime's grounded /
+    // citation signal onto the assistant Message row so analytics can measure the
+    // grounded-answer rate. PII-free — only source ids reach these columns.
+    if (assistantPersisted && conversationId) {
+      await this.captureGrounding(orgId, conversationId, reply);
+    }
 
     const structured = this.toStructuredReply(reply, next);
 
@@ -191,6 +242,9 @@ export class AdSessionService {
         grounded: reply.grounded,
         intent: qualification.intent,
         score: qualification.score,
+        // Only stamp a real, measured round-trip; a fallback/over-budget turn made
+        // no model call, so it contributes nothing to the p95 latency metric.
+        ...(latencyMs !== null ? { latencyMs } : {}),
       },
     });
 
@@ -203,32 +257,35 @@ export class AdSessionService {
       throw new BadRequestException('Explicit consent is required to submit a lead');
     }
     const orgId = claims.orgId;
+    // Require a valid, owned (same-org) session before writing a Lead. Without
+    // this guard a caller could POST a lead for a missing/expired/cross-tenant
+    // session id and still create a Lead row — an unauthenticated write path and
+    // a cross-tenant leak. loadOwnedSession returns null in all those cases.
     const state = await this.loadOwnedSession(claims, sessionId);
-    const disclosure = state?.disclosure ?? DEFAULT_AGENT_SETTINGS.disclosure;
-    const qualificationLevel = state ? this.levelFromScore(state.qualification.score) : undefined;
+    if (!state) {
+      throw new BadRequestException('A valid ad session is required to submit a lead');
+    }
+    const disclosure = state.disclosure ?? DEFAULT_AGENT_SETTINGS.disclosure;
+    const qualificationLevel = this.levelFromScore(state.qualification.score);
 
     const result = await this.lead.createLead(orgId, {
-      conversationId: state?.conversationId ?? undefined,
+      conversationId: state.conversationId ?? undefined,
       fields: (dto.fields ?? {}) as LeadFields,
       consents: [
         { type: 'ai_disclosure', granted: true, disclosureVersion: disclosure },
         { type: 'marketing', granted: true, disclosureVersion: disclosure },
       ],
       qualificationLevel,
-      agentSummary: state
-        ? `Ad session ${sessionId}: ${state.qualification.turns} turn(s), intent ${state.qualification.intent}`
-        : undefined,
+      agentSummary: `Ad session ${sessionId}: ${state.qualification.turns} turn(s), intent ${state.qualification.intent}`,
     });
 
-    // Org-scoped updateMany so a missing/expired row simply no-ops (never throws).
+    // Org-scoped updateMany so a concurrently-expired row simply no-ops (never throws).
     await this.prisma.adSession.updateMany({
       where: scopedWhere(orgId, { id: sessionId }),
       data: { status: 'converted' },
     });
-    if (state) {
-      state.status = 'converted';
-      await this.store.save(state);
-    }
+    state.status = 'converted';
+    await this.store.save(state);
 
     await this.events.emit(orgId, sessionId, {
       type: EDGE_EVENT_TYPES.leadSubmitted,
@@ -348,6 +405,44 @@ export class AdSessionService {
 
   private fallbackReply(disclosure: string): AgentReply {
     return { reply: FALLBACK_REPLY, grounded: false, citations: [], fallback: true, disclosure };
+  }
+
+  /**
+   * Derive a 0..1 grounding confidence from the runtime's grounded/citation
+   * signal. A fallback or ungrounded answer scores 0; a grounded answer starts at
+   * a 0.5 floor and rises 0.1 per cited source (capped at 1). Because the runtime
+   * only reports `grounded === true` when it retrieved ≥1 approved chunk, a real
+   * grounded turn always lands ≥0.5 and so counts toward the grounded-answer rate.
+   */
+  private groundedScoreFrom(reply: AgentReply): number {
+    if (reply.fallback || !reply.grounded) return 0;
+    return Math.min(1, 0.5 + 0.1 * reply.citations.length);
+  }
+
+  /**
+   * Persist grounding meta onto the assistant Message the runtime just wrote for
+   * this turn (the most recent assistant row in the conversation). Best-effort:
+   * this is analytics, not the hot-path reply, so a failure here never breaks the
+   * visitor's answer. Only source ids/titles are stored — never user content.
+   */
+  private async captureGrounding(orgId: string, conversationId: string, reply: AgentReply): Promise<void> {
+    try {
+      const last = await this.prisma.message.findFirst({
+        where: scopedWhere(orgId, { conversationId, role: 'assistant' }),
+        orderBy: { createdAt: 'desc' },
+        select: { id: true },
+      });
+      if (!last) return;
+      await this.prisma.message.update({
+        where: { id: last.id },
+        data: {
+          groundedScore: this.groundedScoreFrom(reply),
+          citations: reply.citations as unknown as Prisma.InputJsonValue,
+        },
+      });
+    } catch {
+      // Best-effort grounding capture — never surface a meta-write failure to the visitor.
+    }
   }
 
   /**

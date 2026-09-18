@@ -1,22 +1,12 @@
 'use client';
 
 import { useState, type ReactNode } from 'react';
+import { ApiClientError } from '@acp/api-client';
 import { Card, Button, Chip, Meter } from '@/components/ui';
 import { Icon } from '@/components/Icon';
 import { SectionTitle, StudioStatus, KeyValue } from '../atoms';
+import { computeQaChecks } from '../qa';
 import type { StageProps } from './types';
-
-/** [label, pct, status] compliance checks attached to the working draft. */
-const CHECKS: [string, number, 'Passed' | 'Review'][] = [
-  ['Creative quality', 96, 'Passed'],
-  ['Brand compliance', 100, 'Passed'],
-  ['Product fidelity', 99, 'Passed'],
-  ['Legal claims', 84, 'Review'],
-  ['Accessibility', 96, 'Passed'],
-  ['Runtime fallback', 92, 'Passed'],
-  ['Tracking plan', 100, 'Passed'],
-  ['Platform compatibility', 86, 'Review'],
-];
 
 /** [role, text, meta] reviewer comment threads. */
 const COMMENTS: [string, string, string][] = [
@@ -51,14 +41,46 @@ function CardHead({ title, subtitle, actions }: { title: string; subtitle?: stri
  * campaign; the version cannot be handed off until every reviewer role signs
  * off (a hard gate on the primary action).
  */
-export function ReviewStage({ creative, patch, notify }: StageProps) {
+export function ReviewStage({ creative, patch, notify, client, blueprintId }: StageProps) {
   const [approvals, setApprovals] = useState<Record<ApprovalKey, boolean>>({
     creative: true,
     brand: true,
     legal: false,
     client: false,
   });
+  const [handingOff, setHandingOff] = useState(false);
   const allApproved = APPROVAL_ORDER.every((k) => approvals[k]);
+
+  // Real, per-creative compliance — the same computation the Studio QA panel uses.
+  const qa = computeQaChecks(creative);
+
+  /** Approve + hand off the durable blueprint (status → approved). */
+  async function handoff() {
+    if (!allApproved || handingOff) return;
+    if (!blueprintId) {
+      notify(
+        'Save the blueprint first',
+        'Generate a blueprint or save a version before handing it off for approval.',
+        'warning',
+      );
+      return;
+    }
+    setHandingOff(true);
+    try {
+      const result = await client.creative.handoffBlueprint(blueprintId, {
+        status: 'approved',
+        approvals: { ...approvals, qaScore: qa.score, qaPassed: qa.passed, qaTotal: qa.total },
+        note: 'Approved and handed off from the Review stage',
+      });
+      patch({ status: (result.status as string) ?? 'Approved' });
+      notify('Creative approved', `Version ${result.version} was approved and handed off to the campaign.`, 'success');
+    } catch (e) {
+      const msg = e instanceof ApiClientError ? e.body.message : 'Could not hand off this version.';
+      notify('Handoff failed', msg, 'danger');
+    } finally {
+      setHandingOff(false);
+    }
+  }
 
   return (
     <div className="stage-page">
@@ -78,49 +100,56 @@ export function ReviewStage({ creative, patch, notify }: StageProps) {
         <Card className="card-pad">
           <CardHead
             title="Quality and compliance"
-            subtitle={`Working draft · QA ${creative.qaScore}%`}
-            actions={<Chip tone="neutral">Illustrative</Chip>}
+            subtitle={`Computed for this creative · QA ${qa.score}%`}
+            actions={
+              <Chip tone={qa.passed === qa.total ? 'success' : 'warning'}>
+                {qa.passed}/{qa.total} passing
+              </Chip>
+            }
           />
           <div className="review-checks">
-            {CHECKS.map(([label, pct, status]) => {
-              const passed = status === 'Passed';
+            {qa.checks.map((c) => {
+              const passed = c.status === 'Passed';
               return (
-                <div key={label}>
+                <div key={c.key}>
                   <span className={passed ? 'success' : 'warning'}>
                     <Icon name={passed ? 'check-circle' : 'alert'} size={16} />
                   </span>
                   <div>
-                    <strong>{label}</strong>
-                    <Meter pct={pct} />
+                    <strong>{c.label}</strong>
+                    <Meter pct={c.pct} />
                   </div>
-                  <span>{pct}%</span>
-                  <StudioStatus status={status} />
+                  <span>{c.pct}%</span>
+                  <StudioStatus status={c.status} />
                 </div>
               );
             })}
           </div>
 
-          <div
-            style={{
-              display: 'flex',
-              gap: '0.5rem',
-              alignItems: 'flex-start',
-              marginTop: '0.9rem',
-              padding: '0.6rem 0.7rem',
-              border: '1px solid var(--color-warning)',
-              borderRadius: 10,
-              background: 'var(--color-warning-soft)',
-              fontSize: 12.5,
-              color: 'var(--color-ink-2)',
-            }}
-          >
-            <span style={{ flex: 'none', color: 'var(--color-warning)' }}>
-              <Icon name="alert" size={15} />
-            </span>
-            <span>
-              Two review items remain — Confirm the exchange-offer expiry and approve the capability fallback for Meta placements.
-            </span>
-          </div>
+          {qa.passed < qa.total ? (
+            <div
+              style={{
+                display: 'flex',
+                gap: '0.5rem',
+                alignItems: 'flex-start',
+                marginTop: '0.9rem',
+                padding: '0.6rem 0.7rem',
+                border: '1px solid var(--color-warning)',
+                borderRadius: 10,
+                background: 'var(--color-warning-soft)',
+                fontSize: 12.5,
+                color: 'var(--color-ink-2)',
+              }}
+            >
+              <span style={{ flex: 'none', color: 'var(--color-warning)' }}>
+                <Icon name="alert" size={15} />
+              </span>
+              <span>
+                {qa.total - qa.passed} review item(s) remain —{' '}
+                {qa.checks.filter((c) => c.status !== 'Passed').map((c) => c.label).join(', ')}.
+              </span>
+            </div>
+          ) : null}
 
           <div className="review-comments">
             <SectionTitle
@@ -196,30 +225,27 @@ export function ReviewStage({ creative, patch, notify }: StageProps) {
             <CardHead title="Version to hand off" subtitle="This immutable version is what the campaign will use." />
             <div className="grid" style={{ gridTemplateColumns: '1fr 1fr', gap: '0.5rem' }}>
               <KeyValue label="Creative" value={creative.name} />
-              <KeyValue label="Version" value={creative.versions[0]?.label ?? '—'} />
-              <KeyValue label="QA score" value={`${creative.qaScore}%`} />
+              <KeyValue label="Version" value={`v${creative.version}`} />
+              <KeyValue label="QA score" value={`${qa.score}%`} />
               <KeyValue label="Agent" value="Nimbus Product Advisor v12" />
               <KeyValue label="Knowledge" value="snapshot_20260911" />
               <KeyValue label="Status" value={<StudioStatus status={allApproved ? 'Ready' : 'Review'} />} />
             </div>
             <Button
               variant="primary"
-              disabled={!allApproved}
+              disabled={!allApproved || handingOff}
               style={{ width: '100%', justifyContent: 'center', marginTop: '0.9rem' }}
-              onClick={() => {
-                patch({ status: 'Ready' });
-                notify(
-                  'Working draft marked Ready',
-                  'The working draft is marked ready for handoff in this session — it is not published to the server yet.',
-                  'success',
-                );
-              }}
+              onClick={handoff}
             >
-              Approve and hand off
+              {handingOff ? 'Handing off…' : 'Approve and hand off'}
             </Button>
             {!allApproved ? (
               <div className="muted" style={{ fontSize: 11.5, marginTop: '0.5rem', textAlign: 'center' }}>
                 Handoff unlocks once every role has approved.
+              </div>
+            ) : !blueprintId ? (
+              <div className="muted" style={{ fontSize: 11.5, marginTop: '0.5rem', textAlign: 'center' }}>
+                Save or generate a blueprint to enable durable handoff.
               </div>
             ) : null}
           </Card>

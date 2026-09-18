@@ -12,7 +12,6 @@ import {
   Button,
   Card,
   Panel,
-  StatCard,
   Chip,
   StatusChip,
   DataState,
@@ -22,6 +21,8 @@ import {
 import { Tabs, type TabItem } from './_components/Tabs';
 import { DeveloperTab } from './_components/DeveloperTab';
 import { TwoFactorPanel } from './_components/TwoFactorPanel';
+import { OrganizationTab } from './_components/OrganizationTab';
+import { RbacMatrix } from './_components/RbacMatrix';
 
 /* Roles that can be assigned when inviting a member (mirrors the API's set). */
 const INVITE_ROLES = ['creator', 'reviewer', 'publisher', 'analyst', 'admin'] as const;
@@ -29,18 +30,6 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 /* Current signed-in operator (dev auth stub sends role=admin for this user). */
 const CURRENT_EMAIL = 'srahman@hodos360.ai';
-
-/* Illustrative company profile only. There is no org GET endpoint and no stored
-   org/billing record yet, so these are placeholder sample values shown for layout
-   — they are clearly labelled "Sample" in the UI and never presented as the
-   tenant's real data. The live workspace identity is the orgId from org-context. */
-const SAMPLE_ORG = {
-  name: 'Demo Advertiser Co.',
-  legalName: 'Demo Advertiser Co., LLC',
-  industry: 'Roofing & HVAC',
-  region: 'United States (US-East)',
-  created: 'January 15, 2026',
-};
 
 const usd = (n: number, max = 0) =>
   `$${n.toLocaleString('en-US', { maximumFractionDigits: max, minimumFractionDigits: max })}`;
@@ -76,11 +65,10 @@ const ROLE_HINT: Record<string, string> = Object.fromEntries(
 
 export default function AdminPage() {
   const client = useApiClient();
-  const { orgId } = useOrg();
   const [reload, setReload] = useState(0);
   const refetch = () => setReload((n) => n + 1);
   const { data, error, loading } = useAsync(
-    () => Promise.all([client.users.list(), client.cost.status()]),
+    () => Promise.all([client.users.list(), client.cost.status(), client.org.get()]),
     [client, reload],
   );
 
@@ -88,7 +76,7 @@ export default function AdminPage() {
   const [budgetOpen, setBudgetOpen] = useState(false);
   const [manageMember, setManageMember] = useState<OrgUser | null>(null);
 
-  const [users, budget] = data ?? [];
+  const [users, budget, org] = data ?? [];
   const members = users ?? [];
   const total = members.length;
   const activeCount = members.filter((m) => m.status === 'active').length;
@@ -102,128 +90,13 @@ export default function AdminPage() {
   );
 
   /* ---- Tab: Organization ------------------------------------------- */
-  const organizationTab = (
-    <div className="stack">
-      <Card className="card-pad">
-        <div className="row" style={{ gap: '0.9rem', alignItems: 'center' }}>
-          <span
-            aria-hidden="true"
-            style={{
-              width: 46,
-              height: 46,
-              borderRadius: 12,
-              background: 'linear-gradient(140deg, var(--color-brand), var(--color-violet))',
-              color: '#fff',
-              display: 'grid',
-              placeItems: 'center',
-              fontFamily: 'var(--font-display)',
-              fontWeight: 600,
-              fontSize: 17,
-              flex: 'none',
-            }}
-          >
-            DA
-          </span>
-          <div style={{ minWidth: 0 }}>
-            <div className="row" style={{ gap: '0.55rem', flexWrap: 'wrap', alignItems: 'center' }}>
-              <span style={{ fontFamily: 'var(--font-display)', fontWeight: 600, fontSize: 18 }}>
-                {SAMPLE_ORG.name}
-              </span>
-              <Chip tone="neutral">Sample data</Chip>
-            </div>
-            <div className="muted" style={{ fontSize: 13, marginTop: '0.15rem' }}>
-              {SAMPLE_ORG.industry} advertiser · {SAMPLE_ORG.region}
-            </div>
-          </div>
-        </div>
-
-        <div
-          className="row"
-          style={{
-            gap: '0.6rem',
-            alignItems: 'flex-start',
-            padding: '0.7rem 0.9rem',
-            marginTop: '1rem',
-            background: 'var(--color-surface-2)',
-            border: '1px solid var(--color-line)',
-            borderRadius: 'var(--radius-control)',
-          }}
-        >
-          <span style={{ color: 'var(--color-ink-3)', flex: 'none', marginTop: 1 }}>
-            <Icon name="doc" size={15} />
-          </span>
-          <div className="muted" style={{ fontSize: 12.5 }}>
-            This workspace isn&apos;t connected to a billing or organization record yet. The company
-            profile below is <strong>sample data</strong> shown for layout — only the workspace ID and
-            member counts are live.
-          </div>
-        </div>
-
-        <hr className="divider" style={{ margin: '1.15rem 0' }} />
-
-        <dl
-          style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
-            gap: '1.1rem 2rem',
-            margin: 0,
-          }}
-        >
-          <Fact
-            label="Workspace ID"
-            value={<span className="tnum" style={{ fontFamily: 'ui-monospace, monospace' }}>{orgId}</span>}
-          />
-          <Fact
-            label="Members"
-            value={
-              <span className="row" style={{ gap: '0.4rem' }}>
-                {total}{' '}
-                <span className="muted" style={{ fontWeight: 400 }}>
-                  · {activeCount} active
-                </span>
-              </span>
-            }
-          />
-          <Fact label="Legal name" value={SAMPLE_ORG.legalName} sample />
-          <Fact label="Region" value={SAMPLE_ORG.region} sample />
-          <Fact label="Industry" value={SAMPLE_ORG.industry} sample />
-          <Fact label="Created" value={SAMPLE_ORG.created} sample />
-          <Fact
-            label="Signed in as"
-            value={(() => {
-              const me = members.find((m) => m.email === CURRENT_EMAIL);
-              if (!me) return CURRENT_EMAIL;
-              return me.name ? `${me.name} (${me.email})` : me.email;
-            })()}
-          />
-          <Fact
-            label="Compliance policy"
-            value={
-              <Chip tone="success" icon="shield">
-                Human review enforced
-              </Chip>
-            }
-          />
-        </dl>
-      </Card>
-
-      <div className="grid grid-3">
-        <StatCard label="Members" value={total} icon="users" footNote="across all roles" />
-        <StatCard
-          label="Active"
-          value={activeCount}
-          icon="check-circle"
-          footNote="signed in and working"
-        />
-        <StatCard
-          label="Pending invites"
-          value={pendingCount}
-          icon="clock"
-          footNote="awaiting first sign-in"
-        />
-      </div>
-    </div>
-  );
+  const organizationTab = org ? (
+    <OrganizationTab
+      org={org}
+      members={{ total, active: activeCount, pending: pendingCount }}
+      onSaved={refetch}
+    />
+  ) : null;
 
   /* ---- Tab: Members ------------------------------------------------- */
   const membersTab = (
@@ -320,40 +193,7 @@ export default function AdminPage() {
         ) : null}
       </Panel>
 
-      <Panel title="Roles & permissions" note="what each role can do">
-        <div className="stack" style={{ gap: 0 }}>
-          {ROLES.map((r, i) => {
-            const count = roleCount(r.key);
-            return (
-              <div
-                key={r.key}
-                className="spread"
-                style={{
-                  gap: '1rem',
-                  padding: '0.85rem 1.25rem',
-                  borderTop: i === 0 ? 'none' : '1px solid var(--color-line)',
-                  alignItems: 'flex-start',
-                }}
-              >
-                <div className="row" style={{ gap: '0.85rem', alignItems: 'flex-start' }}>
-                  <span style={{ minWidth: 88 }}>
-                    <Chip tone={r.key === 'admin' ? 'brand' : 'neutral'}>{cap(r.key)}</Chip>
-                  </span>
-                  <span style={{ fontSize: 13, color: 'var(--color-ink-2)', maxWidth: '62ch' }}>
-                    {r.blurb}
-                  </span>
-                </div>
-                <span
-                  className="muted tnum"
-                  style={{ fontSize: 12.5, whiteSpace: 'nowrap', flex: 'none' }}
-                >
-                  {count} {count === 1 ? 'member' : 'members'}
-                </span>
-              </div>
-            );
-          })}
-        </div>
-      </Panel>
+      <RbacMatrix roleCount={roleCount} />
     </div>
   );
 

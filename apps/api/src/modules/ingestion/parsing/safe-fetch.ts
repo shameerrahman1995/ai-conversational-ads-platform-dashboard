@@ -8,7 +8,9 @@ import https from 'node:https';
  * SSRF guard for user-supplied source URLs (blueprint §16 "source ownership
  * check"). A registered URL is fetched server-side, so we must refuse anything
  * that resolves to a non-public address (cloud metadata, loopback, RFC1918,
- * link-local, ULA) and refuse non-http(s) schemes.
+ * link-local, ULA, CGNAT, benchmarking 198.18/15, TEST-NET docs ranges,
+ * multicast, and the 240/4 reserved block, plus their IPv4-mapped / IPv4-
+ * compatible / NAT64 IPv6 forms) and refuse non-http(s) schemes.
  *
  * The AUTHORITATIVE check runs at CONNECT time via `guardedLookup` (used as the
  * socket `lookup`), which closes the DNS-rebinding window: the same resolved +
@@ -21,15 +23,20 @@ import https from 'node:https';
 export function isBlockedIpv4(ip: string): boolean {
   const p = ip.split('.').map((s) => Number(s));
   if (p.length !== 4 || p.some((n) => Number.isNaN(n) || n < 0 || n > 255)) return true;
-  const [a, b] = p;
-  if (a === 0) return true; // 0.0.0.0/8
-  if (a === 10) return true; // 10/8
+  const [a, b, c] = p;
+  if (a === 0) return true; // 0.0.0.0/8 "this host"
+  if (a === 10) return true; // 10/8 private
   if (a === 127) return true; // loopback
   if (a === 169 && b === 254) return true; // link-local (incl. 169.254.169.254 metadata)
-  if (a === 172 && b >= 16 && b <= 31) return true; // 172.16/12
-  if (a === 192 && b === 168) return true; // 192.168/16
+  if (a === 172 && b >= 16 && b <= 31) return true; // 172.16/12 private
+  if (a === 192 && b === 168) return true; // 192.168/16 private
   if (a === 100 && b >= 64 && b <= 127) return true; // CGNAT 100.64/10
-  if (a === 255 && b === 255) return true; // broadcast
+  if (a === 198 && (b === 18 || b === 19)) return true; // 198.18/15 benchmarking
+  if (a === 192 && b === 0 && c === 2) return true; // 192.0.2/24 TEST-NET-1
+  if (a === 198 && b === 51 && c === 100) return true; // 198.51.100/24 TEST-NET-2
+  if (a === 203 && b === 0 && c === 113) return true; // 203.0.113/24 TEST-NET-3
+  if (a >= 224 && a <= 239) return true; // 224.0.0.0/4 multicast
+  if (a >= 240) return true; // 240.0.0.0/4 reserved (incl. 255.255.255.255 broadcast)
   return false;
 }
 
@@ -39,10 +46,23 @@ export function isBlockedAddress(ip: string): boolean {
   if (fam === 6) {
     const low = ip.toLowerCase();
     if (low === '::1' || low === '::') return true; // loopback / unspecified
-    const mapped = low.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/); // IPv4-mapped
-    if (mapped) return isBlockedIpv4(mapped[1]);
-    if (/^f[cd]/.test(low)) return true; // fc00::/7 ULA
+    if (/^f[cd]/.test(low)) return true; // fc00::/7 unique-local (ULA)
     if (/^fe[89ab]/.test(low)) return true; // fe80::/10 link-local
+    if (low.startsWith('ff')) return true; // ff00::/8 multicast
+    if (low.startsWith('64:ff9b:')) return true; // NAT64 well-known prefix 64:ff9b::/96
+    // Any embedded IPv4 (mapped `::ffff:a.b.c.d`, compatible `::a.b.c.d`, NAT64
+    // dotted tail, …) is validated against the IPv4 blocklist so it can't be used
+    // to smuggle a private/reserved v4 target through a v6 literal.
+    const dotted = low.match(/(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})/);
+    if (dotted) return isBlockedIpv4(dotted[1]);
+    // IPv4-mapped written in hex form, e.g. `::ffff:7f00:1` == `::ffff:127.0.0.1`.
+    const hexMapped = low.match(/^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/);
+    if (hexMapped) {
+      const hi = parseInt(hexMapped[1], 16);
+      const lo = parseInt(hexMapped[2], 16);
+      const v4 = `${(hi >> 8) & 0xff}.${hi & 0xff}.${(lo >> 8) & 0xff}.${lo & 0xff}`;
+      return isBlockedIpv4(v4);
+    }
     return false;
   }
   return true; // not a parseable IP -> block

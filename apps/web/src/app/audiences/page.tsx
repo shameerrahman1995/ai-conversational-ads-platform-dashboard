@@ -1,15 +1,23 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import { PageHeader, Segmented } from '@/components/ui';
+import { useApiClient } from '@/lib/api';
+import { useAsync } from '@/lib/useAsync';
+import { PageHeader, Segmented, DataState } from '@/components/ui';
 import { useToast } from '@/components/feedback';
-import { Kpi, Notice } from './_components/atoms';
+import { Kpi } from './_components/atoms';
 import { SegmentsTab } from './_components/SegmentsTab';
 import { SegmentDetailModal } from './_components/SegmentDetailModal';
 import { CreateAudienceModal } from './_components/CreateAudienceModal';
 import { RulesTab } from './_components/RulesTab';
 import { OverlapTab } from './_components/OverlapTab';
-import { SEED_RULES, SEED_SEGMENTS, millions, type Rule, type Segment } from './_components/segments';
+import {
+  audienceToRule,
+  audienceToSegment,
+  millions,
+  segmentDefinition,
+  type Segment,
+} from './_components/segments';
 
 type TabKey = 'segments' | 'rules' | 'overlap';
 
@@ -20,11 +28,24 @@ const TABS: { value: TabKey; label: string }[] = [
 ];
 
 export default function AudiencesPage() {
+  const client = useApiClient();
   const toast = useToast();
 
+  const [reload, setReload] = useState(0);
+  const refresh = () => setReload((n) => n + 1);
+  const { data, error, loading } = useAsync(() => client.audiences.list(), [client, reload]);
+  const audiences = useMemo(() => data ?? [], [data]);
+
+  const segments = useMemo(
+    () => audiences.filter((a) => a.kind === 'segment').map(audienceToSegment),
+    [audiences],
+  );
+  const rules = useMemo(
+    () => audiences.filter((a) => a.kind === 'personalization').map(audienceToRule),
+    [audiences],
+  );
+
   const [tab, setTab] = useState<TabKey>('segments');
-  const [segments, setSegments] = useState<Segment[]>(SEED_SEGMENTS);
-  const [rules, setRules] = useState<Rule[]>(SEED_RULES);
   const [detail, setDetail] = useState<Segment | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
 
@@ -41,16 +62,38 @@ export default function AudiencesPage() {
     };
   }, [segments, rules]);
 
-  const addSegment = (seg: Segment) => {
-    setSegments((prev) => [seg, ...prev]);
+  /** Persist a drafted segment audience. Rejects on failure so the modal stays open. */
+  const createAudience = async (draft: Omit<Segment, 'id'>) => {
+    try {
+      await client.audiences.create({
+        name: draft.name,
+        kind: 'segment',
+        description: draft.description,
+        estimatedSize: draft.sizeHigh,
+        definition: segmentDefinition(draft),
+      });
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not create audience');
+      throw e;
+    }
+    toast.success(`Audience “${draft.name}” created`);
     setCreateOpen(false);
-    toast.success(`Audience “${seg.name}” configured`);
+    refresh();
   };
 
-  const toggleRule = (id: string) => {
-    setRules((prev) => prev.map((r) => (r.id === id ? { ...r, enabled: !r.enabled } : r)));
-    const target = rules.find((r) => r.id === id);
-    if (target) toast.toast(target.enabled ? 'Rule paused' : 'Rule enabled', 'info');
+  const toggleRule = async (id: string) => {
+    const audience = audiences.find((a) => a.id === id);
+    if (!audience) return;
+    const enabled = Boolean((audience.definition as Record<string, unknown>).enabled);
+    try {
+      await client.audiences.update(id, {
+        definition: { ...audience.definition, enabled: !enabled },
+      });
+      toast.toast(enabled ? 'Rule paused' : 'Rule enabled', 'info');
+      refresh();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not update rule');
+    }
   };
 
   const useInCampaign = (seg: Segment) => {
@@ -65,27 +108,25 @@ export default function AudiencesPage() {
         subtitle="Reusable, versioned audience definitions shared across campaigns and channels."
       />
 
-      <Notice tone="info" icon="shield">
-        Audiences are configured here; shared persistence lands with the audiences service.
-      </Notice>
+      <DataState loading={loading} error={error} loadingLabel="Loading audiences…" onRetry={refresh}>
+        <div className="grid grid-kpi">
+          <Kpi label="Segments" value={kpis.count} icon="users" sub="Configured definitions" />
+          <Kpi label="Combined reach" value={kpis.reach} icon="globe" sub="Estimated addressable" />
+          <Kpi label="Active rules" value={kpis.rules} icon="filter" sub="Personalization mappings" />
+          <Kpi label="Channels in use" value={kpis.channels} icon="globe" sub="Distinct destinations" />
+        </div>
 
-      <div className="grid grid-kpi">
-        <Kpi label="Segments" value={kpis.count} icon="users" sub="Configured definitions" />
-        <Kpi label="Combined reach" value={kpis.reach} icon="globe" sub="Estimated addressable" />
-        <Kpi label="Active rules" value={kpis.rules} icon="filter" sub="Personalization mappings" />
-        <Kpi label="Channels in use" value={kpis.channels} icon="globe" sub="Distinct destinations" />
-      </div>
+        <Segmented options={TABS} value={tab} onChange={setTab} />
 
-      <Segmented options={TABS} value={tab} onChange={setTab} />
-
-      {tab === 'segments' ? (
-        <SegmentsTab segments={segments} onOpen={setDetail} onCreate={() => setCreateOpen(true)} />
-      ) : null}
-      {tab === 'rules' ? <RulesTab segments={segments} rules={rules} onToggle={toggleRule} /> : null}
-      {tab === 'overlap' ? <OverlapTab segments={segments} /> : null}
+        {tab === 'segments' ? (
+          <SegmentsTab segments={segments} onOpen={setDetail} onCreate={() => setCreateOpen(true)} />
+        ) : null}
+        {tab === 'rules' ? <RulesTab segments={segments} rules={rules} onToggle={toggleRule} /> : null}
+        {tab === 'overlap' ? <OverlapTab segments={segments} /> : null}
+      </DataState>
 
       <SegmentDetailModal segment={detail} onClose={() => setDetail(null)} onUse={useInCampaign} />
-      <CreateAudienceModal open={createOpen} onClose={() => setCreateOpen(false)} onCreate={addSegment} />
+      <CreateAudienceModal open={createOpen} onClose={() => setCreateOpen(false)} onCreate={createAudience} />
     </div>
   );
 }

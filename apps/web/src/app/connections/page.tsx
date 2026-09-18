@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { useApiClient } from '@/lib/api';
 import { useAsync } from '@/lib/useAsync';
 import { Icon, type IconName } from '@/components/Icon';
-import { PageHeader, Button, StatCard, Card, Chip, DataState } from '@/components/ui';
+import { PageHeader, Button, StatCard, Card, Chip, DataState, Skeleton } from '@/components/ui';
 import { useToast, Modal } from '@/components/feedback';
 import { ConnectorCard } from './_components/ConnectorCard';
 
@@ -129,6 +129,70 @@ const WEBHOOK: Provider = {
 
 const CATEGORY_COUNT = CATALOG.length + 1; // catalog groups + webhooks
 
+/* ------------------------------------------------------------------ */
+/* First-load skeleton — content-shaped (KPI strip + catalog card       */
+/* grids) so first paint shows structure, not a spinner.                */
+/* `.skeleton` already respects prefers-reduced-motion.                 */
+/* ------------------------------------------------------------------ */
+function ConnectorCardSkeleton() {
+  return (
+    <Card className="card-pad" style={{ display: 'flex', flexDirection: 'column', gap: '0.7rem' }}>
+      <div className="row" style={{ gap: '0.7rem', alignItems: 'flex-start' }}>
+        <Skeleton width={34} height={34} radius={10} />
+        <div style={{ display: 'grid', gap: 6, flex: 1 }}>
+          <Skeleton width="55%" height={15} radius={6} />
+          <Skeleton width="90%" height={12} radius={6} />
+          <Skeleton width="75%" height={12} radius={6} />
+        </div>
+      </div>
+      <Skeleton width={110} height={30} radius={8} />
+    </Card>
+  );
+}
+
+function ConnectionsSkeleton() {
+  return (
+    <div aria-busy="true" aria-live="polite">
+      <span className="sr-only">Loading your connections…</span>
+      <div className="grid grid-kpi">
+        {Array.from({ length: 4 }).map((_, i) => (
+          <div key={i} className="card stat">
+            <div className="stat-top">
+              <Skeleton width="50%" height={12} radius={6} />
+              <Skeleton width={30} height={30} radius={9} />
+            </div>
+            <div style={{ marginTop: '0.55rem' }}>
+              <Skeleton width="45%" height={28} radius={8} />
+            </div>
+            <div style={{ marginTop: '0.5rem' }}>
+              <Skeleton width="70%" height={12} radius={6} />
+            </div>
+          </div>
+        ))}
+      </div>
+      {Array.from({ length: 2 }).map((_, s) => (
+        <section key={s}>
+          <div className="spread" style={{ margin: '1.6rem 0 0.9rem', alignItems: 'flex-end' }}>
+            <div className="row" style={{ gap: '0.65rem', alignItems: 'center' }}>
+              <Skeleton width={30} height={30} radius={9} />
+              <div style={{ display: 'grid', gap: 6 }}>
+                <Skeleton width={130} height={16} radius={6} />
+                <Skeleton width={200} height={12} radius={6} />
+              </div>
+            </div>
+            <Skeleton width={110} height={22} radius={999} />
+          </div>
+          <div className="grid grid-3">
+            {Array.from({ length: 3 }).map((_, i) => (
+              <ConnectorCardSkeleton key={i} />
+            ))}
+          </div>
+        </section>
+      ))}
+    </div>
+  );
+}
+
 export default function ConnectionsPage() {
   const client = useApiClient();
   const toast = useToast();
@@ -185,8 +249,9 @@ export default function ConnectionsPage() {
         }
       />
 
+      {loading ? <ConnectionsSkeleton /> : (
       <DataState
-        loading={loading}
+        loading={false}
         error={error}
         loadingLabel="Loading your connections…"
         onRetry={refetch}
@@ -344,6 +409,7 @@ export default function ConnectionsPage() {
           </div>
         </Card>
       </DataState>
+      )}
 
       <Modal
         open={docsOpen}

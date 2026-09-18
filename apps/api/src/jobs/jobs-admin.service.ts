@@ -104,6 +104,38 @@ export class JobsAdminService {
     return { queue: queueName, jobId, retried: true };
   }
 
+  /**
+   * Newest-first slice of the retained failed (dead-letter) set for one queue
+   * across ALL tenants (no org filter). For the platform (cross-tenant) console
+   * only — a platform operator legitimately sees every tenant's failed jobs, so
+   * the returned `data` payloads still carry their owning `orgId` etc. Returns
+   * the same {@link FailedJobView} shape as the tenant-scoped {@link getFailed}.
+   */
+  async getFailedAll(queueName: string, limit = 50): Promise<FailedJobView[]> {
+    const queue = this.resolveQueue(queueName);
+    const safeLimit = Math.max(1, Math.min(Math.floor(limit), 200));
+    const jobs = await queue.getFailed(0, safeLimit - 1);
+    return jobs.map((job) => this.toView(job));
+  }
+
+  /**
+   * Re-enqueue a single failed job by id, regardless of owning org
+   * (platform-level replay). 404 if the job is not present in the queue.
+   */
+  async retryJobAny(
+    queueName: string,
+    jobId: string,
+  ): Promise<{ queue: string; jobId: string; retried: true }> {
+    const queue = this.resolveQueue(queueName);
+    const job = await queue.getJob(jobId);
+    if (!job) {
+      throw new NotFoundException(`Job "${jobId}" not found in queue "${queueName}"`);
+    }
+    // Moves the job from the failed set back to wait so a worker picks it up.
+    await job.retry();
+    return { queue: queueName, jobId, retried: true };
+  }
+
   private resolveQueue(queueName: string): Queue {
     if (!this.isKnownQueue(queueName)) {
       // Defensive: the controller validates the param first (400), so this is a

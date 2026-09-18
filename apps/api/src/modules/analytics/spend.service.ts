@@ -11,6 +11,46 @@ export interface SpendFilter {
 }
 
 /**
+ * Last-resort reporting currency when the org has configured none AND there is no
+ * spend data to infer one from. Only cosmetic in that case (the total is 0). This
+ * mirrors projections.service.ts so the spend cards and the Overview/Analytics
+ * charts never disagree on the currency an org is reported in.
+ */
+const DEFAULT_CURRENCY = 'USD';
+
+/** The org's configured reporting currency from Organization.settings.currency. */
+function currencyFromSettings(settings: unknown): string | null {
+  if (settings && typeof settings === 'object' && !Array.isArray(settings)) {
+    const c = (settings as Record<string, unknown>).currency;
+    if (typeof c === 'string' && c.trim()) return c.trim().toUpperCase();
+  }
+  return null;
+}
+
+/**
+ * Reporting currency for a set of spend rows. The org's configured currency
+ * (`preferred`) always wins so the spend cards match projections. When the org has
+ * none configured, fall back to the currency carrying the most spend in the data
+ * (never a hard-coded currency). Spend is NEVER summed across unlike currencies —
+ * the scalar total is built from this single currency's rows only.
+ */
+function pickReportingCurrency(
+  rows: Array<{ spend: number; currency: string | null }>,
+  preferred?: string | null,
+): string {
+  if (preferred) return preferred;
+  const byCur: Record<string, number> = {};
+  for (const r of rows) {
+    const c = r.currency;
+    if (!c) continue; // unlabeled rows can't vote for a fallback currency
+    byCur[c] = (byCur[c] ?? 0) + r.spend;
+  }
+  const currencies = Object.keys(byCur);
+  if (currencies.length === 0) return DEFAULT_CURRENCY;
+  return [...currencies].sort((a, b) => byCur[b] - byCur[a])[0];
+}
+
+/**
  * Spend / performance import (blueprint §8/§22). Pulls provider metrics via the
  * connector and stores them idempotently per remote object per day. These are
  * PROVIDER-sourced numbers, surfaced separately from the internal funnel so the
@@ -78,13 +118,21 @@ export class SpendService {
     // Currency-aware aggregation. Spend must NEVER be summed across unlike currencies
     // (₹ + $ = a meaningless number). Impressions/clicks are currency-agnostic and
     // sum freely; spend is grouped per currency in `byCurrency` (the source of truth),
-    // and the scalar `totals.spend` is resolved to a single reporting currency below.
-    const totals = { impressions: 0, clicks: 0, spend: 0, currency: 'INR' as string };
+    // and the scalar `totals.spend` is resolved to a single reporting currency.
+    //
+    // Resolve that reporting currency the SAME way projections does: prefer the org's
+    // configured currency (Organization.settings.currency); when absent, fall back to
+    // the currency carrying the most spend in the data (never a hard-coded currency).
+    // Doing it here — before bucketing — means unlabeled rows are attributed to the
+    // reporting currency, matching projections' `(currency || reporting) === reporting`.
+    const reportingCurrency = pickReportingCurrency(rows, await this.orgReportingCurrency(orgId));
+
+    const totals = { impressions: 0, clicks: 0, spend: 0, currency: reportingCurrency };
     const byProvider: Record<string, { impressions: number; clicks: number; spend: number; currency: string }> = {};
     const byCurrency: Record<string, { impressions: number; clicks: number; spend: number }> = {};
     const providerCurrencies: Record<string, Set<string>> = {};
     for (const r of rows) {
-      const cur = r.currency || 'INR';
+      const cur = r.currency || reportingCurrency;
       totals.impressions += r.impressions;
       totals.clicks += r.clicks;
       const c = (byCurrency[cur] ??= { impressions: 0, clicks: 0, spend: 0 });
@@ -98,18 +146,8 @@ export class SpendService {
       (providerCurrencies[r.provider] ??= new Set()).add(cur);
     }
 
-    // Resolve the scalar total to ONE currency instead of a cross-currency sum:
-    // prefer the org default (INR); otherwise the currency carrying the most spend.
-    const currencies = Object.keys(byCurrency);
-    const reportingCurrency =
-      currencies.length === 0
-        ? 'INR'
-        : currencies.includes('INR')
-          ? 'INR'
-          : [...currencies].sort((a, b) => byCurrency[b].spend - byCurrency[a].spend)[0];
-    totals.currency = reportingCurrency;
     totals.spend = byCurrency[reportingCurrency]?.spend ?? 0;
-    const mixedCurrency = currencies.length > 1;
+    const mixedCurrency = Object.keys(byCurrency).length > 1;
     // Flag any provider whose rows span currencies — its scalar spend is not a
     // single-currency figure and must be read via byCurrency instead.
     for (const [prov, set] of Object.entries(providerCurrencies)) {
@@ -117,5 +155,14 @@ export class SpendService {
     }
 
     return { source: 'provider' as const, totals, byProvider, byCurrency, mixedCurrency };
+  }
+
+  /** The org's configured reporting currency (Organization.settings.currency), or null. */
+  private async orgReportingCurrency(orgId: string): Promise<string | null> {
+    const org = (await this.prisma.organization.findUnique({
+      where: { id: orgId },
+      select: { settings: true },
+    })) as { settings: unknown } | null;
+    return currencyFromSettings(org?.settings);
   }
 }

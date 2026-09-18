@@ -12,7 +12,16 @@ import type { StageProps } from './types';
  * calls the deterministic creative planner (real endpoint, no keys) and turns
  * the response into the studio's working creative.
  */
-export function BriefStage({ creative, patch, notify, client, campaignId, setCreative, setStage }: StageProps) {
+export function BriefStage({
+  creative,
+  patch,
+  notify,
+  client,
+  campaignId,
+  setCreative,
+  setStage,
+  setBlueprintId,
+}: StageProps) {
   const [generating, setGenerating] = useState(false);
   const [outcome, setOutcome] = useState(creative.outcome || 'Qualified leads');
   const [audience, setAudience] = useState(creative.audience || 'Premium Android upgraders');
@@ -38,9 +47,12 @@ export function BriefStage({ creative, patch, notify, client, campaignId, setCre
         cta: creative.cta,
       });
       setCreative(fromBlueprint(bp));
+      // Generation persists a durable draft row — track its id so Save/Restore/
+      // Handoff operate on the same server blueprint.
+      setBlueprintId(bp.id);
       notify(
         'Creative plan generated',
-        'Brief, directions, blocks, journey states and variants were created by the deterministic Creative AI.',
+        'A durable blueprint (brief, directions, blocks, journey states and variants) was saved by the deterministic Creative AI.',
         'success',
       );
     } catch (e) {

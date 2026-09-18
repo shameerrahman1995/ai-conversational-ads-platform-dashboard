@@ -1,9 +1,11 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useApiClient } from '@/lib/api';
 import { useAsync } from '@/lib/useAsync';
+import { useOrg } from '@/lib/org-context';
+import { roleSatisfies, type UserRole } from '@acp/shared-types';
 import { Icon } from '@/components/Icon';
 import {
   PageHeader,
@@ -14,11 +16,15 @@ import {
   Chip,
   StatusChip,
   DataState,
+  DataTable,
   EmptyState,
+  Skeleton,
+  type Column,
 } from '@/components/ui';
 import type { CampaignSummary } from '@acp/api-client';
 import { VERTICAL_LABEL } from '@/lib/taxonomy';
 import { CampaignRowActions, ArchiveCampaignModal } from './_components/CampaignRowActions';
+import { BulkDeploymentToolbar } from './_components/BulkDeploymentToolbar';
 
 /* Sentence-case an objective like "lead_generation" → "Lead generation". */
 const objectiveLabel = (s: string) =>
@@ -54,9 +60,84 @@ const FILTERS: { key: FilterKey; label: string }[] = [
   { key: 'ARCHIVED', label: 'Archived' },
 ];
 
+/* ------------------------------------------------------------------ */
+/* First-load skeleton — content-shaped (KPI strip + filter row +      */
+/* campaign table) so first paint shows structure, not a spinner.      */
+/* `.skeleton` already respects prefers-reduced-motion.                 */
+/* ------------------------------------------------------------------ */
+function CampaignsSkeleton() {
+  return (
+    <div aria-busy="true" aria-live="polite">
+      <span className="sr-only">Loading campaigns…</span>
+      <div className="grid grid-kpi">
+        {Array.from({ length: 4 }).map((_, i) => (
+          <div key={i} className="card stat">
+            <div className="stat-top">
+              <Skeleton width="45%" height={12} radius={6} />
+              <Skeleton width={30} height={30} radius={9} />
+            </div>
+            <div style={{ marginTop: '0.55rem' }}>
+              <Skeleton width="55%" height={28} radius={8} />
+            </div>
+            <div style={{ marginTop: '0.5rem' }}>
+              <Skeleton width="70%" height={12} radius={6} />
+            </div>
+          </div>
+        ))}
+      </div>
+      <div className="card" style={{ marginTop: '1rem' }}>
+        <div className="panel-head">
+          <Skeleton width={130} height={15} radius={6} />
+          <Skeleton width={70} height={20} radius={999} />
+        </div>
+        <div
+          className="row"
+          style={{
+            gap: '0.4rem',
+            flexWrap: 'wrap',
+            padding: '0.8rem 1.25rem',
+            borderBottom: '1px solid var(--color-line)',
+          }}
+        >
+          {Array.from({ length: 6 }).map((_, i) => (
+            <Skeleton key={i} width={70 + (i % 3) * 18} height={26} radius={999} />
+          ))}
+        </div>
+        <div className="table-wrap">
+          <table className="table">
+            <thead>
+              <tr>
+                {Array.from({ length: 5 }).map((_, i) => (
+                  <th key={i}>
+                    <Skeleton width={i === 0 ? 90 : 54} height={11} radius={5} />
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {Array.from({ length: 6 }).map((_, r) => (
+                <tr key={r}>
+                  {Array.from({ length: 5 }).map((_, c) => (
+                    <td key={c}>
+                      <Skeleton width={c === 0 ? '72%' : '46%'} height={13} radius={6} />
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function CampaignsPage() {
   const client = useApiClient();
   const router = useRouter();
+  const { role } = useOrg();
+  // Bulk activate/pause is a privileged (publisher/admin) deployment-governance op.
+  const privileged = roleSatisfies(role as UserRole, ['publisher']);
   const [reload, setReload] = useState(0);
   const { data, error, loading } = useAsync(
     () => client.campaigns.list(),
@@ -64,6 +145,8 @@ export default function CampaignsPage() {
   );
   const [filter, setFilter] = useState<FilterKey>('all');
   const [archiveTarget, setArchiveTarget] = useState<CampaignSummary | null>(null);
+  // Row selection for the bulk deployment toolbar (controlled).
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
 
   const campaigns = useMemo(() => data ?? [], [data]);
 
@@ -94,9 +177,111 @@ export default function CampaignsPage() {
 
   const reviewQueue = campaigns.filter((c) => c.status === 'READY_FOR_REVIEW');
 
+  // Selected rows resolved to campaign records (selection persists across the
+  // list; the toolbar and confirm reflect exactly what's checked).
+  const selectedCampaigns = useMemo(
+    () => campaigns.filter((c) => selectedIds.includes(c.id)),
+    [campaigns, selectedIds],
+  );
+  // Switching the status filter clears the selection so a hidden row is never
+  // acted on by accident.
+  useEffect(() => {
+    setSelectedIds([]);
+  }, [filter]);
+
   function goTo(id: string) {
     router.push(`/campaigns/${id}`);
   }
+
+  const columns: Column<CampaignSummary>[] = [
+    {
+      key: 'campaign',
+      header: 'Campaign',
+      label: 'Campaign',
+      sortable: true,
+      sortValue: (c) => (c.name ?? c.objective).toLowerCase(),
+      render: (c) => (
+        <>
+          <div className="row" style={{ gap: '0.5rem', flexWrap: 'wrap' }}>
+            <span className="cell-strong">{c.name ?? objectiveLabel(c.objective)}</span>
+            {c.vertical ? (
+              <Chip tone="warning" icon="shield">
+                Restricted: {VERTICAL_LABEL[c.vertical] ?? c.vertical}
+              </Chip>
+            ) : null}
+          </div>
+          <div className="cell-muted" style={{ fontSize: 12 }}>
+            {objectiveLabel(c.objective)}
+          </div>
+        </>
+      ),
+    },
+    {
+      key: 'status',
+      header: 'Status',
+      label: 'Status',
+      sortable: true,
+      sortValue: (c) => c.status,
+      render: (c) => <StatusChip status={c.status} />,
+    },
+    {
+      key: 'version',
+      header: 'Version',
+      label: 'Version',
+      align: 'right',
+      sortable: true,
+      sortValue: (c) => c.version,
+      render: (c) => <span className="tnum">v{c.version}</span>,
+    },
+    {
+      key: 'created',
+      header: 'Created',
+      label: 'Created',
+      sortable: true,
+      sortValue: (c) => c.createdAt,
+      render: (c) => <span className="cell-muted tnum">{dateLabel(c.createdAt)}</span>,
+    },
+    {
+      key: 'actions',
+      header: 'Actions',
+      label: 'Actions',
+      align: 'right',
+      render: (c) => (
+        <div className="row" style={{ gap: '0.25rem', justifyContent: 'flex-end' }}>
+          <CampaignRowActions
+            campaign={c}
+            onChanged={() => setReload((n) => n + 1)}
+            onArchiveRequest={setArchiveTarget}
+          />
+          {c.status === 'READY_FOR_REVIEW' ? (
+            <Button
+              size="sm"
+              variant="ghost"
+              icon="shield"
+              onClick={(e) => {
+                e.stopPropagation();
+                goTo(c.id);
+              }}
+            >
+              Review
+            </Button>
+          ) : (
+            <Button
+              size="sm"
+              variant="ghost"
+              icon="chevron-right"
+              onClick={(e) => {
+                e.stopPropagation();
+                goTo(c.id);
+              }}
+            >
+              Open
+            </Button>
+          )}
+        </div>
+      ),
+    },
+  ];
 
   return (
     <div>
@@ -110,8 +295,9 @@ export default function CampaignsPage() {
         }
       />
 
+      {loading ? <CampaignsSkeleton /> : (
       <DataState
-        loading={loading}
+        loading={false}
         error={error}
         onRetry={() => setReload((n) => n + 1)}
         loadingLabel="Loading campaigns…"
@@ -248,108 +434,45 @@ export default function CampaignsPage() {
                   </span>
                 </div>
 
-                <div className="table-wrap">
-                  <table className="table">
-                    <thead>
-                      <tr>
-                        <th>Campaign</th>
-                        <th>Status</th>
-                        <th className="cell-num">Version</th>
-                        <th>Created</th>
-                        <th style={{ textAlign: 'right' }}>Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {filtered.map((c) => (
-                        <tr
-                          key={c.id}
-                          onClick={() => goTo(c.id)}
-                          style={{ cursor: 'pointer' }}
-                        >
-                          <td>
-                            <div className="row" style={{ gap: '0.5rem', flexWrap: 'wrap' }}>
-                              <span className="cell-strong">
-                                {c.name ?? objectiveLabel(c.objective)}
-                              </span>
-                              {c.vertical ? (
-                                <Chip tone="warning" icon="shield">
-                                  Restricted: {VERTICAL_LABEL[c.vertical] ?? c.vertical}
-                                </Chip>
-                              ) : null}
-                            </div>
-                            <div className="cell-muted" style={{ fontSize: 12 }}>
-                              {objectiveLabel(c.objective)}
-                            </div>
-                          </td>
-                          <td>
-                            <StatusChip status={c.status} />
-                          </td>
-                          <td className="cell-num">v{c.version}</td>
-                          <td className="cell-muted tnum">{dateLabel(c.createdAt)}</td>
-                          <td style={{ textAlign: 'right' }}>
-                            <div
-                              className="row"
-                              style={{ gap: '0.25rem', justifyContent: 'flex-end' }}
-                            >
-                              <CampaignRowActions
-                                campaign={c}
-                                onChanged={() => setReload((n) => n + 1)}
-                                onArchiveRequest={setArchiveTarget}
-                              />
-                              {c.status === 'READY_FOR_REVIEW' ? (
-                                <Button
-                                  size="sm"
-                                  variant="ghost"
-                                  icon="shield"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    goTo(c.id);
-                                  }}
-                                >
-                                  Review
-                                </Button>
-                              ) : (
-                                <Button
-                                  size="sm"
-                                  variant="ghost"
-                                  icon="chevron-right"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    goTo(c.id);
-                                  }}
-                                >
-                                  Open
-                                </Button>
-                              )}
-                            </div>
-                          </td>
-                        </tr>
-                      ))}
-                      {filtered.length === 0 ? (
-                        <tr>
-                          <td colSpan={5}>
-                            <div className="empty" style={{ padding: '2rem 1rem' }}>
-                              <div className="empty-ic">
-                                <Icon name="filter" size={20} />
-                              </div>
-                              <div className="empty-title">
-                                No{' '}
-                                {FILTERS.find((f) => f.key === filter)?.label.toLowerCase()}{' '}
-                                campaigns
-                              </div>
-                              <div>Nothing matches this status right now.</div>
-                            </div>
-                          </td>
-                        </tr>
-                      ) : null}
-                    </tbody>
-                  </table>
-                </div>
+                {/* Bulk deployment toolbar — appears when rows are selected */}
+                {selectedCampaigns.length > 0 ? (
+                  <BulkDeploymentToolbar
+                    selected={selectedCampaigns}
+                    privileged={privileged}
+                    onClear={() => setSelectedIds([])}
+                    onDone={() => {
+                      setSelectedIds([]);
+                      setReload((n) => n + 1);
+                    }}
+                  />
+                ) : null}
+
+                <DataTable<CampaignSummary>
+                  columns={columns}
+                  rows={filtered}
+                  rowKey={(c) => c.id}
+                  onRowClick={(c) => goTo(c.id)}
+                  selectable
+                  selectedKeys={selectedIds}
+                  onSelectionChange={(keys) => setSelectedIds(keys)}
+                  empty={
+                    <div className="empty" style={{ padding: '2rem 1rem' }}>
+                      <div className="empty-ic">
+                        <Icon name="filter" size={20} />
+                      </div>
+                      <div className="empty-title">
+                        No {FILTERS.find((f) => f.key === filter)?.label.toLowerCase()} campaigns
+                      </div>
+                      <div>Nothing matches this status right now.</div>
+                    </div>
+                  }
+                />
               </Panel>
             </div>
           </>
         )}
       </DataState>
+      )}
 
       {archiveTarget ? (
         <ArchiveCampaignModal

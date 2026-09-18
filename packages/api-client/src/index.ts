@@ -8,14 +8,13 @@ import type {
   ApiError,
   CampaignStatus,
   QualificationLevel,
-  CreativeBlueprint,
+  CreativeBlueprint as CreativeBlueprintBase,
   GenerateBlueprintInput,
 } from '@acp/shared-types';
 
 // Re-export the AI Creative Studio blueprint contract so the web imports every
 // creative type from one place (@acp/api-client), matching the existing pattern.
 export type {
-  CreativeBlueprint,
   CreativeDirection,
   CreativeBlock,
   CreativeBlockType,
@@ -28,6 +27,21 @@ export type {
   CreativeBlueprintStatus,
   GenerateBlueprintInput,
 } from '@acp/shared-types';
+
+/**
+ * The composed blueprint the API returns. Extends the shared blueprint contract
+ * with the publish LINKAGE the server now exposes: which `CreativeVariant` this
+ * blueprint drives (one blueprint ↔ one html5 variant) and which conversational
+ * agent the shipped ad talks to — so the UI can show "this ad talks to agent X".
+ */
+export interface CreativeBlueprint extends CreativeBlueprintBase {
+  /** The single html5 CreativeVariant kept in lock-step with this blueprint. */
+  variantId?: string | null;
+  /** The campaign's AgentConfig id the shipped ad converses with (null if none). */
+  agentId?: string | null;
+  /** Display name of that agent (from AgentConfig/campaign), null if none. */
+  agentName?: string | null;
+}
 
 export interface ClientOptions {
   baseUrl: string;
@@ -173,7 +187,68 @@ export interface PublishPlan {
   snapshotId?: string | null;
   remoteId?: string | null;
   reviewReason?: string | null;
+  /** The user who created the plan (identity-level two-person control: the approver must differ). */
+  createdBy?: string | null;
   createdAt: string;
+}
+
+// ---- Deployment governance (V10 U5.2 / U5.3) ----
+
+/** One ad node of the remote-object tree (leaf). */
+export interface RemoteObjectTreeAd {
+  adRemoteId: string;
+  reviewStatus: string | null;
+  revision: number;
+}
+/** An ad-group grouping its ads. */
+export interface RemoteObjectTreeAdGroup {
+  adGroupRemoteId: string | null;
+  ads: RemoteObjectTreeAd[];
+}
+/** A remote campaign with its ad-group → ad children (rebuilt from flat RemoteObject rows). */
+export interface RemoteObjectTreeCampaign {
+  campaignRemoteId: string | null;
+  reviewStatus: string | null;
+  revision: number;
+  adGroups: RemoteObjectTreeAdGroup[];
+}
+/** One drift entry: a field whose local (desired) value differs from the remote. */
+export interface ReconciliationDrift {
+  field: string;
+  desired: string;
+  remote: string;
+  note?: string;
+}
+/** Desired-vs-remote reconciliation for a publish plan + its remote-object tree. */
+export interface PublishReconciliation {
+  planId: string;
+  platform: string;
+  accountId: string | null;
+  inSync: boolean;
+  desired: {
+    planStatus: string;
+    campaignStatus: string | null;
+    remoteId: string | null;
+    reviewReason: string | null;
+  };
+  remote: { state: string; reason: string | null; updatedAt: string } | null;
+  remoteMappedStatus: string | null;
+  drift: ReconciliationDrift[];
+  tree: RemoteObjectTreeCampaign[];
+}
+/** Per-campaign outcome of a bulk activate/pause. */
+export interface BulkDeploymentItemResult {
+  id: string;
+  ok: boolean;
+  from?: string;
+  to?: string;
+  plansAffected?: number;
+  error?: string;
+}
+export interface BulkDeploymentResult {
+  action: 'activate' | 'pause';
+  results: BulkDeploymentItemResult[];
+  summary: { total: number; ok: number; failed: number };
 }
 
 export interface Connection {
@@ -193,6 +268,38 @@ export interface OrgUser {
   status: string;
   name?: string | null;
   createdAt: string;
+}
+
+// ---- Current workspace (Settings §U7.1) ----
+/** The caller's own workspace/org profile with its config + branding blobs. */
+export interface OrgWorkspace {
+  id: string;
+  name: string;
+  plan: string;
+  status: string;
+  region: string;
+  /** Workspace defaults (currency/timezone/feature flags). */
+  settings: Record<string, unknown> | null;
+  /** Branding (logoUrl, accent hex, …). */
+  branding: Record<string, unknown> | null;
+  createdAt: string;
+  updatedAt: string;
+}
+export interface UpdateOrgInput {
+  name?: string;
+  region?: string;
+  /** Shallow-merged into stored settings server-side. */
+  settings?: Record<string, unknown>;
+  /** Shallow-merged into stored branding server-side. */
+  branding?: Record<string, unknown>;
+}
+export interface OrgTransferInput {
+  email: string;
+  note?: string;
+}
+export interface OrgTransferResult {
+  id: string;
+  pendingTransfer: Record<string, unknown>;
 }
 
 // ---- Developer platform: API keys + webhooks (U7.1) ----
@@ -226,6 +333,20 @@ export interface WebhookTestResult {
   ok: boolean;
   status: string;
   deliveredAt: string;
+}
+/** One durable delivery attempt record for an outbound webhook event. */
+export interface WebhookDelivery {
+  id: string;
+  webhookId: string;
+  event: string;
+  status: 'pending' | 'delivered' | 'failed' | 'dead';
+  attempts: number;
+  maxAttempts: number;
+  responseCode: number | null;
+  lastStatus: string | null;
+  nextAttemptAt: string | null;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface Experiment {
@@ -268,6 +389,76 @@ export interface SpendReport {
   source: 'provider';
   totals: { impressions: number; clicks: number; spend: number };
   byProvider: Record<string, { impressions: number; clicks: number; spend: number }>;
+  /** Per-currency spend breakdown; present when the account mixes currencies. */
+  byCurrency?: Record<string, number>;
+  /** True when spend spans multiple currencies. */
+  mixedCurrency?: boolean;
+}
+
+// ---- V10 U1.7 dashboard projections (timeseries / insights / platform-health) ----
+
+export type TimeseriesMetric =
+  | 'impressions'
+  | 'clicks'
+  | 'conversations'
+  | 'qualified'
+  | 'spend'
+  | 'leads';
+
+export interface TimeseriesPoint {
+  /** yyyy-mm-dd (UTC). */
+  date: string;
+  value: number;
+}
+
+export interface TimeseriesResponse {
+  metric: TimeseriesMetric;
+  interval: 'day';
+  from: string;
+  to: string;
+  points: TimeseriesPoint[];
+  /** Equally-long window immediately before [from,to], for "vs prior" deltas. */
+  priorPoints: TimeseriesPoint[];
+}
+
+export type InsightSource = 'experiments' | 'analytics' | 'spend';
+export type InsightSeverity = 'high' | 'medium' | 'low';
+
+export interface Insight {
+  id: string;
+  title: string;
+  /** Human-readable evidence that always cites a real number. */
+  evidence: string;
+  source: InsightSource;
+  severity: InsightSeverity;
+  /** In-app route the card links to (e.g. /experiments/:id, /analytics/funnel). */
+  deepLink: string;
+}
+
+export interface InsightsResponse {
+  /** Ranked by impact (highest first). */
+  insights: Insight[];
+}
+
+export type PlatformHealthStatus =
+  | 'healthy'
+  | 'degraded'
+  | 'action_required'
+  | 'connecting'
+  | 'disconnected'
+  | 'idle';
+
+export interface PlatformHealthEntry {
+  /** google_ads | meta | tiktok | agent_runtime */
+  platform: string;
+  status: PlatformHealthStatus;
+  lastSyncAt: string | null;
+  latencyMs: number | null;
+  tokenExpiresAt: string | null;
+}
+
+export interface PlatformHealthResponse {
+  platforms: PlatformHealthEntry[];
 }
 
 export interface AttributionReport {
@@ -278,6 +469,12 @@ export interface AttributionReport {
   costPerQualifiedLead: number | null;
   roas: number | null;
   note: string;
+  /** Reporting currency the totals are expressed in. */
+  currency?: string;
+  /** Per-currency spend breakdown when the account mixes currencies. */
+  spendByCurrency?: Record<string, number>;
+  /** True when spend spans multiple currencies (totals shown in one). */
+  mixedCurrency?: boolean;
 }
 
 export interface BudgetStatus {
@@ -440,6 +637,21 @@ export interface RegressionRunResult {
   summary: { passed: number; warnings: number; failed: number };
 }
 
+// ---- Agent publish readiness (V10 §9 / U4.5) ----
+/** One readiness gate item — mirrors a client ReadinessRail check. */
+export interface AgentReadinessCheck {
+  key: string;
+  ok: boolean;
+  label: string;
+}
+/** Server-computed readiness signal that gates the publish button + the API. */
+export interface AgentReadiness {
+  /** Weighted 0–100 score; publishing requires ≥ 75. */
+  score: number;
+  checks: AgentReadinessCheck[];
+  passingRegression: boolean;
+}
+
 export interface AgentSummary {
   id: string;
   name: string;
@@ -456,7 +668,7 @@ export interface AgentSummary {
 
 export interface AgentDetail extends AgentSummary {
   settings: AgentSettings;
-  versions: { version: number; publishedAt: string | null; createdAt: string }[];
+  versions: { id: string; version: number; publishedAt: string | null; createdAt: string }[];
 }
 
 export interface AgentPreviewResult {
@@ -529,6 +741,38 @@ export interface PlatformOrgDetail {
   counts: { users: number; campaigns: number; leads: number; publishJobs: number; agentVersions: number };
 }
 
+// ---- Audiences (U2.2): reusable segment + personalization definitions ----
+export type AudienceKind = 'segment' | 'personalization';
+
+export interface Audience {
+  id: string;
+  name: string;
+  kind: AudienceKind;
+  description?: string | null;
+  /** Provider-neutral definition blob (conditions, channels, signals, rule fields…). */
+  definition: Record<string, unknown>;
+  /** Cached reach estimate. */
+  estimatedSize?: number | null;
+  createdBy?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreateAudienceInput {
+  name: string;
+  kind: AudienceKind;
+  description?: string;
+  definition: Record<string, unknown>;
+  estimatedSize?: number;
+}
+
+export interface UpdateAudienceInput {
+  name?: string;
+  description?: string;
+  definition?: Record<string, unknown>;
+  estimatedSize?: number;
+}
+
 export function createApiClient(opts: ClientOptions) {
   async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     const headers = {
@@ -585,6 +829,25 @@ export function createApiClient(opts: ClientOptions) {
         request<SpendReport>(`/v1/analytics/spend${qs(params)}`),
       attribution: (params: { since?: string; until?: string } = {}) =>
         request<AttributionReport>(`/v1/analytics/attribution${qs(params)}`),
+      /** Daily series for one metric + the equally-long prior window (deltas/sparklines). */
+      timeseries: (params: {
+        metric: TimeseriesMetric;
+        from?: string;
+        to?: string;
+        interval?: 'day';
+      }) =>
+        request<TimeseriesResponse>(
+          `/v1/analytics/timeseries${qs({
+            metric: params.metric,
+            from: params.from,
+            to: params.to,
+            interval: params.interval,
+          })}`,
+        ),
+      /** Ranked, evidence-backed recommendations across experiments/analytics/spend. */
+      insights: () => request<InsightsResponse>('/v1/analytics/insights'),
+      /** Connector + agent-runtime health for the dashboard status strip. */
+      platformHealth: () => request<PlatformHealthResponse>('/v1/analytics/platform-health'),
     },
 
     agents: {
@@ -609,6 +872,11 @@ export function createApiClient(opts: ClientOptions) {
       /** Run the fixed 6-case regression battery against the agent. */
       regression: (id: string) =>
         request<RegressionRunResult>(`/v1/agents/${id}/regression`, { method: 'POST' }),
+      /** Server-computed publish readiness ({score, checks, passingRegression}). */
+      readiness: (id: string) => request<AgentReadiness>(`/v1/agents/${id}/readiness`),
+      /** Reinstate a prior agent version as the active config (audited). */
+      restoreVersion: (id: string, versionId: string) =>
+        request<{ id: string }>(`/v1/agents/${id}/versions/${versionId}/restore`, { method: 'POST' }),
       publish: (id: string) =>
         request<{ id: string; status: string }>(`/v1/agents/${id}/publish`, { method: 'POST' }),
     },
@@ -695,10 +963,42 @@ export function createApiClient(opts: ClientOptions) {
         request<{ ok: boolean }>(`/v1/variants/${id}`, { method: 'DELETE' }),
       render: (id: string) =>
         request<CreativeVariant>(`/v1/variants/${id}/render`, { method: 'POST' }),
+      // ---- Blueprint persistence (Creative Studio durable save/restore/handoff) ----
+      saveBlueprint: (body: Record<string, unknown>) =>
+        request<CreativeBlueprint>('/v1/creative/blueprints', {
+          method: 'POST',
+          body: JSON.stringify(body),
+        }),
+      blueprint: (id: string) => request<CreativeBlueprint>(`/v1/creative/blueprints/${id}`),
+      blueprints: (campaignId?: string) =>
+        request<CreativeBlueprint[]>(`/v1/creative/blueprints${qs({ campaignId })}`),
+      patchBlueprint: (id: string, body: Record<string, unknown>) =>
+        request<CreativeBlueprint>(`/v1/creative/blueprints/${id}`, {
+          method: 'PATCH',
+          body: JSON.stringify(body),
+        }),
+      restoreBlueprint: (id: string, version: number) =>
+        request<CreativeBlueprint>(`/v1/creative/blueprints/${id}/restore/${version}`, {
+          method: 'POST',
+        }),
+      handoffBlueprint: (id: string, body: Record<string, unknown>) =>
+        request<CreativeBlueprint>(`/v1/creative/blueprints/${id}/handoff`, {
+          method: 'POST',
+          body: JSON.stringify(body),
+        }),
+      simulations: (id: string) =>
+        request<unknown[]>(`/v1/creative/blueprints/${id}/simulations`),
+      createSimulation: (id: string, body: Record<string, unknown>) =>
+        request<unknown>(`/v1/creative/blueprints/${id}/simulations`, {
+          method: 'POST',
+          body: JSON.stringify(body),
+        }),
     },
 
     publishing: {
       plans: () => request<PublishPlan[]>('/v1/publish-plans'),
+      runtimeProfiles: () =>
+        request<{ version: string; profiles: unknown[] }>('/v1/publishing/runtime-profiles'),
       capabilities: (platform: string, accountId: string) =>
         request<Record<string, unknown>>(`/v1/publish/capabilities${qs({ platform, accountId })}`),
       // Returns the created plan nested under `.plan`, plus validation/policy context.
@@ -732,6 +1032,18 @@ export function createApiClient(opts: ClientOptions) {
         request<PublishPlan>(`/v1/publish-plans/${id}/resume`, { method: 'POST' }),
       cancel: (id: string) =>
         request<PublishPlan>(`/v1/publish-plans/${id}/cancel`, { method: 'POST' }),
+      /** Roll back a live/in-review deployment: pause the remote + mark rolled-back (privileged). */
+      rollback: (id: string) =>
+        request<PublishPlan>(`/v1/publish-plans/${id}/rollback`, { method: 'POST' }),
+      /** Desired-vs-remote drift + the remote-object tree for a plan. */
+      reconciliation: (id: string) =>
+        request<PublishReconciliation>(`/v1/publish-plans/${id}/reconciliation`),
+      /** Bulk activate/pause deployments across campaigns (privileged, per-item result). */
+      bulk: (body: { ids: string[]; action: 'activate' | 'pause' }) =>
+        request<BulkDeploymentResult>('/v1/publish-plans/bulk', {
+          method: 'POST',
+          body: JSON.stringify(body),
+        }),
     },
 
     leads: {
@@ -769,6 +1081,26 @@ export function createApiClient(opts: ClientOptions) {
         request<Connection>(`/v1/connections/${id}/disconnect`, { method: 'POST' }),
     },
 
+    /**
+     * Current workspace (Settings §U7.1). Every call is admin-gated + org-scoped
+     * server-side. `transfer`/`remove` are audited danger-zone ops: `transfer`
+     * records intent only; `remove` requires the workspace name as `confirm` and
+     * suspends (reversibly) rather than cascade-deleting.
+     */
+    org: {
+      get: () => request<OrgWorkspace>('/v1/org'),
+      update: (body: UpdateOrgInput) =>
+        request<OrgWorkspace>('/v1/org', { method: 'PATCH', body: JSON.stringify(body) }),
+      transfer: (body: OrgTransferInput) =>
+        request<OrgTransferResult>('/v1/org/transfer', { method: 'POST', body: JSON.stringify(body) }),
+      /** Typed-confirm delete: `confirm` must exactly match the workspace name. */
+      remove: (confirm: string) =>
+        request<{ id: string; status: string }>('/v1/org', {
+          method: 'DELETE',
+          body: JSON.stringify({ confirm }),
+        }),
+    },
+
     users: {
       list: () => request<OrgUser[]>('/v1/users'),
       invite: (body: { email: string; role: string }) =>
@@ -794,11 +1126,27 @@ export function createApiClient(opts: ClientOptions) {
       remove: (id: string) => request<{ ok: boolean }>(`/v1/webhooks/${id}`, { method: 'DELETE' }),
       /** Send a signed test delivery (HMAC-SHA256) and record the result. */
       test: (id: string) => request<WebhookTestResult>(`/v1/webhooks/${id}/test`, { method: 'POST' }),
+      /** Recent delivery attempts, optionally filtered to a single webhook. */
+      deliveries: (webhookId?: string) =>
+        request<WebhookDelivery[]>(`/v1/webhooks/deliveries${qs({ webhookId })}`),
+      /** Manually re-arm a failed/dead delivery to fire again immediately. */
+      retryDelivery: (id: string) =>
+        request<WebhookDelivery>(`/v1/webhooks/deliveries/${id}/retry`, { method: 'POST' }),
     },
 
     conversations: {
       list: () => request<ConversationSummary[]>('/v1/conversations'),
       transcript: (id: string) => request<TranscriptMessage[]>(`/v1/conversations/${id}/transcript`),
+      summary: () =>
+        request<{
+          totalConversations: number;
+          qualifiedConversations: number;
+          qualificationRate: number;
+          assistantTurns: number;
+          groundedTurns: number;
+          groundedAnswerRate: number;
+          medianDurationMs: number;
+        }>('/v1/conversations/summary'),
     },
 
     experiments: {
@@ -828,6 +1176,17 @@ export function createApiClient(opts: ClientOptions) {
           method: 'POST',
           body: JSON.stringify(body),
         }),
+    },
+
+    /** Reusable audience definitions — segments + personalization rules (U2.2). */
+    audiences: {
+      list: (kind?: AudienceKind) => request<Audience[]>(`/v1/audiences${qs({ kind })}`),
+      get: (id: string) => request<Audience>(`/v1/audiences/${id}`),
+      create: (body: CreateAudienceInput) =>
+        request<Audience>('/v1/audiences', { method: 'POST', body: JSON.stringify(body) }),
+      update: (id: string, body: UpdateAudienceInput) =>
+        request<Audience>(`/v1/audiences/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
+      remove: (id: string) => request<{ ok: boolean }>(`/v1/audiences/${id}`, { method: 'DELETE' }),
     },
 
     cost: {

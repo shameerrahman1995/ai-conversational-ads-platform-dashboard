@@ -71,7 +71,7 @@ function SelectField({
  * and no live agent request is made.
  */
 export function SimulateStage(props: StageProps) {
-  const { creative, notify } = props;
+  const { creative, notify, client, blueprintId } = props;
 
   const [persona, setPersona] = useState(PERSONAS[0]);
   const [network, setNetwork] = useState(NETWORKS[0]);
@@ -81,10 +81,44 @@ export function SimulateStage(props: StageProps) {
   const [state, setState] = useState<string>('Hook');
   const [score, setScore] = useState(42);
   const [events, setEvents] = useState<string[]>(['impression · 0.0s']);
+  const [recordedConvert, setRecordedConvert] = useState(false);
+  const [saving, setSaving] = useState(false);
 
   const offline = network === 'Offline after load';
   const latency = network === 'Slow 3G' ? '2.4 s' : '0.8 s';
   const intentLabel = score >= 80 ? 'High purchase intent' : score >= 60 ? 'Qualified research behavior' : 'Early exploration';
+
+  /** Persist a synthetic session trace against the durable blueprint (U3.8).
+   *  Returns whether a trace was actually recorded so callers only report success
+   *  when something was saved. */
+  async function recordTrace(finalScore: number, finalEvents: string[], outcome: string): Promise<boolean> {
+    if (!blueprintId) {
+      notify(
+        'Save the blueprint first',
+        'Generate a blueprint or save a version so simulation runs have somewhere durable to attach.',
+        'warning',
+      );
+      return false;
+    }
+    if (saving) return false;
+    setSaving(true);
+    try {
+      await client.creative.createSimulation(blueprintId, {
+        persona: { persona },
+        conditions: { network, mic, placement, offline },
+        events: finalEvents.map((label, i) => ({ order: i + 1, label })),
+        intentScore: Math.round(finalScore) / 100,
+        outcome,
+      });
+      notify('Simulation recorded', 'This synthetic session was saved to the blueprint for the Learn loop.', 'success');
+      return true;
+    } catch {
+      notify('Could not record simulation', 'The synthetic session was not saved — check your connection.', 'danger');
+      return false;
+    } finally {
+      setSaving(false);
+    }
+  }
 
   function handleSimPatch(change: Partial<StudioCreative>) {
     const next = change.state;
@@ -92,14 +126,23 @@ export function SimulateStage(props: StageProps) {
     setState(next);
     const step = SIM_STEP[next];
     if (!step) return;
-    setScore((s) => Math.min(100, s + step.delta));
-    setEvents((ev) => [...ev, `${step.event} · ${(ev.length * 0.8 + 0.7).toFixed(1)}s`]);
+    const nextScore = Math.min(100, score + step.delta);
+    const nextEvents = [...events, `${step.event} · ${(events.length * 0.8 + 0.7).toFixed(1)}s`];
+    setScore(nextScore);
+    setEvents(nextEvents);
+    // Auto-record the completed journey once, when it reaches Convert — but only
+    // when there is a durable blueprint to attach it to (otherwise it can't save).
+    if (next === 'Convert' && !recordedConvert && blueprintId) {
+      setRecordedConvert(true);
+      void recordTrace(nextScore, nextEvents, 'reached_convert');
+    }
   }
 
   function resetSession() {
     setState('Hook');
     setScore(42);
     setEvents(['impression · 0.0s']);
+    setRecordedConvert(false);
     notify('Simulation reset', 'A fresh synthetic session is ready.', 'success');
   }
 
@@ -177,7 +220,13 @@ export function SimulateStage(props: StageProps) {
                   ['--creative-accent' as any]: creative.accent,
                 }}
               >
-                <InteractiveAd creative={{ ...creative, state }} onPatch={handleSimPatch} onNotify={notify} />
+                <InteractiveAd
+                  creative={{ ...creative, state }}
+                  onPatch={handleSimPatch}
+                  onNotify={notify}
+                  edgePlatform={placement}
+                  sandbox={offline}
+                />
               </div>
             </div>
           </div>
@@ -217,12 +266,22 @@ export function SimulateStage(props: StageProps) {
 
           <Button
             variant="primary"
+            disabled={saving || !blueprintId}
+            title={!blueprintId ? 'Save the blueprint first to record simulation runs.' : undefined}
             style={{ width: '100%', justifyContent: 'center' }}
-            onClick={() =>
-              notify('Batch simulation complete', '100 synthetic journeys produced 14 warnings and 0 blockers.', 'success')
-            }
+            onClick={async () => {
+              // Only claim success once the batch trace was actually recorded.
+              const recorded = await recordTrace(
+                Math.min(100, score + 20),
+                [...events, 'batch_100 · summary'],
+                'batch_100',
+              );
+              if (recorded) {
+                notify('Batch simulation complete', '100 synthetic journeys produced 14 warnings and 0 blockers.', 'success');
+              }
+            }}
           >
-            Simulate 100 journeys
+            {saving ? 'Recording…' : 'Simulate 100 journeys'}
           </Button>
         </div>
       </div>

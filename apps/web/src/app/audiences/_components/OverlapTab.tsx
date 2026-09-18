@@ -1,8 +1,9 @@
 'use client';
 
-import { Card } from '@/components/ui';
+import { useMemo } from 'react';
+import { Card, EmptyState } from '@/components/ui';
 import { Notice } from './atoms';
-import { OVERLAP, OVERLAP_THRESHOLD, SEED_SEGMENTS, type Segment } from './segments';
+import { OVERLAP_THRESHOLD, computeOverlap, type Segment } from './segments';
 
 /** Heat tint for an overlap cell, scaled by percentage (tokens only). */
 function heat(pct: number): string {
@@ -11,11 +12,24 @@ function heat(pct: number): string {
 }
 
 export function OverlapTab({ segments }: { segments: Segment[] }) {
-  const rows = SEED_SEGMENTS;
-  const maxOverlap = Math.max(
-    ...OVERLAP.flatMap((r, i) => r.filter((_, j) => i !== j)),
+  const matrix = useMemo(() => computeOverlap(segments), [segments]);
+  const maxOverlap = useMemo(
+    () => Math.max(0, ...matrix.flatMap((r, i) => r.filter((_, j) => i !== j))),
+    [matrix],
   );
-  const extras = segments.filter((s) => !SEED_SEGMENTS.some((seed) => seed.id === s.id)).length;
+
+  if (segments.length < 2) {
+    return (
+      <Card>
+        <EmptyState
+          icon="filter"
+          title="Not enough audiences to compare"
+          hint="Overlap is estimated across two or more configured audiences. Create another segment to see how their reach overlaps."
+        />
+      </Card>
+    );
+  }
+
   const safe = maxOverlap < OVERLAP_THRESHOLD;
 
   return (
@@ -24,7 +38,9 @@ export function OverlapTab({ segments }: { segments: Segment[] }) {
         <div className="panel-head">
           <div className="row" style={{ gap: '0.6rem' }}>
             <span className="panel-title">Audience overlap</span>
-            <span className="panel-note">Shared reach between synced segments, as a share of the row audience</span>
+            <span className="panel-note">
+              Estimated shared reach between segments, as a share of the row audience
+            </span>
           </div>
         </div>
         <div className="table-wrap">
@@ -32,26 +48,26 @@ export function OverlapTab({ segments }: { segments: Segment[] }) {
             <thead>
               <tr>
                 <th style={{ minWidth: 200 }}>Segment</th>
-                {rows.map((_, j) => (
-                  <th key={j} className="cell-num" title={rows[j].name} style={{ width: 56 }}>
+                {segments.map((seg, j) => (
+                  <th key={seg.id} className="cell-num" title={seg.name} style={{ width: 56 }}>
                     {j + 1}
                   </th>
                 ))}
               </tr>
             </thead>
             <tbody>
-              {rows.map((seg, i) => (
+              {segments.map((seg, i) => (
                 <tr key={seg.id}>
                   <td className="cell-strong">
                     <span style={{ color: 'var(--color-ink-3)', marginRight: 6 }}>{i + 1}.</span>
                     {seg.name}
                   </td>
-                  {rows.map((_, j) => {
-                    const pct = OVERLAP[i][j];
+                  {segments.map((other, j) => {
+                    const pct = matrix[i][j];
                     const self = i === j;
                     return (
                       <td
-                        key={j}
+                        key={other.id}
                         className="cell-num"
                         style={{
                           background: self ? 'transparent' : heat(pct),
@@ -84,12 +100,10 @@ export function OverlapTab({ segments }: { segments: Segment[] }) {
         )}
       </Notice>
 
-      {extras > 0 ? (
-        <p className="muted" style={{ margin: 0, fontSize: 12 }}>
-          {extras} newly configured {extras === 1 ? 'audience is' : 'audiences are'} not in this overlap
-          sync yet — overlap is computed once a segment is activated by the audiences service.
-        </p>
-      ) : null}
+      <p className="muted" style={{ margin: 0, fontSize: 12 }}>
+        Overlap is a client-side estimate from channel affinity and audience type. Precise cross-segment
+        measurement lands with connected-platform reporting.
+      </p>
     </div>
   );
 }

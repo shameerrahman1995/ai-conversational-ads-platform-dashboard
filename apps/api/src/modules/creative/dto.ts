@@ -6,6 +6,7 @@ import {
   IsBoolean,
   IsIn,
   IsInt,
+  IsNumber,
   IsOptional,
   IsString,
   IsUrl,
@@ -144,6 +145,149 @@ export class GenerateBlueprintDto {
   @IsOptional()
   @Matches(HEX)
   background?: string;
+}
+
+/**
+ * Persist a Creative Studio blueprint (V10 U3.10). `campaignId` scopes it to a
+ * campaign in the caller org; the content trees are free-form JSON columns.
+ */
+export class CreateBlueprintDto {
+  @ApiProperty({ description: 'Campaign this blueprint belongs to' })
+  @IsString()
+  campaignId!: string;
+
+  @ApiProperty({ required: false, description: 'Optional linked creative variant' })
+  @IsOptional()
+  @IsString()
+  variantId?: string;
+
+  @ApiProperty({ required: false, type: Object, description: 'Brief/display metadata' })
+  @IsOptional()
+  @Allow()
+  brief?: Record<string, unknown>;
+
+  @ApiProperty({ required: false, type: [Object], description: 'Strategic directions' })
+  @IsOptional()
+  @IsArray()
+  directions?: unknown[];
+
+  @ApiProperty({ required: false, type: [Object], description: 'Creative blocks' })
+  @IsOptional()
+  @IsArray()
+  blocks?: unknown[];
+
+  @ApiProperty({ required: false, type: [Object], description: 'Journey states' })
+  @IsOptional()
+  @IsArray()
+  states?: unknown[];
+
+  @ApiProperty({ required: false, type: [Object], description: 'Per-placement variants' })
+  @IsOptional()
+  @IsArray()
+  variants?: unknown[];
+
+  @ApiProperty({ required: false, type: Object, description: 'Lock domains { legal, brand, product, user }' })
+  @IsOptional()
+  @Allow()
+  locks?: Record<string, unknown>;
+
+  @ApiProperty({ required: false, type: Object, description: 'Generation provenance' })
+  @IsOptional()
+  @Allow()
+  generation?: Record<string, unknown>;
+
+  @ApiProperty({ required: false, description: 'Version note' })
+  @IsOptional()
+  @IsString()
+  note?: string;
+}
+
+/** Save edits to a blueprint (Studio "Save version"). All fields optional. */
+export class PatchBlueprintDto {
+  @ApiProperty({ required: false, type: Object })
+  @IsOptional()
+  @Allow()
+  brief?: Record<string, unknown>;
+
+  @ApiProperty({ required: false, type: [Object] })
+  @IsOptional()
+  @IsArray()
+  directions?: unknown[];
+
+  @ApiProperty({ required: false, type: [Object] })
+  @IsOptional()
+  @IsArray()
+  blocks?: unknown[];
+
+  @ApiProperty({ required: false, type: [Object] })
+  @IsOptional()
+  @IsArray()
+  states?: unknown[];
+
+  @ApiProperty({ required: false, type: [Object] })
+  @IsOptional()
+  @IsArray()
+  variants?: unknown[];
+
+  @ApiProperty({ required: false, type: Object })
+  @IsOptional()
+  @Allow()
+  locks?: Record<string, unknown>;
+
+  @ApiProperty({ required: false, type: Object })
+  @IsOptional()
+  @Allow()
+  generation?: Record<string, unknown>;
+
+  @ApiProperty({ required: false, description: 'Version note' })
+  @IsOptional()
+  @IsString()
+  note?: string;
+}
+
+/** Review handoff: transition status + attach an approvals payload. */
+export class HandoffBlueprintDto {
+  @ApiProperty({ enum: ['in_review', 'approved', 'archived'] })
+  @IsIn(['in_review', 'approved', 'archived'])
+  status!: string;
+
+  @ApiProperty({ required: false, type: Object, description: 'Approvals payload (reviewers, notes, …)' })
+  @IsOptional()
+  @Allow()
+  approvals?: Record<string, unknown>;
+
+  @ApiProperty({ required: false })
+  @IsOptional()
+  @IsString()
+  note?: string;
+}
+
+/** Persist a synthetic-persona simulation trace against a blueprint. */
+export class CreateSimulationDto {
+  @ApiProperty({ required: false, type: Object, description: 'Synthetic persona' })
+  @IsOptional()
+  @Allow()
+  persona?: Record<string, unknown>;
+
+  @ApiProperty({ required: false, type: Object, description: 'Conditions (network/mic/placement)' })
+  @IsOptional()
+  @Allow()
+  conditions?: Record<string, unknown>;
+
+  @ApiProperty({ required: false, type: [Object], description: 'Ordered event trace' })
+  @IsOptional()
+  @IsArray()
+  events?: unknown[];
+
+  @ApiProperty({ required: false, description: 'Intent score 0–1' })
+  @IsOptional()
+  @IsNumber()
+  intentScore?: number;
+
+  @ApiProperty({ required: false, description: 'Outcome label' })
+  @IsOptional()
+  @IsString()
+  outcome?: string;
 }
 
 export class GenerateImageDto {

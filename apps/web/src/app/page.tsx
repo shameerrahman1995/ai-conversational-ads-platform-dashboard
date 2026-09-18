@@ -1,98 +1,404 @@
 'use client';
 
+import { useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useApiClient } from '@/lib/api';
 import { useAsync } from '@/lib/useAsync';
 import { Icon, type IconName } from '@/components/Icon';
-import { PageHeader, Button, Panel, Chip, StatusChip, DataState, MetricCard } from '@/components/ui';
-import { BarChart, type BarChartItem } from '@/components/charts';
-import { formatMoney, formatCompact } from '@/lib/format';
-import type { CampaignSummary, Connection, Experiment } from '@acp/api-client';
+import {
+  PageHeader,
+  Button,
+  Panel,
+  Chip,
+  StatusChip,
+  DataState,
+  MetricCard,
+  Segmented,
+  DataTable,
+  Drawer,
+  PlatformStack,
+  DefinitionList,
+  type Tone,
+  type Column,
+} from '@/components/ui';
+import { AreaChart, Sparkline } from '@/components/charts';
+import { formatMoney, formatCompact, formatPct } from '@/lib/format';
+import type {
+  CampaignSummary,
+  Insight,
+  InsightSource,
+  InsightSeverity,
+  PlatformHealthEntry,
+  PlatformHealthStatus,
+  TimeseriesMetric,
+  TimeseriesPoint,
+} from '@acp/api-client';
 
-/* Provider display names + brand tone for platform rows/badges. */
-const PROVIDERS: { key: string; label: string; tone: 'brand' | 'info' | 'violet' | 'success' }[] = [
-  { key: 'google_ads', label: 'Google Ads', tone: 'brand' },
-  { key: 'meta', label: 'Meta', tone: 'info' },
-  { key: 'tiktok', label: 'TikTok', tone: 'violet' },
-];
+/* ================================================================== */
+/* Overview — wired to real projections (V10 U1.1–U1.6).              */
+/*   • 5 KPI cards with sparklines + vs-prior deltas (timeseries)      */
+/*   • performance-trend AreaChart with a metric toggle               */
+/*   • AI-operator insights (analytics.insights)                      */
+/*   • campaign-performance table (real per-campaign counts) + drawer */
+/*   • platform-health strip (analytics.platform-health)              */
+/*   • conversion funnel + approvals banner (kept) + date range +     */
+/*     CSV export of the visible campaign table                       */
+/* ================================================================== */
 
 const REVIEW_STATES = ['READY_FOR_REVIEW', 'IN_REVIEW', 'VALIDATION_FAILED'];
-const ATTENTION_CONN = ['REVOKED', 'REAUTH_REQUIRED', 'DEGRADED'];
 
-interface Insight {
-  icon: IconName;
-  title: string;
-  detail: string;
-  source: string;
-  href: string;
+/* ---- Date-range control -------------------------------------------- */
+type RangeKey = '7d' | '30d' | '90d';
+const RANGE_DAYS: Record<RangeKey, number> = { '7d': 7, '30d': 30, '90d': 90 };
+const RANGE_OPTS: { value: RangeKey; label: string }[] = [
+  { value: '7d', label: '7 days' },
+  { value: '30d', label: '30 days' },
+  { value: '90d', label: '90 days' },
+];
+
+const DAY_MS = 86_400_000;
+const dayKey = (d: Date) => d.toISOString().slice(0, 10);
+
+/** Trailing window of `RANGE_DAYS[range]` days ending today (UTC day keys). */
+function rangeParams(range: RangeKey): { from: string; to: string } {
+  const to = new Date();
+  const from = new Date(to.getTime() - (RANGE_DAYS[range] - 1) * DAY_MS);
+  return { from: dayKey(from), to: dayKey(to) };
+}
+
+/** "2024-09-03" → "3 Sep" (UTC-stable, no off-by-one). */
+function fmtDay(isoDay: string): string {
+  const d = new Date(`${isoDay}T00:00:00Z`);
+  return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: 'UTC' });
+}
+
+/* ---- Delta from current vs prior window ---------------------------- */
+interface Delta {
+  dir: 'up' | 'down';
+  value: string;
+  good?: boolean;
+}
+const sumPoints = (pts: TimeseriesPoint[]): number => pts.reduce((s, p) => s + p.value, 0);
+
+/**
+ * Percentage change of `cur` vs `prior`. `invert` marks a metric where down is
+ * good (e.g. cost per qualified lead). Returns null when there's no prior signal.
+ */
+function makeDelta(cur: number, prior: number, invert = false): Delta | null {
+  if (!Number.isFinite(cur) || !Number.isFinite(prior)) return null;
+  if (prior === 0) {
+    if (cur === 0) return null;
+    return { dir: 'up', value: 'New', good: !invert };
+  }
+  const pct = ((cur - prior) / prior) * 100;
+  const dir: 'up' | 'down' = pct >= 0 ? 'up' : 'down';
+  const good = invert ? dir === 'down' : dir === 'up';
+  return { dir, value: `${Math.abs(pct).toFixed(0)}%`, good };
+}
+
+/* ---- CSV export ---------------------------------------------------- */
+function csvCell(v: string | number): string {
+  const s = String(v);
+  return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+}
+function downloadCsv(filename: string, rows: (string | number)[][]): void {
+  const csv = rows.map((r) => r.map(csvCell).join(',')).join('\r\n');
+  const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+/* ---- Insight + platform-health lookups ----------------------------- */
+const INSIGHT_ICON: Record<InsightSource, IconName> = {
+  experiments: 'flask',
+  analytics: 'analytics',
+  spend: 'billing',
+};
+const INSIGHT_SRC_LABEL: Record<InsightSource, string> = {
+  experiments: 'Experiments',
+  analytics: 'Analytics',
+  spend: 'Spend',
+};
+const SEVERITY_LABEL: Record<InsightSeverity, string> = {
+  high: 'High priority',
+  medium: 'Worth a look',
+  low: 'FYI',
+};
+
+const HEALTH_META: Record<PlatformHealthStatus, { label: string; tone: Tone; dot: string }> = {
+  healthy: { label: 'Healthy', tone: 'success', dot: 'var(--color-success)' },
+  degraded: { label: 'Degraded', tone: 'warning', dot: 'var(--color-warning)' },
+  action_required: { label: 'Action required', tone: 'warning', dot: 'var(--color-warning)' },
+  connecting: { label: 'Connecting', tone: 'info', dot: 'var(--color-info)' },
+  disconnected: { label: 'Disconnected', tone: 'neutral', dot: 'var(--color-ink-3)' },
+  idle: { label: 'Idle', tone: 'neutral', dot: 'var(--color-ink-3)' },
+};
+
+const PLATFORM_LABEL: Record<string, string> = {
+  google_ads: 'Google Ads',
+  meta: 'Meta',
+  tiktok: 'TikTok',
+  agent_runtime: 'Agent runtime',
+};
+const platformLabel = (slug: string) =>
+  PLATFORM_LABEL[slug] ?? slug.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+
+/** Short relative time, e.g. "just now", "12m ago", "3h ago", "2d ago". */
+function relTime(iso: string | null): string | null {
+  if (!iso) return null;
+  const then = new Date(iso).getTime();
+  if (Number.isNaN(then)) return null;
+  const diff = Date.now() - then;
+  if (diff < 60_000) return 'just now';
+  const mins = Math.round(diff / 60_000);
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.round(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  return `${Math.round(hrs / 24)}d ago`;
+}
+
+/** Token expiry hint from an ISO timestamp, or null when absent. */
+function tokenHint(iso: string | null): string | null {
+  if (!iso) return null;
+  const exp = new Date(iso).getTime();
+  if (Number.isNaN(exp)) return null;
+  const diff = exp - Date.now();
+  if (diff <= 0) return 'Token expired';
+  const days = Math.round(diff / DAY_MS);
+  if (days >= 1) return `Token expires in ${days}d`;
+  const hrs = Math.max(1, Math.round(diff / 3_600_000));
+  return `Token expires in ${hrs}h`;
+}
+
+/* ---- Campaign row (real per-campaign performance) ------------------ */
+interface CampRow {
+  c: CampaignSummary;
+  platforms: string[];
+  budget: number | null;
+  currency: string;
+  convos: number;
+  qualified: number;
+  qualRate: number | null;
+}
+
+/** Best-effort reads of the opaque wizard `settings` blob. */
+function readPlatforms(settings: CampaignSummary['settings']): string[] {
+  const p = settings?.platforms;
+  return Array.isArray(p) ? p.filter((x): x is string => typeof x === 'string') : [];
+}
+function readBudget(settings: CampaignSummary['settings']): { amount: number | null; currency: string } {
+  const b = (settings?.budget ?? null) as { amount?: unknown; currency?: unknown } | null;
+  const amount = typeof b?.amount === 'number' && Number.isFinite(b.amount) ? b.amount : null;
+  // Workspace default currency (INR) — kept consistent with campaigns/[id]
+  // settingMoney() and formatMoney() so an unlabelled budget reads the same way.
+  const currency = typeof b?.currency === 'string' ? b.currency : 'INR';
+  return { amount, currency };
 }
 
 export default function OverviewPage() {
   const router = useRouter();
   const client = useApiClient();
+
+  const [range, setRange] = useState<RangeKey>('30d');
+  const { from, to } = useMemo(() => rangeParams(range), [range]);
+  const [trendMetric, setTrendMetric] = useState<Extract<TimeseriesMetric, 'conversations' | 'qualified' | 'spend'>>(
+    'conversations',
+  );
+  const [drawerRow, setDrawerRow] = useState<CampRow | null>(null);
+
   const { data, error, loading } = useAsync(
     () =>
       Promise.all([
         client.analytics.funnel(),
-        client.analytics.attribution(),
-        client.analytics.spend(),
         client.campaigns.list(),
-        client.connections.list(),
-        client.experiments.list(),
+        client.analytics.insights(),
+        client.analytics.platformHealth(),
+        client.agents.list(),
+        client.conversations.list(),
+        client.analytics.timeseries({ metric: 'spend', from, to, interval: 'day' }),
+        client.analytics.timeseries({ metric: 'conversations', from, to, interval: 'day' }),
+        client.analytics.timeseries({ metric: 'qualified', from, to, interval: 'day' }),
+        client.analytics.spend(),
       ]),
-    [client],
+    [client, from, to],
   );
 
-  const [funnel, attribution, spend, campaigns, connections, experiments] = data ?? [];
+  const [funnel, campaigns, insightsRes, health, agents, conversations, tsSpend, tsConvos, tsQualified, spendReport] =
+    data ?? [];
+
+  const list = useMemo(() => campaigns ?? [], [campaigns]);
   const stages = funnel?.stages ?? [];
   const topCount = stages[0]?.count ?? 0;
-  const list: CampaignSummary[] = campaigns ?? [];
-  const conns: Connection[] = connections ?? [];
-  const exps: Experiment[] = experiments ?? [];
-
   const liveCampaigns = list.filter((c) => c.status === 'LIVE').length;
-  const conversations =
-    stages.find((s) => s.key === 'conversation')?.count ?? stages.find((s) => s.key === 'agent_start')?.count ?? 0;
   const needsReview = list.filter((c) => REVIEW_STATES.includes(c.status)).length;
+  const insights = insightsRes?.insights ?? [];
+  const rangeLabel = `Last ${RANGE_DAYS[range]} days`;
 
-  // Spend-by-platform bars (real, from spend.byProvider).
-  const spendBars: BarChartItem[] = PROVIDERS.map((p) => ({
-    label: p.label,
-    value: spend?.byProvider?.[p.key]?.spend ?? 0,
-    tone: p.tone,
-    note: formatMoney(spend?.byProvider?.[p.key]?.spend ?? 0),
-  })).filter((b) => b.value > 0);
+  // Per-currency spend breakdown for the mixed-currency notice (read-only).
+  const spendCurrencyBreakdown = spendReport?.byCurrency
+    ? Object.entries(spendReport.byCurrency)
+        .map(([code, amount]) => `${code} ${Math.round(amount).toLocaleString('en-US')}`)
+        .join(' · ')
+    : '';
 
-  // AI-operator insights — derived from real workspace state (evidence-backed).
-  const insights: Insight[] = [];
-  if (needsReview > 0)
-    insights.push({
-      icon: 'check',
-      title: `${needsReview} campaign${needsReview > 1 ? 's' : ''} awaiting review`,
-      detail: 'Approve each AI-written claim before anything can go live.',
-      source: 'Review queue',
-      href: '/campaigns',
+  /* --- KPI figures (windowed sums + vs-prior deltas) --- */
+  const spendCur = tsSpend ? sumPoints(tsSpend.points) : 0;
+  const spendPrior = tsSpend ? sumPoints(tsSpend.priorPoints) : 0;
+  const convosCur = tsConvos ? sumPoints(tsConvos.points) : 0;
+  const convosPrior = tsConvos ? sumPoints(tsConvos.priorPoints) : 0;
+  const qualCur = tsQualified ? sumPoints(tsQualified.points) : 0;
+  const qualPrior = tsQualified ? sumPoints(tsQualified.priorPoints) : 0;
+  const cpqlCur = qualCur > 0 ? spendCur / qualCur : null;
+  const cpqlPrior = qualPrior > 0 ? spendPrior / qualPrior : null;
+
+  // Cumulative CPQL sparkline: running spend ÷ running qualified per day.
+  const cpqlSpark = useMemo(() => {
+    if (!tsSpend || !tsQualified) return [] as number[];
+    let cs = 0;
+    let cq = 0;
+    return tsSpend.points.map((p, i) => {
+      cs += p.value;
+      cq += tsQualified.points[i]?.value ?? 0;
+      return cq > 0 ? cs / cq : 0;
     });
-  const runningExp = exps.find((e) => e.status === 'running' || e.status === 'active');
-  if (runningExp)
-    insights.push({
-      icon: 'bolt',
-      title: 'Experiment in progress',
-      detail: runningExp.hypothesis,
-      source: 'Experiments',
-      href: '/experiments',
-    });
-  const badConn = conns.find((c) => ATTENTION_CONN.includes(c.status));
-  if (badConn) {
-    const label = PROVIDERS.find((p) => p.key === badConn.provider)?.label ?? badConn.provider;
-    insights.push({
-      icon: 'connections',
-      title: `Reconnect ${label}`,
-      detail: `Its access is ${badConn.status.toLowerCase().replace(/_/g, ' ')} — deployments on it stay paused until it reconnects.`,
-      source: 'Integrations',
-      href: '/connections',
-    });
-  }
+  }, [tsSpend, tsQualified]);
+
+  /* --- Performance trend series --- */
+  const trendTs = { conversations: tsConvos, qualified: tsQualified, spend: tsSpend }[trendMetric];
+  const trendTone = trendMetric === 'spend' ? 'brand' : trendMetric === 'qualified' ? 'success' : 'info';
+  const trendName =
+    trendMetric === 'conversations' ? 'Conversations' : trendMetric === 'qualified' ? 'Qualified leads' : 'Media spend';
+
+  /* --- Real per-campaign conversation/qualified counts --- */
+  const rows: CampRow[] = useMemo(() => {
+    const agentToCampaign = new Map((agents ?? []).map((a) => [a.id, a.campaignId]));
+    const byCampaign = new Map<string, { convos: number; qualified: number }>();
+    for (const conv of conversations ?? []) {
+      const campId = agentToCampaign.get(conv.agentId);
+      if (!campId) continue;
+      const rec = byCampaign.get(campId) ?? { convos: 0, qualified: 0 };
+      rec.convos += 1;
+      if (conv.outcome === 'qualified') rec.qualified += 1;
+      byCampaign.set(campId, rec);
+    }
+    return list
+      .filter((c) => c.status !== 'ARCHIVED')
+      .map((c) => {
+        const counts = byCampaign.get(c.id) ?? { convos: 0, qualified: 0 };
+        const { amount, currency } = readBudget(c.settings);
+        return {
+          c,
+          platforms: readPlatforms(c.settings),
+          budget: amount,
+          currency,
+          convos: counts.convos,
+          qualified: counts.qualified,
+          qualRate: counts.convos > 0 ? (counts.qualified / counts.convos) * 100 : null,
+        };
+      });
+  }, [list, agents, conversations]);
+
+  const columns: Column<CampRow>[] = [
+    {
+      key: 'name',
+      header: 'Campaign',
+      label: 'Campaign',
+      sortable: true,
+      sortValue: (r) => campaignName(r.c),
+      render: (r) => (
+        <div className="row" style={{ gap: '0.6rem', minWidth: 0 }}>
+          <Avatar name={campaignName(r.c)} />
+          <div style={{ minWidth: 0 }}>
+            <div className="cell-strong" style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+              {campaignName(r.c)}
+            </div>
+            <div className="cell-muted" style={{ fontSize: 12 }}>
+              {r.c.objective.replace(/_/g, ' ')}
+              {r.c.vertical ? ` · ${r.c.vertical}` : ''}
+            </div>
+          </div>
+        </div>
+      ),
+    },
+    {
+      key: 'platforms',
+      header: 'Platforms',
+      label: 'Platforms',
+      render: (r) =>
+        r.platforms.length ? <PlatformStack platforms={r.platforms} size="sm" max={3} /> : <span className="muted">—</span>,
+    },
+    {
+      key: 'status',
+      header: 'Status',
+      label: 'Status',
+      sortable: true,
+      sortValue: (r) => r.c.status,
+      render: (r) => <StatusChip status={r.c.status} />,
+    },
+    {
+      key: 'budget',
+      header: 'Budget',
+      label: 'Budget',
+      align: 'right',
+      sortable: true,
+      sortValue: (r) => r.budget ?? -1,
+      render: (r) =>
+        r.budget != null ? (
+          <span className="tnum">{formatMoney(r.budget, { currency: r.currency })}</span>
+        ) : (
+          <span className="muted">—</span>
+        ),
+    },
+    {
+      key: 'convos',
+      header: 'Conversations',
+      label: 'Conversations',
+      align: 'right',
+      sortable: true,
+      sortValue: (r) => r.convos,
+      render: (r) => <span className="tnum">{formatCompact(r.convos, 'en-US')}</span>,
+    },
+    {
+      key: 'qualified',
+      header: 'Qualified',
+      label: 'Qualified',
+      align: 'right',
+      sortable: true,
+      sortValue: (r) => r.qualified,
+      render: (r) => <span className="tnum">{formatCompact(r.qualified, 'en-US')}</span>,
+    },
+    {
+      key: 'qualRate',
+      header: 'Qual. rate',
+      label: 'Qual. rate',
+      align: 'right',
+      sortable: true,
+      sortValue: (r) => r.qualRate ?? -1,
+      render: (r) => (r.qualRate != null ? <span className="tnum">{formatPct(r.qualRate)}</span> : <span className="muted">—</span>),
+    },
+  ];
+
+  const exportCampaigns = () => {
+    const header = ['Campaign', 'Objective', 'Vertical', 'Status', 'Platforms', 'Budget', 'Currency', 'Conversations', 'Qualified', 'Qual. rate'];
+    const body = rows.map((r) => [
+      campaignName(r.c),
+      r.c.objective,
+      r.c.vertical ?? '',
+      r.c.status,
+      r.platforms.join(' '),
+      r.budget ?? '',
+      r.currency,
+      r.convos,
+      r.qualified,
+      r.qualRate != null ? `${r.qualRate.toFixed(1)}%` : '',
+    ]);
+    downloadCsv(`convoads-campaigns-${dayKey(new Date())}.csv`, [header, ...body]);
+  };
 
   return (
     <div>
@@ -102,7 +408,10 @@ export default function OverviewPage() {
         subtitle="Campaign performance, customer conversations and production readiness across the workspace."
         actions={
           <>
-            <Chip icon="clock">All time</Chip>
+            <Segmented options={RANGE_OPTS} value={range} onChange={setRange} />
+            <Button icon="download" variant="ghost" disabled={rows.length === 0} onClick={exportCampaigns}>
+              Export
+            </Button>
             <Button icon="plus" variant="primary" onClick={() => router.push('/campaigns/new')}>
               Create campaign
             </Button>
@@ -130,37 +439,94 @@ export default function OverviewPage() {
           </div>
         ) : null}
 
-        {/* KPI row (real; deltas/sparklines await a daily-metrics series endpoint) */}
+        {/* KPI row — windowed totals with sparklines + vs-prior deltas */}
         <div className="grid grid-kpi" style={{ marginTop: needsReview > 0 ? '1rem' : 0 }}>
-          <MetricCard label="Media spend" value={formatMoney(spend?.totals.spend ?? 0)} icon="billing" footNote="Provider-reported" />
-          <MetricCard label="Ad conversations" value={formatCompact(conversations, 'en-US')} icon="message" footNote="Engaged sessions" />
-          <MetricCard label="Qualified leads" value={formatCompact(attribution?.qualifiedLeads ?? 0, 'en-US')} icon="leads" footNote="Consented & scored" />
+          <MetricCard
+            label="Media spend"
+            value={formatMoney(spendCur)}
+            icon="billing"
+            delta={makeDelta(spendCur, spendPrior) ?? undefined}
+            footNote={rangeLabel}
+            spark={tsSpend ? <Sparkline data={tsSpend.points.map((p) => p.value)} tone="brand" /> : undefined}
+          />
+          <MetricCard
+            label="Ad conversations"
+            value={formatCompact(convosCur, 'en-US')}
+            icon="message"
+            delta={makeDelta(convosCur, convosPrior) ?? undefined}
+            footNote={rangeLabel}
+            spark={tsConvos ? <Sparkline data={tsConvos.points.map((p) => p.value)} tone="info" /> : undefined}
+          />
+          <MetricCard
+            label="Qualified leads"
+            value={formatCompact(qualCur, 'en-US')}
+            icon="leads"
+            delta={makeDelta(qualCur, qualPrior) ?? undefined}
+            footNote={rangeLabel}
+            spark={tsQualified ? <Sparkline data={tsQualified.points.map((p) => p.value)} tone="success" /> : undefined}
+          />
           <MetricCard
             label="Cost / qualified lead"
-            value={attribution?.costPerQualifiedLead != null ? formatMoney(attribution.costPerQualifiedLead) : '—'}
+            value={cpqlCur != null ? formatMoney(cpqlCur, { maximumFractionDigits: 0 }) : '—'}
             icon="analytics"
+            delta={cpqlCur != null && cpqlPrior != null ? (makeDelta(cpqlCur, cpqlPrior, true) ?? undefined) : undefined}
             footNote="Lower is better"
+            spark={cpqlSpark.length ? <Sparkline data={cpqlSpark} tone="warning" /> : undefined}
           />
-          <MetricCard label="Active campaigns" value={liveCampaigns} icon="campaigns" footNote={`${list.length} total`} />
+          <MetricCard
+            label="Active campaigns"
+            value={liveCampaigns}
+            icon="campaigns"
+            footNote={`${list.length} total`}
+          />
         </div>
 
-        {/* Spend by platform + AI operator */}
+        {/* Mixed-currency notice — provider spend spans more than one currency,
+            so the Media spend KPI is a single-currency roll-up. Read-only. */}
+        {spendReport?.mixedCurrency ? (
+          <div className="notice notice--warn" style={{ marginTop: '1rem' }} role="note">
+            <span className="notice-ic">
+              <Icon name="alert" size={15} />
+            </span>
+            <div className="notice-main">
+              <span className="notice-title">Spend spans multiple currencies</span>
+              <span className="notice-body">
+                The Media spend total is a single-currency roll-up.
+                {spendCurrencyBreakdown ? ` By currency: ${spendCurrencyBreakdown}.` : ''}
+              </span>
+            </div>
+          </div>
+        ) : null}
+
+        {/* Performance trend + AI operator */}
         <div className="grid grid-hero" style={{ marginTop: '1rem', alignItems: 'start' }}>
-          <Panel title="Spend by platform" note="Provider-reported delivery">
+          <Panel
+            title="Performance trend"
+            note={rangeLabel}
+            actions={
+              <Segmented
+                options={[
+                  { value: 'conversations', label: 'Conversations' },
+                  { value: 'qualified', label: 'Qualified' },
+                  { value: 'spend', label: 'Spend' },
+                ]}
+                value={trendMetric}
+                onChange={setTrendMetric}
+              />
+            }
+          >
             <div className="card-pad">
-              {spendBars.length ? (
-                <BarChart items={spendBars} />
+              {trendTs && trendTs.points.length ? (
+                <AreaChart
+                  series={[{ name: trendName, data: trendTs.points.map((p) => p.value), tone: trendTone }]}
+                  labels={trendTs.points.map((p) => fmtDay(p.date))}
+                  showLegend={false}
+                />
               ) : (
-                <div className="muted" style={{ fontSize: 13, padding: '1rem 0' }}>
-                  No provider spend yet.
+                <div className="muted" style={{ fontSize: 13, padding: '1.5rem 0' }}>
+                  No activity recorded in this window yet.
                 </div>
               )}
-              <div className="row" style={{ gap: '1.4rem', marginTop: '1rem', flexWrap: 'wrap' }}>
-                <MiniStat label="Impressions" value={formatCompact(spend?.totals.impressions ?? 0, 'en-US')} />
-                <MiniStat label="Clicks" value={formatCompact(spend?.totals.clicks ?? 0, 'en-US')} />
-                <MiniStat label="Pipeline to date" value={formatMoney(attribution?.revenue ?? 0)} />
-                <MiniStat label="Return on ad spend" value={attribution?.roas != null ? `${attribution.roas.toFixed(2)}×` : '—'} />
-              </div>
             </div>
           </Panel>
 
@@ -170,19 +536,7 @@ export default function OverviewPage() {
             actions={insights.length ? <Chip tone="brand">{insights.length} insight{insights.length > 1 ? 's' : ''}</Chip> : undefined}
           >
             {insights.length ? (
-              insights.map((it) => (
-                <button key={it.title} className="insight" onClick={() => router.push(it.href)}>
-                  <span className="insight-ic">
-                    <Icon name={it.icon} size={15} />
-                  </span>
-                  <span className="insight-body">
-                    <span className="insight-title">{it.title}</span>
-                    <span className="insight-detail">{it.detail}</span>
-                    <span className="insight-src">{it.source}</span>
-                  </span>
-                  <Icon name="chevron-right" size={15} />
-                </button>
-              ))
+              insights.map((it) => <InsightCard key={it.id} insight={it} onOpen={() => router.push(it.deepLink)} />)
             ) : (
               <div className="card-pad muted" style={{ fontSize: 13 }}>
                 Nothing needs a decision right now — every campaign, source and connection is in good standing.
@@ -195,109 +549,181 @@ export default function OverviewPage() {
         <div className="grid grid-2" style={{ marginTop: '1rem', alignItems: 'start' }}>
           <Panel
             title="Campaign performance"
+            note="Conversations & qualified leads are attributed via the AI agent"
             actions={<span className="chip chip-success chip-dot">{liveCampaigns} live</span>}
           >
-            <div className="table-wrap">
-              <table className="table">
-                <thead>
-                  <tr>
-                    <th>Campaign</th>
-                    <th>Status</th>
-                    <th className="cell-num">Version</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {list.slice(0, 6).map((c) => (
-                    <tr key={c.id} onClick={() => router.push(`/campaigns/${c.id}`)} style={{ cursor: 'pointer' }}>
-                      <td>
-                        <div className="cell-strong">{c.name ?? c.objective}</div>
-                        <div className="cell-muted" style={{ fontSize: 12 }}>
-                          {c.objective.replace(/_/g, ' ')}
-                          {c.vertical ? ` · ${c.vertical}` : ''}
-                        </div>
-                      </td>
-                      <td>
-                        <StatusChip status={c.status} />
-                      </td>
-                      <td className="cell-num cell-strong">v{c.version}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            <DataTable
+              columns={columns}
+              rows={rows}
+              rowKey={(r) => r.c.id}
+              onRowClick={(r) => setDrawerRow(r)}
+              defaultSort={{ key: 'convos', dir: 'desc' }}
+              stackOnMobile
+              empty={
+                <div className="card-pad muted" style={{ fontSize: 13 }}>
+                  No campaigns yet. Create one to start collecting ad conversations.
+                </div>
+              }
+            />
           </Panel>
 
           <Panel title="Platform health" note="Connection & runtime status">
-            {PROVIDERS.map((p) => {
-              const conn = conns.find((c) => c.provider === p.key);
-              const status = conn?.status ?? 'DISCONNECTED';
-              const attention = ATTENTION_CONN.includes(status) || status === 'DISCONNECTED';
-              return (
-                <div className="ph-row" key={p.key}>
-                  <span className="ph-dot" style={{ background: attention ? 'var(--color-warning)' : 'var(--color-success)' }} />
-                  <span className="ph-name" style={{ flex: 1 }}>
-                    {p.label}
-                    <small>{conn ? (conn.meta?.displayName as string) ?? 'Connected account' : 'Not connected'}</small>
-                  </span>
-                  <StatusChip status={status} />
-                </div>
-              );
-            })}
-            <div className="ph-row" style={{ borderBottom: 0 }}>
-              <span className="ph-dot" style={{ background: 'var(--color-success)' }} />
-              <span className="ph-name" style={{ flex: 1 }}>
-                Agent runtime
-                <small>Grounded answering online</small>
-              </span>
-              <Chip tone="success" dot>
-                Healthy
-              </Chip>
-            </div>
+            {(health?.platforms ?? []).map((p) => (
+              <PlatformHealthRow key={p.platform} entry={p} />
+            ))}
+            {!health?.platforms?.length ? (
+              <div className="card-pad muted" style={{ fontSize: 13 }}>
+                No platforms reporting yet.
+              </div>
+            ) : null}
           </Panel>
         </div>
 
         {/* Conversion funnel (real) */}
         <Panel title="Conversion funnel" note="Served impression → qualified lead" className="ov-mt">
           <div className="card-pad stack" style={{ gap: '0.85rem' }}>
-            {stages.map((s, i) => {
-              const pct = topCount ? (s.count / topCount) * 100 : 0;
-              return (
-                <div key={s.key}>
-                  <div className="spread" style={{ marginBottom: '0.35rem' }}>
-                    <span style={{ fontWeight: 500, textTransform: 'capitalize', fontSize: 12.5 }}>
-                      {s.key.replace(/_/g, ' ')}
-                    </span>
-                    <span className="row" style={{ gap: '0.6rem' }}>
-                      <span className="tnum" style={{ fontWeight: 600, fontSize: 12.5 }}>
-                        {formatCompact(s.count, 'en-US')}
+            {stages.length ? (
+              stages.map((s, i) => {
+                const pct = topCount ? (s.count / topCount) * 100 : 0;
+                return (
+                  <div key={s.key}>
+                    <div className="spread" style={{ marginBottom: '0.35rem' }}>
+                      <span style={{ fontWeight: 500, textTransform: 'capitalize', fontSize: 12.5 }}>
+                        {s.key.replace(/_/g, ' ')}
                       </span>
-                      <span className="muted tnum" style={{ fontSize: 11.5, minWidth: 48, textAlign: 'right' }}>
-                        {i === 0 ? '100%' : `${(s.conversionFromPrev * 100).toFixed(1)}%`}
+                      <span className="row" style={{ gap: '0.6rem' }}>
+                        <span className="tnum" style={{ fontWeight: 600, fontSize: 12.5 }}>
+                          {formatCompact(s.count, 'en-US')}
+                        </span>
+                        <span className="muted tnum" style={{ fontSize: 11.5, minWidth: 48, textAlign: 'right' }}>
+                          {i === 0 ? '100%' : `${(s.conversionFromPrev * 100).toFixed(1)}%`}
+                        </span>
                       </span>
-                    </span>
+                    </div>
+                    <div className="meter">
+                      <div className="meter-fill" style={{ width: `${Math.max(pct, 1.5)}%` }} />
+                    </div>
                   </div>
-                  <div className="meter">
-                    <div className="meter-fill" style={{ width: `${Math.max(pct, 1.5)}%` }} />
-                  </div>
-                </div>
-              );
-            })}
+                );
+              })
+            ) : (
+              <div className="muted" style={{ fontSize: 13 }}>
+                No funnel events recorded yet.
+              </div>
+            )}
           </div>
         </Panel>
       </DataState>
+
+      <Drawer open={drawerRow != null} onClose={() => setDrawerRow(null)} title={drawerRow ? campaignName(drawerRow.c) : ''}>
+        {drawerRow ? (
+          <div className="stack" style={{ gap: '1rem' }}>
+            <div className="row" style={{ gap: '0.5rem', flexWrap: 'wrap' }}>
+              <StatusChip status={drawerRow.c.status} />
+              <Chip tone="neutral">v{drawerRow.c.version}</Chip>
+              {drawerRow.platforms.length ? <PlatformStack platforms={drawerRow.platforms} size="sm" /> : null}
+            </div>
+            <DefinitionList
+              items={[
+                { label: 'Objective', value: drawerRow.c.objective.replace(/_/g, ' ') },
+                { label: 'Vertical', value: drawerRow.c.vertical ?? '—' },
+                {
+                  label: 'Budget',
+                  value: drawerRow.budget != null ? formatMoney(drawerRow.budget, { currency: drawerRow.currency }) : '—',
+                },
+                { label: 'Ad conversations', value: formatCompact(drawerRow.convos, 'en-US') },
+                { label: 'Qualified leads', value: formatCompact(drawerRow.qualified, 'en-US') },
+                { label: 'Qualified rate', value: drawerRow.qualRate != null ? formatPct(drawerRow.qualRate) : '—' },
+                { label: 'Created', value: new Date(drawerRow.c.createdAt).toLocaleDateString() },
+              ]}
+            />
+            <div className="muted" style={{ fontSize: 12, lineHeight: 1.5 }}>
+              Budget is the campaign&apos;s configured cap. Per-campaign ad spend isn&apos;t broken out by the connectors
+              yet — see Analytics for provider-reported spend.
+            </div>
+            <Button variant="primary" icon="external" onClick={() => router.push(`/campaigns/${drawerRow.c.id}`)}>
+              Open campaign
+            </Button>
+          </div>
+        ) : null}
+      </Drawer>
     </div>
   );
 }
 
-function MiniStat({ label, value }: { label: string; value: string }) {
+/* ---- Small presentational helpers ---------------------------------- */
+function campaignName(c: CampaignSummary): string {
+  return c.name?.trim() || c.objective.replace(/_/g, ' ') || `Campaign ${c.id.slice(0, 8)}`;
+}
+
+/** Deterministic initials avatar coloured by a hash of the name. */
+function Avatar({ name }: { name: string }) {
+  const initials = name
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((w) => w[0]?.toUpperCase() ?? '')
+    .join('');
+  let hash = 0;
+  for (let i = 0; i < name.length; i += 1) hash = (hash * 31 + name.charCodeAt(i)) >>> 0;
+  const hue = hash % 360;
   return (
-    <div>
-      <div className="muted" style={{ fontSize: 11 }}>
-        {label}
-      </div>
-      <div className="tnum" style={{ fontWeight: 700, fontSize: 16 }}>
-        {value}
-      </div>
+    <span
+      aria-hidden="true"
+      style={{
+        flex: 'none',
+        width: 30,
+        height: 30,
+        borderRadius: 9,
+        display: 'grid',
+        placeItems: 'center',
+        fontSize: 12,
+        fontWeight: 700,
+        color: `hsl(${hue} 55% 32%)`,
+        background: `hsl(${hue} 70% 92%)`,
+      }}
+    >
+      {initials || '•'}
+    </span>
+  );
+}
+
+function InsightCard({ insight, onOpen }: { insight: Insight; onOpen: () => void }) {
+  return (
+    <button className="insight" onClick={onOpen}>
+      <span className="insight-ic">
+        <Icon name={INSIGHT_ICON[insight.source]} size={15} />
+      </span>
+      <span className="insight-body">
+        <span className="insight-title">{insight.title}</span>
+        <span className="insight-detail">{insight.evidence}</span>
+        <span className="insight-src">
+          {INSIGHT_SRC_LABEL[insight.source]} · {SEVERITY_LABEL[insight.severity]}
+        </span>
+      </span>
+      <Icon name="chevron-right" size={15} />
+    </button>
+  );
+}
+
+function PlatformHealthRow({ entry }: { entry: PlatformHealthEntry }) {
+  const meta = HEALTH_META[entry.status] ?? HEALTH_META.disconnected;
+  const sync = relTime(entry.lastSyncAt);
+  const bits = [
+    sync ? `Synced ${sync}` : 'Never synced',
+    entry.latencyMs != null ? `p95 ${entry.latencyMs}ms` : null,
+    tokenHint(entry.tokenExpiresAt),
+  ].filter(Boolean);
+  return (
+    <div className="ph-row">
+      <span className="ph-dot" style={{ background: meta.dot }} />
+      <span className="ph-name" style={{ flex: 1 }}>
+        {platformLabel(entry.platform)}
+        <small>{bits.join(' · ')}</small>
+      </span>
+      <Chip tone={meta.tone} dot>
+        {meta.label}
+      </Chip>
     </div>
   );
 }

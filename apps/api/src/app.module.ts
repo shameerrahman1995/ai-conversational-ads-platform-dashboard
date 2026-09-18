@@ -23,6 +23,7 @@ import { AdConnectorsModule } from './modules/publishing/connectors.module';
 import { PublishingModule } from './modules/publishing/publishing.module';
 import { ConnectionsModule } from './modules/connections/connections.module';
 import { ExperimentsModule } from './modules/experiments/experiments.module';
+import { AudiencesModule } from './modules/audiences/audiences.module';
 import { EngagementModule } from './modules/engagement/engagement.module';
 import { CostModule } from './modules/cost/cost.module';
 import { IntegrationHubModule } from './modules/integration-hub/integration-hub.module';
@@ -60,6 +61,7 @@ import { HealthModule } from './health/health.module';
     AdConnectorsModule,
     ConnectionsModule,
     ExperimentsModule,
+    AudiencesModule,
     EngagementModule,
     CostModule,
     RetentionModule,

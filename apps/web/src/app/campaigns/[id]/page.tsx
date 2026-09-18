@@ -65,6 +65,13 @@ interface CampaignSettings {
     brandVoice?: unknown;
   } | null;
   agent?: Record<string, unknown> | null;
+  conversion?: {
+    goal?: unknown;
+    action?: unknown;
+    destinationUrl?: unknown;
+    consentRequired?: unknown;
+    crmRouting?: unknown;
+  } | null;
 }
 
 const objectiveLabel = (s: string) =>
@@ -127,7 +134,10 @@ const settingList = (v: unknown): string | null => {
 const settingMoney = (amount: unknown, currency: unknown): string | null => {
   const n = typeof amount === 'number' ? amount : Number(amount);
   if (!Number.isFinite(n)) return null;
-  const cur = typeof currency === 'string' && currency.trim() ? currency.trim() : 'USD';
+  // Default a missing currency to the workspace default (INR) — the same default
+  // formatMoney() and the Overview/Analytics readBudget() fallbacks use, so an
+  // unlabelled budget renders consistently across every surface.
+  const cur = typeof currency === 'string' && currency.trim() ? currency.trim() : 'INR';
   try {
     return n.toLocaleString('en-US', {
       style: 'currency',
@@ -154,6 +164,14 @@ const settingLabel = (v: unknown): string | null =>
 /* An unknown currency code → upper-cased code, or null. */
 const settingUpper = (v: unknown): string | null =>
   typeof v === 'string' && v.trim() ? v.trim().toUpperCase() : null;
+
+/* An unknown value → its trimmed string, or null (used for URLs / free text). */
+const settingText = (v: unknown): string | null =>
+  typeof v === 'string' && v.trim() ? v.trim() : null;
+
+/* An unknown boolean → one of two labels, or null when it isn't a boolean. */
+const settingBool = (v: unknown, yes: string, no: string): string | null =>
+  typeof v === 'boolean' ? (v ? yes : no) : null;
 
 /* Gender list from the wizard (a string[] like ['all']) → "All", "Male, Female", or null. */
 const settingGenders = (v: unknown): string | null => {
@@ -279,6 +297,13 @@ export default function CampaignDetailPage() {
   const formatsLabel = Array.isArray(rawFormats) && rawFormats.length
     ? rawFormats.map((f) => formatLabel(String(f))).join(', ')
     : null;
+  // Wizard-captured conversion + consent config. Persisted by the new-campaign
+  // wizard but previously never read back, so the consent requirement and
+  // fallback destination were silently dropped from the campaign view.
+  const conversion =
+    settings?.conversion && typeof settings.conversion === 'object'
+      ? settings.conversion
+      : null;
 
   // Fast lookup so each launch row can show the exact creative it will ship.
   const variantById = useMemo(
@@ -778,6 +803,83 @@ export default function CampaignDetailPage() {
                       />
                       <SettingField label="Channels" value={channelsLabel} />
                       <SettingField label="Creative formats" value={formatsLabel} />
+                    </div>
+                  </div>
+                </Panel>
+              </div>
+            ) : null}
+
+            {/* Conversion & consent — read-only view of the wizard's setup */}
+            {conversion ? (
+              <div style={{ marginTop: '1rem' }}>
+                <Panel
+                  title="Conversion & consent"
+                  note="captured in the campaign wizard"
+                  actions={
+                    <Chip tone="neutral" icon="shield">
+                      Read-only
+                    </Chip>
+                  }
+                >
+                  <div
+                    className="card-pad grid"
+                    style={{
+                      gap: '1.5rem',
+                      gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+                    }}
+                  >
+                    {/* Goal & destination */}
+                    <div className="stack" style={{ gap: '0.75rem' }}>
+                      <div className="row" style={{ gap: '0.5rem', alignItems: 'center' }}>
+                        <span
+                          className="stat-ic"
+                          style={{
+                            background: 'var(--color-brand-soft)',
+                            color: 'var(--color-brand)',
+                          }}
+                        >
+                          <Icon name="leads" size={15} />
+                        </span>
+                        <span className="cell-strong" style={{ fontSize: 13.5 }}>
+                          Conversion
+                        </span>
+                      </div>
+                      <SettingField label="Goal" value={settingLabel(conversion.goal)} />
+                      <SettingField label="Primary action" value={settingLabel(conversion.action)} />
+                      <SettingField
+                        label="Destination URL"
+                        value={settingText(conversion.destinationUrl)}
+                      />
+                    </div>
+
+                    {/* Consent & routing */}
+                    <div className="stack" style={{ gap: '0.75rem' }}>
+                      <div className="row" style={{ gap: '0.5rem', alignItems: 'center' }}>
+                        <span
+                          className="stat-ic"
+                          style={{
+                            background: 'var(--color-brand-soft)',
+                            color: 'var(--color-brand)',
+                          }}
+                        >
+                          <Icon name="shield-check" size={15} />
+                        </span>
+                        <span className="cell-strong" style={{ fontSize: 13.5 }}>
+                          Consent & routing
+                        </span>
+                      </div>
+                      <SettingField
+                        label="Explicit consent before capturing a lead"
+                        value={settingBool(
+                          conversion.consentRequired,
+                          'Required',
+                          'Not required',
+                        )}
+                      />
+                      <SettingField
+                        label="Qualified-lead routing"
+                        value={settingText(conversion.crmRouting)}
+                      />
                     </div>
                   </div>
                 </Panel>

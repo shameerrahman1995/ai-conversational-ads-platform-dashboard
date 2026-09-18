@@ -108,6 +108,11 @@ model Organization {
   plan      OrgPlan   @default(trial)
   status    OrgStatus @default(active) // tenant lifecycle; a suspended org's users cannot log in
   region    String    @default("us")
+  // Workspace defaults (currency/timezone/region overrides, feature flags) and
+  // branding (logo, accent, sender identity) — Settings §U7.1. JSON keeps the
+  // tenant-configurable surface flexible without a migration per field.
+  settings  Json?
+  branding  Json?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -382,6 +387,10 @@ model Message {
   contentRef     String // storage ref; content kept out of primary rows/logs
   createdAt      DateTime  @default(now())
   redactedAt     DateTime?
+  // Grounding meta for assistant turns (blueprint §5 / V10 U2.3): 0..1 confidence
+  // that the answer was grounded in approved knowledge, and the cited sources.
+  groundedScore  Float?
+  citations      Json?
 
   org          Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
   conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
@@ -494,6 +503,13 @@ model PublishJob {
   reviewReason   String? // rejection reason / evidence preserved for the rejection loop
   idempotencyKey String
   snapshotId     String?
+  // Capability snapshot taken at deploy time (blueprint §14 / V10 U7.2): the
+  // runtime profile chosen + the resolved capability doc, frozen onto the record.
+  runtimeProfile     String?
+  capabilitySnapshot Json?
+  // The user who created the plan — enables identity-level two-person control
+  // (the approver must differ from the creator), audited separately from role.
+  createdBy      String?
   createdAt      DateTime       @default(now())
 
   org     Organization    @relation(fields: [orgId], references: [id], onDelete: Cascade)
@@ -636,6 +652,93 @@ model AdSession {
 
   @@index([orgId])
   @@index([creativeId])
+}
+
+// Reusable targeting audience (blueprint §11 Audiences / V10 U2.2): a saved
+// segment or personalization rule set. `definition` holds the provider-neutral
+// rule tree; `estimatedSize` is a cached reach estimate. Org-scoped.
+model Audience {
+  id            String   @id @default(cuid())
+  orgId         String
+  name          String
+  kind          String   @default("segment") // segment | personalization
+  description   String?
+  definition    Json // provider-neutral rule tree (conditions, geos, interests…)
+  estimatedSize Int? // cached reach estimate
+  createdBy     String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([orgId])
+  @@index([orgId, kind])
+}
+
+// Persisted AI creative blueprint (blueprint §3 / V10 U3.10): the durable
+// Brief→Directions→Blocks→States→Variants artifact the Creative Studio edits,
+// so Save version / Restore / Review-handoff survive beyond the browser session.
+// JSON columns hold the provider-neutral trees (7 typed blocks w/ locks, 6 states).
+model CreativeBlueprint {
+  id          String   @id @default(cuid())
+  orgId       String
+  campaignId  String
+  variantId   String?
+  status      String   @default("draft") // draft | in_review | approved | archived
+  version     Int      @default(1)
+  brief       Json?
+  directions  Json?
+  blocks      Json?
+  states      Json?
+  variants    Json?
+  locks       Json?
+  approvals   Json?
+  generation  Json? // {provider, model, usage, latencyMs} or {provider:'mock', assumptions[]}
+  createdBy   String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([orgId])
+  @@index([orgId, campaignId])
+}
+
+// A synthetic-persona simulation run against a blueprint (V10 U3.8): persona +
+// event trace + intent score, kept for the Simulate/Learn stages.
+model SimulationTrace {
+  id          String   @id @default(cuid())
+  orgId       String
+  blueprintId String
+  persona     Json?
+  conditions  Json? // network/mic/placement
+  events      Json? // ordered event trace
+  intentScore Float?
+  outcome     String?
+  createdAt   DateTime @default(now())
+
+  @@index([orgId])
+  @@index([blueprintId])
+}
+
+// Webhook delivery attempt (Developer §U7.1): durable, idempotent event dispatch
+// with retry/backoff. `idempotencyKey` (unique) makes redelivery safe; `attempts`
+// + `nextAttemptAt` drive the retry queue; only 5xx/network failures retry.
+model WebhookDelivery {
+  id             String    @id @default(cuid())
+  orgId          String
+  webhookId      String
+  event          String
+  payload        Json
+  status         String    @default("pending") // pending | delivered | failed | dead
+  attempts       Int       @default(0)
+  maxAttempts    Int       @default(5)
+  nextAttemptAt  DateTime?
+  lastStatus     String?
+  responseCode   Int?
+  idempotencyKey String?   @unique
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@index([orgId])
+  @@index([webhookId])
+  @@index([status, nextAttemptAt])
 }
 
 model AuditEvent {

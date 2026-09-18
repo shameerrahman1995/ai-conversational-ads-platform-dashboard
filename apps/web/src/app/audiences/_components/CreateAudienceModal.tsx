@@ -5,14 +5,6 @@ import { Button } from '@/components/ui';
 import { Modal } from '@/components/feedback';
 import { CHANNELS, CHANNEL_LABEL, SEGMENT_TYPES, type Channel, type Segment, type SegmentType } from './segments';
 
-function slugify(name: string): string {
-  const base = name
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '');
-  return `${base || 'audience'}-${Date.now().toString(36)}`;
-}
-
 const EMPTY = { name: '', type: 'Behavioral' as SegmentType, description: '', channels: ['google'] as Channel[] };
 
 export function CreateAudienceModal({
@@ -22,12 +14,15 @@ export function CreateAudienceModal({
 }: {
   open: boolean;
   onClose: () => void;
-  onCreate: (seg: Segment) => void;
+  /** Persist the drafted audience. Resolves on success; rejects to keep the modal open. */
+  onCreate: (draft: Omit<Segment, 'id'>) => Promise<void>;
 }) {
   const [form, setForm] = useState(EMPTY);
+  const [saving, setSaving] = useState(false);
 
   const reset = () => setForm(EMPTY);
   const close = () => {
+    if (saving) return;
     reset();
     onClose();
   };
@@ -39,15 +34,14 @@ export function CreateAudienceModal({
     }));
   };
 
-  const canSubmit = form.name.trim().length > 0 && form.channels.length > 0;
+  const canSubmit = form.name.trim().length > 0 && form.channels.length > 0 && !saving;
 
-  const submit = () => {
+  const submit = async () => {
     if (!canSubmit) return;
     // Estimate a plausible reach from the number of selected channels.
     const low = form.channels.length * 900_000 + 300_000;
     const high = Math.round(low * 1.32);
-    const seg: Segment = {
-      id: slugify(form.name),
+    const draft: Omit<Segment, 'id'> = {
       name: form.name.trim(),
       type: form.type,
       status: 'Draft',
@@ -62,8 +56,15 @@ export function CreateAudienceModal({
         { label: 'Recency', value: 48 },
       ],
     };
-    onCreate(seg);
-    reset();
+    setSaving(true);
+    try {
+      await onCreate(draft);
+      reset();
+    } catch {
+      // The parent surfaces the error toast; keep the modal open so the draft isn't lost.
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -74,11 +75,11 @@ export function CreateAudienceModal({
       width={520}
       footer={
         <>
-          <Button variant="ghost" onClick={close}>
+          <Button variant="ghost" onClick={close} disabled={saving}>
             Cancel
           </Button>
           <Button variant="primary" icon="plus" disabled={!canSubmit} onClick={submit}>
-            Create audience
+            {saving ? 'Creating…' : 'Create audience'}
           </Button>
         </>
       }

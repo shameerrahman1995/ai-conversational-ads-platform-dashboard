@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { ApiClientError } from '@acp/api-client';
@@ -10,6 +10,7 @@ import { useToast } from '@/components/feedback';
 import { Button, Card } from '@/components/ui';
 import { Icon } from '@/components/Icon';
 import { DEFAULT_WIZARD, adAccountId, type WizardState } from './_components/types';
+import { consumeTemplatePrefill } from './_components/templatePrefill';
 import { ObjectiveStep } from './_components/ObjectiveStep';
 import { ChannelsStep } from './_components/ChannelsStep';
 import { AudienceStep } from './_components/AudienceStep';
@@ -39,6 +40,18 @@ export default function NewCampaignWizard() {
   const patch = (p: Partial<WizardState>) => setState((s) => ({ ...s, ...p }));
   const [step, setStep] = useState(0);
   const [busy, setBusy] = useState(false);
+
+  // Templates U2.1: if the user arrived from the Templates catalog, prefill the
+  // wizard from the chosen template (objective/platforms/creative brief), then
+  // clear it so a later manual visit starts from defaults. Runs once on mount;
+  // localStorage is client-only, so this stays out of SSR.
+  useEffect(() => {
+    const chosen = consumeTemplatePrefill();
+    if (!chosen) return;
+    setState((s) => ({ ...s, ...chosen.prefill }));
+    toast.toast(`Loaded template: ${chosen.prefill.name ?? 'starting point'}`, 'info');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const { data: connections } = useAsync(() => client.connections.list(), [client]);
   const connectedProviders = (connections ?? [])

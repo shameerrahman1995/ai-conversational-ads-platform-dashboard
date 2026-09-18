@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { Prisma } from '@acp/db';
 import { PrismaService } from '../../prisma/prisma.service';
 import { scopedWhere } from '../../common/tenant/scoped-where';
 
@@ -16,6 +17,35 @@ export class AuditLogService {
   async list(orgId: string, limit?: number) {
     return this.prisma.auditEvent.findMany({
       where: scopedWhere(orgId),
+      orderBy: { createdAt: 'desc' },
+      take: clampLimit(limit),
+    });
+  }
+
+  /**
+   * PLATFORM (cross-tenant) read over the audit spine. Unlike {@link list}, this
+   * deliberately does NOT apply {@link scopedWhere} — it reads AuditEvent rows
+   * across EVERY org, so it must only ever be reachable behind PlatformAdminGuard
+   * (see PlatformAuditController). Every returned row carries its `orgId`, so the
+   * operator can see which tenant an event belongs to. Newest first, capped.
+   *
+   * Optional filters narrow the cross-tenant view:
+   *  - `orgId`   — restrict to a single tenant (opt-in, never applied otherwise).
+   *  - `action`  — prefix match on the action string (e.g. `platform.`).
+   *  - `actorId` — exact actor.
+   */
+  async listAllTenants(
+    params: { limit?: number; orgId?: string; action?: string; actorId?: string } = {},
+  ) {
+    const { limit, orgId, action, actorId } = params;
+    // No scopedWhere here: this surface is cross-tenant by design. Start empty
+    // (reads all orgs) and narrow only for the filters the operator supplies.
+    const where: Prisma.AuditEventWhereInput = {};
+    if (orgId) where.orgId = orgId;
+    if (actorId) where.actorId = actorId;
+    if (action) where.action = { startsWith: action };
+    return this.prisma.auditEvent.findMany({
+      where,
       orderBy: { createdAt: 'desc' },
       take: clampLimit(limit),
     });

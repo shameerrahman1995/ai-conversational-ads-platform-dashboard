@@ -81,6 +81,13 @@ export class AgentRegressionService {
       failed: results.filter((r) => r.status === 'Failed').length,
     };
 
+    // Persist the latest run summary onto the raw AgentConfig.settings JSON (no
+    // schema change) so the publish/readiness gate can consult a passing run. A
+    // run "passes" when it has zero hard failures (warnings are allowed) — the
+    // same signal the client rail uses. normalizeSettings strips this marker on
+    // the next config edit, so an edited config must be re-tested before publish.
+    await this.persistSummary(orgId, agentId, summary);
+
     await this.audit.record({
       orgId,
       action: 'agent.regression_run',
@@ -89,6 +96,38 @@ export class AgentRegressionService {
     });
 
     return { results, summary };
+  }
+
+  /** Store `{ passed, summary, ranAt }` under `settings.lastRegression`. */
+  private async persistSummary(
+    orgId: string,
+    agentId: string,
+    summary: { passed: number; warnings: number; failed: number },
+  ): Promise<void> {
+    // Re-read the CURRENT settings immediately before writing, rather than reusing
+    // the base captured when the run STARTED. A config edit that lands mid-run
+    // strips `lastRegression` (via normalizeSettings) precisely to force a re-test
+    // before publish; writing back the stale base would silently revert that edit
+    // AND re-arm a stale passing marker on top of it. Merging onto the latest
+    // settings preserves the concurrent edit and keeps its invalidation standing.
+    const current = await this.prisma.agentConfig.findFirst({
+      where: scopedWhere(orgId, { id: agentId }),
+      select: { settings: true },
+    });
+    const raw = current?.settings;
+    const base =
+      raw && typeof raw === 'object' && !Array.isArray(raw)
+        ? (raw as Record<string, unknown>)
+        : {};
+    await this.prisma.agentConfig.update({
+      where: { id: agentId, orgId },
+      data: {
+        settings: {
+          ...base,
+          lastRegression: { passed: summary.failed === 0, summary, ranAt: new Date().toISOString() },
+        } as never,
+      },
+    });
   }
 
   private async runCase(

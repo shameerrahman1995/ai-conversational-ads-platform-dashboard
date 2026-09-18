@@ -405,19 +405,43 @@ export interface GenerateBlueprintInput {
 // Runtime-profile capability registry (V10 §9 / U7.2)
 // --------------------------------------------------------------------
 // Every placement runs one of these profiles. Before a creative is
-// compiled AND before a deployment is created, the target profile is
-// validated against the destination's connector capabilities so the
-// platform never ships an interaction a placement can't run. Unsupported
-// combinations fail closed to an approved fallback profile.
+// compiled AND before a deployment is created/executed, the target
+// profile is validated against the destination's connector capabilities
+// so the platform never ships an interaction a placement can't run.
+// Unsupported combinations fail CLOSED — the deploy gate hard-blocks
+// (4xx) rather than silently shipping a degraded ad.
+//
+// The registry is VERSIONED: `RUNTIME_PROFILES_VERSION` stamps every
+// capability snapshot frozen onto a PublishJob, so a deployment records
+// exactly which capability contract it was resolved against.
 // ====================================================================
 
+/** Bump when any profile's capability doc changes (date-versioned). */
+export const RUNTIME_PROFILES_VERSION = '2026-09-16';
+
+// The six V10 runtime profiles (blueprint §9). The pre-V10 `native-fallback`
+// was renamed `native-lead-form`; `click-to-message` and `hosted-experience`
+// are new. `interactive-offline`, `live-conversation` and `concept-only` carry
+// over unchanged.
 export const RUNTIME_PROFILES = [
   'live-conversation',
   'interactive-offline',
-  'native-fallback',
+  'native-lead-form',
+  'click-to-message',
+  'hosted-experience',
   'concept-only',
 ] as const;
 export type RuntimeProfile = (typeof RUNTIME_PROFILES)[number];
+
+/** Placement families a runtime profile can occupy. */
+export type RuntimePlacementFamily =
+  | 'display'
+  | 'native'
+  | 'in-feed'
+  | 'stories'
+  | 'search'
+  | 'messaging'
+  | 'hosted';
 
 export interface RuntimeProfileRequirement {
   /** Needs the host to run an interactive HTML5 bundle. */
@@ -427,12 +451,168 @@ export interface RuntimeProfileRequirement {
   label: string;
 }
 
-export const RUNTIME_PROFILE_REQUIREMENTS: Record<RuntimeProfile, RuntimeProfileRequirement> = {
-  'live-conversation': { needsInteractiveHtml: true, needsNativeLeadForm: false, label: 'Live conversational runtime' },
-  'interactive-offline': { needsInteractiveHtml: true, needsNativeLeadForm: false, label: 'Interactive offline decision graph' },
-  'native-fallback': { needsInteractiveHtml: false, needsNativeLeadForm: true, label: 'Native lead-form fallback' },
-  'concept-only': { needsInteractiveHtml: false, needsNativeLeadForm: false, label: 'Concept preview only' },
+/**
+ * The capability doc for one runtime profile: which platforms/placements it
+ * runs on, its in-ad network-call policy, and whether it offers voice / lead
+ * capture. This is the shape frozen into a deployment's capability snapshot.
+ */
+export interface RuntimeProfileDoc {
+  id: RuntimeProfile;
+  label: string;
+  description: string;
+  /** Ad platforms whose connectors can run this profile. */
+  platforms: AdPlatform[];
+  /** Placement families this profile can occupy. */
+  placements: RuntimePlacementFamily[];
+  /** In-ad network-call policy for this profile's runtime. */
+  network: DeploymentNetworkCallPolicy;
+  /** Whether the profile can offer a voice interaction. */
+  voice: boolean;
+  /** Whether the profile captures / qualifies leads. */
+  lead: boolean;
+  /** Host-capability requirements checked at the compile + deploy gates. */
+  requires: RuntimeProfileRequirement;
+}
+
+/** The versioned capability registry: one doc per runtime profile. */
+export const RUNTIME_PROFILE_DOCS: Record<RuntimeProfile, RuntimeProfileDoc> = {
+  'live-conversation': {
+    id: 'live-conversation',
+    label: 'Live conversational runtime',
+    description:
+      'A thin HTML5 creative that talks to the Platform Edge API for live, ' +
+      'model-driven conversation, qualification and lead capture inside the ad.',
+    platforms: ['google_ads', 'microsoft', 'amazon_dsp', 'generic_export'],
+    placements: ['display', 'native', 'in-feed'],
+    network: 'allowed',
+    voice: true,
+    lead: true,
+    requires: {
+      needsInteractiveHtml: true,
+      needsNativeLeadForm: false,
+      label: 'Live conversational runtime',
+    },
+  },
+  'interactive-offline': {
+    id: 'interactive-offline',
+    label: 'Interactive offline decision graph',
+    description:
+      'An interactive HTML5 creative that runs a deterministic, pre-baked ' +
+      'decision graph with no live network calls — usable where in-ad network ' +
+      'access is blocked.',
+    platforms: ['google_ads', 'microsoft', 'amazon_dsp', 'generic_export'],
+    placements: ['display', 'native'],
+    network: 'blocked',
+    voice: false,
+    lead: true,
+    requires: {
+      needsInteractiveHtml: true,
+      needsNativeLeadForm: false,
+      label: 'Interactive offline decision graph',
+    },
+  },
+  'native-lead-form': {
+    id: 'native-lead-form',
+    label: 'Native lead-form fallback',
+    description:
+      "Uses the platform's own native lead form instead of an interactive " +
+      'bundle — the fail-closed fallback when a destination cannot run HTML5.',
+    platforms: ['google_ads', 'meta', 'tiktok', 'linkedin'],
+    placements: ['in-feed', 'native'],
+    network: 'blocked',
+    voice: false,
+    lead: true,
+    requires: {
+      needsInteractiveHtml: false,
+      needsNativeLeadForm: true,
+      label: 'Native lead-form fallback',
+    },
+  },
+  'click-to-message': {
+    id: 'click-to-message',
+    label: 'Click-to-message',
+    description:
+      'A static creative that deep-links into a messaging surface ' +
+      '(Messenger / WhatsApp / DM) where the conversation continues; the ad ' +
+      'itself makes no network calls.',
+    platforms: ['meta', 'tiktok', 'google_ads', 'linkedin'],
+    placements: ['in-feed', 'stories', 'messaging'],
+    network: 'blocked',
+    voice: false,
+    lead: true,
+    requires: {
+      needsInteractiveHtml: false,
+      needsNativeLeadForm: false,
+      label: 'Click-to-message',
+    },
+  },
+  'hosted-experience': {
+    id: 'hosted-experience',
+    label: 'Hosted experience',
+    description:
+      'A static creative that clicks through to a hosted conversational ' +
+      'landing experience; the ad is a plain creative and the runtime lives on ' +
+      'the hosted page.',
+    platforms: [
+      'google_ads',
+      'meta',
+      'tiktok',
+      'microsoft',
+      'amazon_dsp',
+      'linkedin',
+      'generic_export',
+    ],
+    placements: ['display', 'in-feed', 'search', 'native', 'hosted'],
+    network: 'blocked',
+    voice: true,
+    lead: true,
+    requires: {
+      needsInteractiveHtml: false,
+      needsNativeLeadForm: false,
+      label: 'Hosted experience',
+    },
+  },
+  'concept-only': {
+    id: 'concept-only',
+    label: 'Concept preview only',
+    description:
+      'A non-shippable concept preview — rendered for review but not eligible ' +
+      'to deploy to any live placement.',
+    platforms: [],
+    placements: [],
+    network: 'blocked',
+    voice: false,
+    lead: false,
+    requires: {
+      needsInteractiveHtml: false,
+      needsNativeLeadForm: false,
+      label: 'Concept preview only',
+    },
+  },
 };
+
+/**
+ * Per-profile host-capability requirements, derived from the registry. Kept as
+ * a standalone export (and the input to `checkRuntimeProfile`) for callers that
+ * only need the compile/deploy-gate requirement bits.
+ */
+export const RUNTIME_PROFILE_REQUIREMENTS: Record<RuntimeProfile, RuntimeProfileRequirement> =
+  Object.fromEntries(
+    (Object.keys(RUNTIME_PROFILE_DOCS) as RuntimeProfile[]).map((id) => [
+      id,
+      RUNTIME_PROFILE_DOCS[id].requires,
+    ]),
+  ) as Record<RuntimeProfile, RuntimeProfileRequirement>;
+
+/** Look up one profile's capability doc by id (undefined for an unknown id). */
+export function getRuntimeProfile(id: string): RuntimeProfileDoc | undefined {
+  return (RUNTIME_PROFILE_DOCS as Record<string, RuntimeProfileDoc>)[id];
+}
+
+/** The full versioned registry, shaped for the API/UI: `{ version, profiles }`. */
+export function runtimeProfileRegistry(): { version: string; profiles: RuntimeProfileDoc[] } {
+  return { version: RUNTIME_PROFILES_VERSION, profiles: Object.values(RUNTIME_PROFILE_DOCS) };
+}
 
 /** The connector capability facts a runtime-profile check consults. */
 export interface RuntimeCapabilityFacts {
@@ -450,12 +630,21 @@ export interface CapabilityCheckResult {
 
 /**
  * Validate a runtime profile against a destination's capabilities. Fails closed:
- * an unsupported interactive profile downgrades to native-fallback (if lead forms
- * are supported) or concept-only. Used at BOTH the compile and deploy gates.
+ * an unsupported interactive profile downgrades to native-lead-form (if lead
+ * forms are supported) or concept-only. Used at BOTH the compile and deploy
+ * gates; the deploy gate additionally HARD-BLOCKS when `supported` is false.
+ *
+ * When a target `platform` is supplied (the deploy gates always pass it), the
+ * profile is ALSO checked against the resolved profile's `platforms` allowlist:
+ * a platform outside the allowlist — and any profile with an empty allowlist
+ * (i.e. `concept-only`) — is never deployable, so `supported` is false. The
+ * `platform` argument is optional so the compile-time preview gate (which is not
+ * bound to a destination) keeps working unchanged.
  */
 export function checkRuntimeProfile(
   requested: RuntimeProfile,
   caps: RuntimeCapabilityFacts,
+  platform?: AdPlatform | string,
 ): CapabilityCheckResult {
   const req = RUNTIME_PROFILE_REQUIREMENTS[requested];
   const reasons: string[] = [];
@@ -465,9 +654,73 @@ export function checkRuntimeProfile(
   if (req.needsNativeLeadForm && !caps.supportsNativeLeadForms) {
     reasons.push('Destination does not support native lead forms.');
   }
-  if (reasons.length === 0) {
-    return { requested, supported: true, resolved: requested, reasons: [] };
+  // Fail-closed resolution from the capability facts alone: keep the requested
+  // profile when the host can run it, else downgrade to native-lead-form (if lead
+  // forms exist) or concept-only.
+  const capsSupported = reasons.length === 0;
+  const resolved: RuntimeProfile = capsSupported
+    ? requested
+    : caps.supportsNativeLeadForms
+      ? 'native-lead-form'
+      : 'concept-only';
+
+  // Platform allowlist gate — only when a concrete destination is given. A
+  // profile with no platforms (concept-only) can never deploy; a platform
+  // outside the resolved profile's allowlist cannot run it.
+  if (platform !== undefined) {
+    const doc = RUNTIME_PROFILE_DOCS[resolved];
+    if (doc.platforms.length === 0) {
+      reasons.push(
+        `Runtime profile "${resolved}" is a concept preview and cannot deploy to any live placement.`,
+      );
+    } else if (!(doc.platforms as readonly string[]).includes(platform)) {
+      reasons.push(`Runtime profile "${resolved}" cannot run on "${platform}".`);
+    }
   }
-  const resolved: RuntimeProfile = caps.supportsNativeLeadForms ? 'native-fallback' : 'concept-only';
-  return { requested, supported: false, resolved, reasons };
+
+  return { requested, supported: reasons.length === 0, resolved, reasons };
+}
+
+/**
+ * A frozen, versioned capability snapshot for a deployment (V10 U7.2). Combines
+ * the capability-check outcome with the resolved profile's full doc and the
+ * registry version, so a PublishJob records exactly what it shipped and against
+ * which capability contract it was resolved.
+ */
+export interface CapabilitySnapshot {
+  version: string;
+  requested: RuntimeProfile;
+  resolved: RuntimeProfile;
+  supported: boolean;
+  reasons: string[];
+  /** The resolved profile's capability doc, frozen at resolve time. */
+  profile: RuntimeProfileDoc;
+  /** The connector capability facts consulted. */
+  facts: RuntimeCapabilityFacts;
+  /** ISO-8601 resolve timestamp. */
+  resolvedAt: string;
+}
+
+/**
+ * Resolve a requested runtime profile against connector capability facts into a
+ * versioned snapshot. The snapshot's `resolved` profile is the requested one
+ * when supported, else the fail-closed fallback; `supported` says whether the
+ * requested profile ran as-is (the deploy gate blocks when it is false).
+ */
+export function resolveCapability(
+  requested: RuntimeProfile,
+  caps: RuntimeCapabilityFacts,
+  platform?: AdPlatform | string,
+): CapabilitySnapshot {
+  const check = checkRuntimeProfile(requested, caps, platform);
+  return {
+    version: RUNTIME_PROFILES_VERSION,
+    requested: check.requested,
+    resolved: check.resolved,
+    supported: check.supported,
+    reasons: check.reasons,
+    profile: RUNTIME_PROFILE_DOCS[check.resolved],
+    facts: caps,
+    resolvedAt: new Date().toISOString(),
+  };
 }

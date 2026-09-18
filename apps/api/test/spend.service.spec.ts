@@ -1,11 +1,18 @@
 import { describe, it, expect, vi } from 'vitest';
 import { SpendService } from '../src/modules/analytics/spend.service';
 
-function deps(opts: { metrics?: any[]; rows?: any[] } = {}) {
+function deps(opts: { metrics?: any[]; rows?: any[]; orgSettings?: any } = {}) {
   const prisma = {
     spendMetric: {
       upsert: vi.fn().mockResolvedValue({}),
       findMany: vi.fn().mockResolvedValue(opts.rows ?? []),
+    },
+    organization: {
+      // The org's configured currency (Organization.settings.currency) is the
+      // reporting currency when present — the same source projections reads.
+      findUnique: vi.fn().mockResolvedValue(
+        'orgSettings' in opts ? { settings: opts.orgSettings } : null,
+      ),
     },
   } as any;
   const audit = { record: vi.fn() } as any;
@@ -61,8 +68,9 @@ describe('SpendService', () => {
   });
 
   // B7 (currency integrity): spend must NEVER be summed across unlike currencies.
-  // The scalar total resolves to a single reporting currency (prefer INR); the full
-  // per-currency truth lives in byCurrency and the mix is flagged.
+  // The scalar total resolves to a single reporting currency; the full per-currency
+  // truth lives in byCurrency and the mix is flagged. With no org currency configured,
+  // the dominant-spend currency (INR, 5000 > 100) wins — not a hard-coded default.
   it('getSpend does not sum spend across currencies — groups by currency, flags the mix', async () => {
     const rows = [
       { provider: 'google_ads', impressions: 100, clicks: 10, spend: 5000, currency: 'INR' },
@@ -79,6 +87,44 @@ describe('SpendService', () => {
     expect(out.byCurrency.USD.spend).toBe(100);
     // Impressions/clicks are currency-agnostic and still sum across everything.
     expect(out.totals.impressions).toBe(150);
+  });
+
+  // Consistency with projections: the org's configured currency is the reporting
+  // currency even when a DIFFERENT currency carries more spend. This is the bug fix —
+  // previously INR-when-present won regardless of what the org actually chose.
+  it('getSpend reports in the org-configured currency (USD), overriding the dominant-spend currency', async () => {
+    const rows = [
+      { provider: 'google_ads', impressions: 100, clicks: 10, spend: 5000, currency: 'INR' },
+      { provider: 'meta', impressions: 50, clicks: 4, spend: 100, currency: 'USD' },
+    ];
+    const d = deps({ rows, orgSettings: { currency: 'USD', timezone: 'America/New_York' } });
+    const out: any = await make(d).getSpend('org_1', {});
+    expect(out.totals.currency).toBe('USD'); // org's configured currency wins, not INR
+    expect(out.totals.spend).toBe(100); // USD subtotal only, never the 5100 cross-sum
+    expect(out.mixedCurrency).toBe(true);
+    expect(out.byCurrency.INR.spend).toBe(5000);
+    expect(out.byCurrency.USD.spend).toBe(100);
+    // Org currency is read from Organization.settings, org-scoped by primary key.
+    expect(d.prisma.organization.findUnique).toHaveBeenCalledWith({
+      where: { id: 'org_1' },
+      select: { settings: true },
+    });
+  });
+
+  // No org currency configured (or blank) -> infer from the data, never a constant.
+  it('getSpend falls back to the dominant-spend currency when the org configures none', async () => {
+    const rows = [
+      { provider: 'google_ads', impressions: 10, clicks: 1, spend: 300, currency: 'USD' }, // dominant
+      { provider: 'meta', impressions: 5, clicks: 1, spend: 40, currency: 'INR' },
+      { provider: 'meta', impressions: 5, clicks: 1, spend: 60, currency: 'INR' }, // 100 INR < 300 USD
+    ];
+    const d = deps({ rows, orgSettings: { timezone: 'America/New_York' } }); // no `currency` key
+    const out: any = await make(d).getSpend('org_1', {});
+    expect(out.totals.currency).toBe('USD'); // dominant currency, not a hard-coded INR
+    expect(out.totals.spend).toBe(300);
+    expect(out.mixedCurrency).toBe(true);
+    expect(out.byCurrency.USD.spend).toBe(300);
+    expect(out.byCurrency.INR.spend).toBe(100);
   });
 
   it('getSpend flags a single provider whose rows span currencies as MIXED', async () => {

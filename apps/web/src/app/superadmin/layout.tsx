@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useOrg } from '@/lib/org-context';
 import { Icon } from '@/components/Icon';
+import { ToastProvider } from '@/components/feedback';
 
 /**
  * Platform super-admin console shell — a SEPARATE surface from the tenant app
@@ -28,6 +29,10 @@ export default function SuperAdminLayout({ children }: { children: ReactNode }) 
   const nav = [{ href: '/superadmin', label: 'Organizations', icon: 'database' as const }];
 
   return (
+    // The platform console renders OUTSIDE the tenant AppShell, so it has no
+    // ambient ToastProvider — without this wrapper useToast() falls back to
+    // no-ops and the suspend/reactivate/plan/impersonate toasts never show.
+    <ToastProvider>
     <div className="sa-root">
       <header className="sa-top">
         <div className="sa-brand">
@@ -162,5 +167,6 @@ export default function SuperAdminLayout({ children }: { children: ReactNode }) 
         }
       `}</style>
     </div>
+    </ToastProvider>
   );
 }

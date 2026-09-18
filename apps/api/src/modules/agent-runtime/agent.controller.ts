@@ -68,6 +68,22 @@ export class AgentController {
     return this.config.publish(req.orgId, id);
   }
 
+  @Get(':id/readiness')
+  @Roles('creator')
+  readiness(@Req() req: { orgId: string }, @Param('id') id: string) {
+    return this.config.computeReadiness(req.orgId, id);
+  }
+
+  @Post(':id/versions/:versionId/restore')
+  @Roles('creator')
+  restoreVersion(
+    @Req() req: { orgId: string },
+    @Param('id') id: string,
+    @Param('versionId') versionId: string,
+  ) {
+    return this.config.restoreVersion(req.orgId, id, versionId);
+  }
+
   @Post(':id/regression')
   @Roles('creator')
   runRegression(@Req() req: { orgId: string }, @Param('id') id: string) {

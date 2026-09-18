@@ -50,7 +50,7 @@ export const envSchema = z.object({
   API_PORT: z.coerce.number().int().positive().default(4000),
   API_BASE_URL: z.string().url().default('http://localhost:4000'),
   // Comma-separated allowlist of browser origins for CORS ('*' only in dev).
-  CORS_ORIGINS: z.string().default('http://localhost:3000'),
+  CORS_ORIGINS: z.string().default('http://localhost:4001'),
   // Expose Swagger /docs (default off; enable explicitly in non-prod).
   ENABLE_DOCS: z
     .string()

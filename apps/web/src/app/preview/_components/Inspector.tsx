@@ -97,14 +97,15 @@ export function Inspector({
   placement,
   device,
   runtime,
-  consent,
+  live,
   intent,
 }: {
   step: Step;
   placement: Placement;
   device: Device;
   runtime: Runtime;
-  consent: boolean;
+  /** Whether the shared runtime is connected to the live edge session. */
+  live: boolean;
   intent: number;
 }) {
   return (
@@ -119,8 +120,8 @@ export function Inspector({
               { label: 'Device', value: DEVICE_LABEL[device] },
               { label: 'Runtime', value: RUNTIME_LABEL[runtime] },
               {
-                label: 'Consent',
-                value: consent ? <Chip tone="success" dot>Given</Chip> : <Chip tone="neutral" dot>Not given</Chip>,
+                label: 'Edge',
+                value: live ? <Chip tone="success" dot>Live</Chip> : <Chip tone="neutral" dot>Sandbox</Chip>,
               },
             ]}
           />

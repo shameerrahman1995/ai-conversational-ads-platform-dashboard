@@ -15,4 +15,6 @@ export interface TabProps {
   capabilities: Record<string, ModelCapabilities>;
   /** Report the latest regression outcome up to the readiness gate. */
   onRegression: (passed: boolean) => void;
+  /** Re-fetch the active agent detail (e.g. after a version restore). */
+  refetch: () => void;
 }

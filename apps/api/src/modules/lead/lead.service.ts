@@ -5,6 +5,7 @@ import { AuditService } from '../../common/audit/audit.service';
 import { scopedWhere } from '../../common/tenant/scoped-where';
 import { computeLeadScore, normalizeField, type LeadFields } from './lead-scoring';
 import { encryptField, decryptField } from '../../common/crypto/field-crypto';
+import { WebhookDeliveryService } from '../webhooks/webhook-delivery.service';
 
 const DEFAULT_LEAD_LIMIT = 200;
 const MAX_LEAD_LIMIT = 500;
@@ -33,7 +34,19 @@ export class LeadService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
+    private readonly webhookDelivery: WebhookDeliveryService,
   ) {}
+
+  /**
+   * Fire a webhook domain event without ever letting a webhook problem break the
+   * originating request. Deliveries are durable + retried by WebhookDeliveryService;
+   * the `dedupeSeed` (the leadId) keeps the same logical event from double-creating.
+   */
+  private emitEvent(orgId: string, event: string, payload: Record<string, unknown>): void {
+    void this.webhookDelivery
+      .dispatch(orgId, event, payload, { dedupeSeed: String(payload.leadId ?? '') })
+      .catch(() => undefined);
+  }
 
   async createLead(orgId: string, input: CreateLeadInput) {
     // `fields` is optional over the wire; never dereference it undefined.
@@ -100,6 +113,26 @@ export class LeadService {
     });
 
     await this.audit.record({ orgId, action: 'lead.captured', target: lead.id });
+
+    // Fire outbound webhook events (best-effort, durable, retried). A brand-new
+    // lead is always a `lead.created`; a lead captured already at high intent is
+    // also a `lead.qualified`. dedupeSeed = leadId so neither event can
+    // double-create a delivery if the intake path is ever replayed.
+    this.emitEvent(orgId, 'lead.created', {
+      leadId: lead.id,
+      score,
+      qualificationLevel: input.qualificationLevel ?? null,
+      createdAt: lead.createdAt,
+    });
+    if (input.qualificationLevel === 'high') {
+      this.emitEvent(orgId, 'lead.qualified', {
+        leadId: lead.id,
+        score,
+        qualificationLevel: input.qualificationLevel,
+        createdAt: lead.createdAt,
+      });
+    }
+
     return { leadId: lead.id, deduped: false, score };
   }
 

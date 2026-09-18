@@ -33,6 +33,17 @@ export function ReadinessRail({
   const badgeTone = score >= 90 ? 'success' : score >= 75 ? 'warning' : 'danger';
   const ringStyle = { ['--value' as string]: score } as CSSProperties;
 
+  // Mirror the header's publish gate (V10 §9 / U4.5): readiness ≥ 75 AND a
+  // passing regression run this session. Gating on `ready` alone let the rail
+  // publish a version that hadn't passed regression. The tooltip names why.
+  const canPublish = ready && regressionPassed === true;
+  const failingChecks = checks.filter((c) => !c.ok);
+  const publishBlockedReason = canPublish
+    ? undefined
+    : `Not ready to publish — readiness ${score}/100 (needs ≥ 75)${
+        failingChecks.length ? `. Outstanding: ${failingChecks.map((c) => c.label).join(', ')}` : ''
+      }.`;
+
   return (
     <aside className="agent-readiness-stack">
       <Card className="readiness-card">
@@ -96,9 +107,23 @@ export function ReadinessRail({
           Publishing requires readiness ≥ 75 — a passing regression suite, approved knowledge, a
           defined fallback and an explicit consent path for contact capture.
         </p>
-        <Button variant="primary" icon="rocket" disabled={!ready || publishing} onClick={onPublish} style={{ width: '100%' }}>
-          {publishing ? 'Publishing…' : 'Publish new version'}
-        </Button>
+        {/* Wrapper carries the tooltip: a disabled <button> is inert and won't
+            surface its own title on hover. */}
+        <span
+          title={publishBlockedReason}
+          style={{ display: 'inline-flex', width: '100%', cursor: canPublish ? undefined : 'not-allowed' }}
+        >
+          <Button
+            variant="primary"
+            icon="rocket"
+            disabled={!canPublish || publishing}
+            aria-disabled={!canPublish}
+            onClick={onPublish}
+            style={{ width: '100%' }}
+          >
+            {publishing ? 'Publishing…' : 'Publish new version'}
+          </Button>
+        </span>
       </Card>
     </aside>
   );

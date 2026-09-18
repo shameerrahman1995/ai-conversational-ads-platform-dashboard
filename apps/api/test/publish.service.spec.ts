@@ -1,5 +1,9 @@
 import { describe, it, expect, vi } from 'vitest';
-import { PublishService } from '../src/modules/publishing/publish.service';
+import {
+  PublishService,
+  buildRemoteObjectTree,
+  ROLLED_BACK_MARKER,
+} from '../src/modules/publishing/publish.service';
 import { PolicyService } from '../src/modules/policy/policy.service';
 
 function stubConnector() {
@@ -42,6 +46,7 @@ function deps(opts: { plan?: any; connector?: any } = {}) {
     },
     creativeVariant: {
       findFirst: vi.fn().mockResolvedValue({ id: 'v1', campaignId: 'c1', format: 'image_1_1', spec: {} }),
+      findMany: vi.fn().mockResolvedValue([{ id: 'v1' }]),
       create: vi
         .fn()
         .mockResolvedValue({ id: 'clone1', campaignId: 'c1', format: 'image_1_1', spec: {} }),
@@ -69,7 +74,10 @@ function deps(opts: { plan?: any; connector?: any } = {}) {
       findMany: vi.fn().mockResolvedValue([]),
     },
     approval: { create: vi.fn().mockResolvedValue({ id: 'ap1' }) },
-    remoteObject: { create: vi.fn().mockResolvedValue({ id: 'ro1' }) },
+    remoteObject: {
+      create: vi.fn().mockResolvedValue({ id: 'ro1' }),
+      findMany: vi.fn().mockResolvedValue([]),
+    },
   } as any;
   const audit = { record: vi.fn() } as any;
   const registry = { get: vi.fn().mockReturnValue(opts.connector ?? stubConnector()) } as any;
@@ -103,6 +111,63 @@ describe('PublishService', () => {
     await expect(make(d).createPlan('org_1', planInput)).rejects.toThrow();
   });
 
+  // U7.2 deploy gate (hard-block): the runtime-profile capability check is no
+  // longer advisory. When the destination cannot run the creative's requested
+  // profile (live-conversation needs interactive HTML5), createPlan throws 4xx
+  // and no plan is created — the platform refuses to ship a silently-degraded ad.
+  it('createPlan hard-blocks when the destination cannot run the requested runtime profile', async () => {
+    const conn = stubConnector();
+    conn.capabilities = vi.fn().mockResolvedValue({
+      platform: 'google_ads',
+      accountId: 'acct',
+      supportedFormats: [],
+      supportsHtml5: false, // live-conversation needs HTML5 → unsupported
+      supportsNativeLeadForms: true,
+      objectives: [],
+      regions: [],
+      placements: [],
+    });
+    const d = deps({ connector: conn });
+    await expect(make(d).createPlan('org_1', planInput)).rejects.toThrow(/not supported/i);
+    expect(d.prisma.publishJob.create).not.toHaveBeenCalled();
+  });
+
+  // P1 platform allowlist gate: the destination platform must be in the requested
+  // runtime profile's allowlist. live-conversation runs on google_ads/microsoft/
+  // amazon_dsp/generic_export — NOT meta — so a meta plan hard-blocks even though
+  // the (stub) connector reports HTML5 support.
+  it('createPlan hard-blocks a platform outside the runtime profile allowlist', async () => {
+    const d = deps(); // stub reports supportsHtml5: true
+    await expect(
+      make(d).createPlan('org_1', { ...planInput, platform: 'meta' }),
+    ).rejects.toThrow(/not supported/i);
+    expect(d.prisma.publishJob.create).not.toHaveBeenCalled();
+  });
+
+  // P1 concept-only is never deployable: its platforms allowlist is empty, so any
+  // deploy target hard-blocks (a concept preview must not ship to a live placement).
+  it('createPlan hard-blocks a concept-only creative (never deployable)', async () => {
+    const d = deps();
+    d.prisma.creativeVariant.findFirst.mockResolvedValue({
+      id: 'v1',
+      campaignId: 'c1',
+      format: 'html5',
+      spec: { runtimeProfile: 'concept-only' },
+    });
+    await expect(make(d).createPlan('org_1', planInput)).rejects.toThrow(/not supported/i);
+    expect(d.prisma.publishJob.create).not.toHaveBeenCalled();
+  });
+
+  // P2: the creating user's id is persisted on the plan (drives identity-level
+  // two-person control at approval).
+  it('createPlan records the creating user as createdBy', async () => {
+    const d = deps();
+    await make(d).createPlan('org_1', { ...planInput, createdBy: 'creator_1' });
+    expect(d.prisma.publishJob.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ createdBy: 'creator_1' }) }),
+    );
+  });
+
   it('approvePlan records an approval and enqueues (approval separation)', async () => {
     const d = deps();
     await make(d).approvePlan('org_1', 'p1', 'publisher_1');
@@ -117,6 +182,46 @@ describe('PublishService', () => {
   it('approvePlan refuses a plan not awaiting approval', async () => {
     const d = deps({ plan: { id: 'p1', orgId: 'org_1', status: 'LIVE' } });
     await expect(make(d).approvePlan('org_1', 'p1', 'x')).rejects.toThrow();
+  });
+
+  // P2 identity-level two-person control: the approver MUST differ from the
+  // creator, regardless of role — a single admin cannot create AND approve.
+  it('approvePlan refuses when the approver is the plan creator (self-approval)', async () => {
+    const d = deps({
+      plan: {
+        id: 'p1',
+        orgId: 'org_1',
+        platform: 'google_ads',
+        variantId: 'v1',
+        accountId: 'acct',
+        snapshotId: 'cv1',
+        status: 'READY_FOR_REVIEW',
+        remoteId: null,
+        createdBy: 'user_1',
+      },
+    });
+    await expect(make(d).approvePlan('org_1', 'p1', 'user_1')).rejects.toThrow(/two-person|different user/i);
+    expect(d.prisma.approval.create).not.toHaveBeenCalled();
+    expect(d.jobs.enqueuePublish).not.toHaveBeenCalled();
+  });
+
+  it('approvePlan allows a different approver from the creator', async () => {
+    const d = deps({
+      plan: {
+        id: 'p1',
+        orgId: 'org_1',
+        platform: 'google_ads',
+        variantId: 'v1',
+        accountId: 'acct',
+        snapshotId: 'cv1',
+        status: 'READY_FOR_REVIEW',
+        remoteId: null,
+        createdBy: 'user_1',
+      },
+    });
+    await make(d).approvePlan('org_1', 'p1', 'user_2');
+    expect(d.prisma.approval.create).toHaveBeenCalled();
+    expect(d.jobs.enqueuePublish).toHaveBeenCalledWith('org_1', 'p1');
   });
 
   const approvedPlan = {
@@ -142,6 +247,67 @@ describe('PublishService', () => {
   it('executePublish refuses an un-approved plan (two-person control)', async () => {
     const d = deps(); // default plan is READY_FOR_REVIEW
     await expect(make(d).executePublish('org_1', 'p1')).rejects.toThrow(/approved by a publisher/i);
+    expect(d.prisma.remoteObject.create).not.toHaveBeenCalled();
+  });
+
+  // P0 gate: execute is allowed ONLY from APPROVED. Every other non-terminal
+  // state (PUBLISHING/IN_REVIEW/LIVE/PAUSED/ARCHIVED) is refused — otherwise a
+  // rolled-back/cancelled or already-live plan could be re-deployed.
+  it.each(['PUBLISHING', 'IN_REVIEW', 'LIVE', 'PAUSED', 'ARCHIVED'])(
+    'executePublish refuses a plan in %s (only APPROVED may deploy)',
+    async (status) => {
+      const d = deps({ plan: { ...approvedPlan, status, remoteId: null } });
+      await expect(make(d).executePublish('org_1', 'p1')).rejects.toThrow(/APPROVED/i);
+      expect(d.prisma.remoteObject.create).not.toHaveBeenCalled();
+    },
+  );
+
+  // P0 gate: an APPROVED plan that already has a remoteId has already deployed —
+  // re-executing it would create duplicate RemoteObjects + double ad-spend.
+  it('executePublish refuses an already-deployed plan (remoteId present)', async () => {
+    const d = deps({ plan: { ...approvedPlan, remoteId: 'ad_existing' } });
+    await expect(make(d).executePublish('org_1', 'p1')).rejects.toThrow(/already been deployed/i);
+    expect(d.prisma.remoteObject.create).not.toHaveBeenCalled();
+  });
+
+  // U7.2 snapshot: a successful deploy freezes the chosen runtime profile + the
+  // resolved VERSIONED capability doc onto the PublishJob row.
+  it('executePublish freezes the runtime profile + versioned capability snapshot onto the PublishJob', async () => {
+    const d = deps({ plan: approvedPlan });
+    const out: any = await make(d).executePublish('org_1', 'p1');
+    expect(out.runtimeProfile).toBe('live-conversation');
+    const inReviewUpdate = d.prisma.publishJob.update.mock.calls
+      .map((c: any) => c[0])
+      .find((a: any) => a.data?.status === 'IN_REVIEW');
+    expect(inReviewUpdate).toBeTruthy();
+    expect(inReviewUpdate.data.runtimeProfile).toBe('live-conversation');
+    expect(inReviewUpdate.data.capabilitySnapshot).toEqual(
+      expect.objectContaining({
+        version: expect.any(String),
+        requested: 'live-conversation',
+        resolved: 'live-conversation',
+        supported: true,
+      }),
+    );
+  });
+
+  // U7.2 deploy gate (hard-block, defense in depth): if the destination's
+  // capabilities have regressed by execute time so it can no longer run the
+  // requested profile, executePublish throws 4xx before any remote side effect.
+  it('executePublish hard-blocks at deploy when the destination cannot run the requested profile', async () => {
+    const conn = stubConnector();
+    conn.capabilities = vi.fn().mockResolvedValue({
+      platform: 'google_ads',
+      accountId: 'acct',
+      supportedFormats: [],
+      supportsHtml5: false,
+      supportsNativeLeadForms: false,
+      objectives: [],
+      regions: [],
+      placements: [],
+    });
+    const d = deps({ plan: approvedPlan, connector: conn });
+    await expect(make(d).executePublish('org_1', 'p1')).rejects.toThrow(/not supported/i);
     expect(d.prisma.remoteObject.create).not.toHaveBeenCalled();
   });
 
@@ -301,5 +467,184 @@ describe('PublishService', () => {
     const d = deps({ plan: { id: 'p1', orgId: 'org_1', platform: 'google_ads', status: 'PAUSED', remoteId: 'ad1' } });
     const out: any = await make(d).resume('org_1', 'p1');
     expect(out.status).toBe('LIVE');
+  });
+
+  /* ---- Rollback (U5.3) -------------------------------------------------- */
+
+  const livePlan = {
+    id: 'p1',
+    orgId: 'org_1',
+    platform: 'google_ads',
+    variantId: 'v1',
+    accountId: 'acct',
+    status: 'LIVE',
+    remoteId: 'ad1',
+  };
+
+  it('rollback pauses the remote object, archives the plan and marks it rolled-back (audited)', async () => {
+    const conn = stubConnector();
+    const d = deps({ plan: livePlan, connector: conn });
+    const out: any = await make(d).rollback('org_1', 'p1');
+    // Remote object is paused via the connector — nothing deleted.
+    expect(conn.pause).toHaveBeenCalledWith({ remoteId: 'ad1', secretRef: '' });
+    // Plan reuses ARCHIVED + the rolled-back marker (no schema change), org-scoped.
+    expect(d.prisma.publishJob.update).toHaveBeenCalledWith({
+      where: { id: 'p1', orgId: 'org_1' },
+      data: { status: 'ARCHIVED', reviewReason: ROLLED_BACK_MARKER },
+    });
+    expect(out.status).toBe('ARCHIVED');
+    expect(out.reviewReason).toBe(ROLLED_BACK_MARKER);
+    // Distinct audit action from cancel — history/audit preserved.
+    expect(d.audit.record).toHaveBeenCalledWith(
+      expect.objectContaining({ orgId: 'org_1', action: 'publish.rolled_back', target: 'p1' }),
+    );
+  });
+
+  it('rollback refuses a plan that was never published (no remoteId)', async () => {
+    const d = deps(); // default plan READY_FOR_REVIEW, remoteId null
+    await expect(make(d).rollback('org_1', 'p1')).rejects.toThrow(/rolled back/i);
+    expect(d.prisma.publishJob.update).not.toHaveBeenCalled();
+  });
+
+  it('rollback is org-scoped (requirePlan uses scopedWhere)', async () => {
+    const d = deps({ plan: livePlan });
+    await make(d).rollback('org_1', 'p1');
+    expect(d.prisma.publishJob.findFirst).toHaveBeenCalledWith({
+      where: { orgId: 'org_1', id: 'p1' },
+    });
+  });
+
+  /* ---- Reconciliation (U5.3) ------------------------------------------- */
+
+  it('reconciliation flags status drift when the remote view differs from local', async () => {
+    // Local IN_REVIEW, remote reports approved (→ LIVE): that is drift.
+    const d = deps({
+      plan: { id: 'p1', orgId: 'org_1', platform: 'google_ads', variantId: 'v1', accountId: 'acct', status: 'IN_REVIEW', remoteId: 'ad1' },
+    });
+    const out: any = await make(d).reconciliation('org_1', 'p1');
+    expect(out.inSync).toBe(false);
+    expect(out.remoteMappedStatus).toBe('LIVE');
+    expect(out.drift.some((x: any) => x.field === 'status')).toBe(true);
+    expect(d.audit.record).toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'publish.reconciled', target: 'p1' }),
+    );
+  });
+
+  it('reconciliation reports in-sync when local LIVE matches an approved remote', async () => {
+    const d = deps({
+      plan: { id: 'p1', orgId: 'org_1', platform: 'google_ads', variantId: 'v1', accountId: 'acct', status: 'LIVE', remoteId: 'ad1' },
+    });
+    const out: any = await make(d).reconciliation('org_1', 'p1');
+    expect(out.inSync).toBe(true);
+    expect(out.drift).toHaveLength(0);
+  });
+
+  it('reconciliation flags an unpublished plan as drift (no remote object)', async () => {
+    const d = deps(); // remoteId null
+    const out: any = await make(d).reconciliation('org_1', 'p1');
+    expect(out.remote).toBeNull();
+    expect(out.drift.some((x: any) => x.field === 'remoteId')).toBe(true);
+  });
+
+  it('reconciliation returns the remote-object tree, org-scoped to the plan account', async () => {
+    const d = deps({
+      plan: { id: 'p1', orgId: 'org_1', platform: 'google_ads', variantId: 'v1', accountId: 'acct', status: 'LIVE', remoteId: 'ad1' },
+    });
+    d.prisma.remoteObject.findMany.mockResolvedValue([
+      { campaignRemoteId: 'camp1', adGroupRemoteId: 'ag1', adRemoteId: 'ad1', reviewStatus: 'approved', revision: 1 },
+    ]);
+    const out: any = await make(d).reconciliation('org_1', 'p1');
+    expect(d.prisma.remoteObject.findMany).toHaveBeenCalledWith({
+      where: { orgId: 'org_1', provider: 'google_ads', accountId: 'acct' },
+    });
+    expect(out.tree[0].campaignRemoteId).toBe('camp1');
+    expect(out.tree[0].adGroups[0].ads[0].adRemoteId).toBe('ad1');
+  });
+
+  /* ---- Bulk activate/pause (U5.2) -------------------------------------- */
+
+  it('bulk pause pauses each campaign’s live plans, flips the campaign and reports per-id (audited)', async () => {
+    const conn = stubConnector();
+    const d = deps({ connector: conn });
+    d.prisma.campaign.findFirst.mockResolvedValue({ id: 'c1', orgId: 'org_1', status: 'LIVE' });
+    d.prisma.publishJob.findMany.mockResolvedValue([
+      { id: 'pl1', orgId: 'org_1', platform: 'google_ads', status: 'LIVE', remoteId: 'ad1', variantId: 'v1' },
+    ]);
+    const out: any = await make(d).bulkSetDeployment('org_1', ['c1'], 'pause');
+    expect(conn.pause).toHaveBeenCalledWith({ remoteId: 'ad1', secretRef: '' });
+    expect(d.prisma.campaign.update).toHaveBeenCalledWith({
+      where: { id: 'c1', orgId: 'org_1' },
+      data: { status: 'PAUSED' },
+    });
+    expect(out.summary).toEqual({ total: 1, ok: 1, failed: 0 });
+    expect(out.results[0]).toMatchObject({ id: 'c1', ok: true, to: 'PAUSED', plansAffected: 1 });
+    expect(d.audit.record).toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'publish.bulk_paused' }),
+    );
+  });
+
+  it('bulk activate resumes paused plans and flips the campaign to LIVE', async () => {
+    const conn = stubConnector();
+    (conn as any).resume = vi.fn().mockResolvedValue(undefined);
+    const d = deps({ connector: conn });
+    d.prisma.campaign.findFirst.mockResolvedValue({ id: 'c1', orgId: 'org_1', status: 'PAUSED' });
+    d.prisma.publishJob.findMany.mockResolvedValue([
+      { id: 'pl1', orgId: 'org_1', platform: 'google_ads', status: 'PAUSED', remoteId: 'ad1', variantId: 'v1' },
+    ]);
+    const out: any = await make(d).bulkSetDeployment('org_1', ['c1'], 'activate');
+    expect((conn as any).resume).toHaveBeenCalledWith({ remoteId: 'ad1', secretRef: '' });
+    expect(out.results[0]).toMatchObject({ id: 'c1', ok: true, to: 'LIVE', plansAffected: 1 });
+  });
+
+  it('bulk reports a per-item failure without blocking the rest (invalid FSM transition)', async () => {
+    const d = deps();
+    // c1 is DRAFT (cannot pause) → fails; c2 is LIVE → succeeds.
+    d.prisma.campaign.findFirst.mockImplementation(({ where }: any) =>
+      Promise.resolve(
+        where.id === 'c1'
+          ? { id: 'c1', orgId: 'org_1', status: 'DRAFT' }
+          : { id: 'c2', orgId: 'org_1', status: 'LIVE' },
+      ),
+    );
+    d.prisma.publishJob.findMany.mockResolvedValue([]);
+    const out: any = await make(d).bulkSetDeployment('org_1', ['c1', 'c2'], 'pause');
+    expect(out.summary).toEqual({ total: 2, ok: 1, failed: 1 });
+    expect(out.results.find((r: any) => r.id === 'c1')).toMatchObject({ ok: false });
+    expect(out.results.find((r: any) => r.id === 'c2')).toMatchObject({ ok: true });
+  });
+
+  it('bulk is org-scoped (campaign + plan lookups pass the caller orgId)', async () => {
+    const d = deps();
+    d.prisma.campaign.findFirst.mockResolvedValue({ id: 'c1', orgId: 'org_1', status: 'LIVE' });
+    d.prisma.publishJob.findMany.mockResolvedValue([]);
+    await make(d).bulkSetDeployment('org_1', ['c1'], 'pause');
+    expect(d.prisma.campaign.findFirst).toHaveBeenCalledWith({ where: { orgId: 'org_1', id: 'c1' } });
+    expect(d.prisma.creativeVariant.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { orgId: 'org_1', campaignId: 'c1' } }),
+    );
+  });
+});
+
+describe('buildRemoteObjectTree', () => {
+  it('reshapes flat RemoteObject rows into campaign → adGroup → ad', () => {
+    const tree = buildRemoteObjectTree([
+      { campaignRemoteId: 'c1', adGroupRemoteId: 'g1', adRemoteId: 'a1', reviewStatus: 'approved', revision: 1 },
+      { campaignRemoteId: 'c1', adGroupRemoteId: 'g1', adRemoteId: 'a2', reviewStatus: 'in_review', revision: 2 },
+      { campaignRemoteId: 'c1', adGroupRemoteId: 'g2', adRemoteId: 'a3', reviewStatus: 'approved', revision: 1 },
+      { campaignRemoteId: 'c2', adGroupRemoteId: 'g3', adRemoteId: 'a4', reviewStatus: 'approved', revision: 1 },
+    ]);
+    expect(tree).toHaveLength(2); // two campaigns
+    const c1 = tree.find((c) => c.campaignRemoteId === 'c1')!;
+    expect(c1.adGroups).toHaveLength(2); // g1, g2
+    const g1 = c1.adGroups.find((g) => g.adGroupRemoteId === 'g1')!;
+    expect(g1.ads.map((a) => a.adRemoteId)).toEqual(['a1', 'a2']);
+  });
+
+  it('tolerates missing ad-group / ad ids (campaign-only rows)', () => {
+    const tree = buildRemoteObjectTree([
+      { campaignRemoteId: 'c1', adGroupRemoteId: null, adRemoteId: null, reviewStatus: 'draft', revision: 1 },
+    ]);
+    expect(tree).toHaveLength(1);
+    expect(tree[0].adGroups[0].ads).toHaveLength(0);
   });
 });

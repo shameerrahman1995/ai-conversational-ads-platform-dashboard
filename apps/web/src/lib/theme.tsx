@@ -27,11 +27,19 @@ import {
 export type Theme = 'light' | 'dark';
 
 const STORAGE_KEY = 'acp-theme';
+const ACCENT_KEY = 'acp-accent';
+
+/** Accept `#rgb` / `#rrggbb` only — the override is written into a CSS var. */
+const HEX_RE = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i;
 
 interface ThemeContextValue {
   theme: Theme;
   setTheme: (t: Theme) => void;
   toggle: () => void;
+  /** Per-workspace accent hex, or `null` when using the default brand accent. */
+  accent: string | null;
+  /** Set (or clear, with `null`) the workspace accent; persisted + applied. */
+  setAccent: (hex: string | null) => void;
 }
 
 const ThemeContext = createContext<ThemeContextValue | null>(null);
@@ -96,16 +104,67 @@ function persistTheme(theme: Theme): void {
   }
 }
 
+/* ---- Accent (U0.4) ------------------------------------------------- */
+/* The default accent lives in globals.css (`--accent: var(--color-brand)`).
+ * An override sets `--accent` + its derived shades inline on <html>, so it wins
+ * over the default and stays theme-aware (soft/ink blend with the live tokens).
+ * Clearing removes the inline props, falling back to the CSS default. */
+
+/** The stored workspace accent hex, or `null` when following the default. */
+function readStoredAccent(): string | null {
+  try {
+    if (typeof window === 'undefined') return null;
+    const v = window.localStorage.getItem(ACCENT_KEY);
+    return v && HEX_RE.test(v) ? v : null;
+  } catch {
+    return null;
+  }
+}
+
+function applyAccent(hex: string | null): void {
+  try {
+    if (typeof document === 'undefined') return;
+    const s = document.documentElement.style;
+    if (!hex) {
+      s.removeProperty('--accent');
+      s.removeProperty('--accent-strong');
+      s.removeProperty('--accent-soft');
+      s.removeProperty('--accent-ink');
+      return;
+    }
+    s.setProperty('--accent', hex);
+    s.setProperty('--accent-strong', `color-mix(in srgb, ${hex} 84%, #000)`);
+    s.setProperty('--accent-soft', `color-mix(in srgb, ${hex} 16%, var(--color-surface))`);
+    s.setProperty('--accent-ink', `color-mix(in srgb, ${hex} 72%, var(--color-ink))`);
+  } catch {
+    /* no document (SSR) — ignore */
+  }
+}
+
+function persistAccent(hex: string | null): void {
+  try {
+    if (typeof window === 'undefined') return;
+    if (hex) window.localStorage.setItem(ACCENT_KEY, hex);
+    else window.localStorage.removeItem(ACCENT_KEY);
+  } catch {
+    /* localStorage unavailable — ignore */
+  }
+}
+
 export function ThemeProvider({ children }: { children: ReactNode }) {
   // Deterministic default so the server and first client render agree; the real
   // theme is adopted on mount (below) to avoid an SSR/client hydration mismatch.
   const [theme, setThemeState] = useState<Theme>('light');
+  const [accent, setAccentState] = useState<string | null>(null);
 
-  // On mount: adopt the stored (or OS) theme and reflect it on <html>.
+  // On mount: adopt the stored (or OS) theme + workspace accent, reflect on <html>.
   useEffect(() => {
     const initial = resolveTheme();
     setThemeState(initial);
     applyTheme(initial);
+    const storedAccent = readStoredAccent();
+    setAccentState(storedAccent);
+    applyAccent(storedAccent);
   }, []);
 
   // While the user hasn't made an explicit choice, follow live OS changes.
@@ -141,8 +200,15 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     setTheme(readAppliedTheme() === 'dark' ? 'light' : 'dark');
   }, [setTheme]);
 
+  const setAccent = useCallback((hex: string | null) => {
+    const next = hex && HEX_RE.test(hex) ? hex : null;
+    setAccentState(next);
+    persistAccent(next);
+    applyAccent(next);
+  }, []);
+
   return (
-    <ThemeContext.Provider value={{ theme, setTheme, toggle }}>
+    <ThemeContext.Provider value={{ theme, setTheme, toggle, accent, setAccent }}>
       {children}
     </ThemeContext.Provider>
   );
@@ -159,9 +225,11 @@ export function useTheme(): ThemeContextValue {
   // Fallback state, used only when rendered outside a provider. Declared
   // unconditionally so hook order stays stable across renders.
   const [fallbackTheme, setFallbackTheme] = useState<Theme>('light');
+  const [fallbackAccent, setFallbackAccent] = useState<string | null>(null);
   useEffect(() => {
     if (ctx) return;
     setFallbackTheme(readAppliedTheme());
+    setFallbackAccent(readStoredAccent());
   }, [ctx]);
 
   if (ctx) return ctx;
@@ -172,6 +240,12 @@ export function useTheme(): ThemeContextValue {
     applyTheme(next);
   };
   const toggle = () => setTheme(readAppliedTheme() === 'dark' ? 'light' : 'dark');
+  const setAccent = (hex: string | null) => {
+    const next = hex && HEX_RE.test(hex) ? hex : null;
+    setFallbackAccent(next);
+    persistAccent(next);
+    applyAccent(next);
+  };
 
-  return { theme: fallbackTheme, setTheme, toggle };
+  return { theme: fallbackTheme, setTheme, toggle, accent: fallbackAccent, setAccent };
 }

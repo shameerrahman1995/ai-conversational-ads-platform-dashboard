@@ -48,6 +48,32 @@ export class SpendQueryDto {
   until?: string;
 }
 
+/**
+ * Query for `GET /v1/analytics/timeseries` — a daily series for one metric with
+ * its equally-long prior window. `from`/`to` are optional (defaults to a trailing
+ * 30-day window); bad dates 400 instead of 500.
+ */
+export class TimeseriesQueryDto {
+  @ApiProperty({ enum: ['impressions', 'clicks', 'conversations', 'qualified', 'spend', 'leads'] })
+  @IsIn(['impressions', 'clicks', 'conversations', 'qualified', 'spend', 'leads'])
+  metric!: string;
+
+  @ApiProperty({ required: false, example: '2026-09-01' })
+  @IsOptional()
+  @IsDateString()
+  from?: string;
+
+  @ApiProperty({ required: false, example: '2026-09-30' })
+  @IsOptional()
+  @IsDateString()
+  to?: string;
+
+  @ApiProperty({ required: false, enum: ['day'], default: 'day' })
+  @IsOptional()
+  @IsIn(['day'])
+  interval?: string;
+}
+
 /** Query for `GET /v1/analytics/attribution` — bad dates now 400 instead of 500. */
 export class AttributionQueryDto {
   @ApiProperty({ required: false, example: '2026-09-01' })

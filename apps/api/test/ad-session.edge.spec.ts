@@ -52,6 +52,12 @@ function deps(overrides: { agent?: unknown; variant?: unknown } = {}) {
         ),
     },
     event: { createMany: vi.fn().mockResolvedValue({ count: 1 }) },
+    message: {
+      // The runtime writes the assistant Message; the edge layer stamps grounding
+      // meta onto that most-recent assistant row.
+      findFirst: vi.fn().mockResolvedValue({ id: 'msg_1' }),
+      update: vi.fn().mockResolvedValue({ id: 'msg_1' }),
+    },
   } as any;
   const runtime = {
     startSession: vi.fn().mockResolvedValue({ conversationId: 'co_1' }),
@@ -62,11 +68,14 @@ function deps(overrides: { agent?: unknown; variant?: unknown } = {}) {
   const lead = { createLead: vi.fn().mockResolvedValue({ leadId: 'lead_1', deduped: false, score: 55 }) } as any;
   const store = fakeStore();
   const events = { emit: vi.fn().mockResolvedValue(undefined), ingest: vi.fn().mockResolvedValue({ accepted: 1 }) } as any;
-  return { prisma, runtime, lead, store, events };
+  // Budget guard: default to an org that is comfortably under budget so the model
+  // runs on the happy path; individual tests flip overBudget to exercise the guard.
+  const budget = { getStatus: vi.fn().mockResolvedValue({ overBudget: false }) } as any;
+  return { prisma, runtime, lead, store, events, budget };
 }
 
 function make(d: ReturnType<typeof deps>) {
-  return new AdSessionService(d.prisma, d.runtime, d.lead, d.store as any, d.events);
+  return new AdSessionService(d.prisma, d.runtime, d.lead, d.store as any, d.events, d.budget);
 }
 
 describe('AdSessionService (edge)', () => {
@@ -97,6 +106,18 @@ describe('AdSessionService (edge)', () => {
     expect(d.events.emit).toHaveBeenCalledWith('org_1', 'sess_1', expect.objectContaining({ type: 'message_sent' }));
     expect(d.events.emit).toHaveBeenCalledWith('org_1', 'sess_1', expect.objectContaining({ type: 'answer_rendered' }));
 
+    // grounding capture: the runtime reported grounded:true + citations:['s1'], so
+    // the assistant Message row is stamped with a ≥0.5 score and the source ids.
+    expect(d.prisma.message.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { orgId: 'org_1', conversationId: 'co_1', role: 'assistant' } }),
+    );
+    expect(d.prisma.message.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'msg_1' },
+        data: expect.objectContaining({ groundedScore: 0.6, citations: ['s1'] }),
+      }),
+    );
+
     // lead → tied to the conversation created during the message turn
     const leadOut = await svc.submitLead(CLAIMS, 'sess_1', { fields: { email: 'a@b.com' }, consent: true });
     expect(leadOut).toEqual({ leadId: 'lead_1', status: 'converted' });
@@ -115,6 +136,79 @@ describe('AdSessionService (edge)', () => {
     expect(d.events.emit).toHaveBeenCalledWith('org_1', 'sess_1', expect.objectContaining({ type: 'lead_submitted' }));
   });
 
+  it('stamps a zero grounded score for an ungrounded (fallback) runtime reply', async () => {
+    const d = deps();
+    d.runtime.sendMessage = vi
+      .fn()
+      .mockResolvedValue({ reply: 'Sorry, I can help with that', grounded: false, citations: [], fallback: true, disclosure: 'AI' });
+    const svc = make(d);
+    await svc.createSession(CLAIMS, { creativeId: 'cr_1' });
+    await svc.message(CLAIMS, 'sess_1', { text: 'hi' });
+    expect(d.prisma.message.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ groundedScore: 0, citations: [] }) }),
+    );
+  });
+
+  it('never overwrites a Message row when the runtime send throws (no fresh assistant turn)', async () => {
+    const d = deps();
+    d.runtime.sendMessage = vi.fn().mockRejectedValue(new Error('runtime down'));
+    const svc = make(d);
+    await svc.createSession(CLAIMS, { creativeId: 'cr_1' });
+    const reply = await svc.message(CLAIMS, 'sess_1', { text: 'hi' });
+    expect(reply.answer).toBeTruthy(); // approved fallback answer still returned
+    expect(d.events.emit).toHaveBeenCalledWith('org_1', 'sess_1', expect.objectContaining({ type: 'error_ai' }));
+    expect(d.prisma.message.findFirst).not.toHaveBeenCalled();
+    expect(d.prisma.message.update).not.toHaveBeenCalled();
+  });
+
+  // Per-org AI-cost abuse guard: the public edge lets anyone with a live creativeId
+  // drive the model. When the org is over its AI budget, the turn must degrade to
+  // the safe fallback WITHOUT invoking the model runtime (no per-org cost abuse),
+  // and no assistant Message is stamped (no fresh turn was persisted).
+  it('degrades to the safe fallback (no model spend) when the org is over AI budget', async () => {
+    const d = deps();
+    d.budget.getStatus = vi.fn().mockResolvedValue({ overBudget: true });
+    const svc = make(d);
+    await svc.createSession(CLAIMS, { creativeId: 'cr_1' });
+    const reply = await svc.message(CLAIMS, 'sess_1', { text: 'tell me more' });
+
+    expect(d.budget.getStatus).toHaveBeenCalledWith('org_1');
+    expect(d.runtime.startSession).not.toHaveBeenCalled();
+    expect(d.runtime.sendMessage).not.toHaveBeenCalled();
+    expect(reply.answer).toBeTruthy(); // approved fallback answer still returned
+    // No fresh assistant row → grounding capture is skipped.
+    expect(d.prisma.message.update).not.toHaveBeenCalled();
+    // Budget internals never leak to the visitor.
+    expect(JSON.stringify(reply)).not.toMatch(/budget|overBudget|limit/i);
+    // answer_rendered has no latencyMs (no model round-trip happened).
+    const answerRendered = d.events.emit.mock.calls.find((c: any[]) => c[2]?.type === 'answer_rendered');
+    expect(answerRendered?.[2]?.payload?.latencyMs).toBeUndefined();
+  });
+
+  it('fails OPEN when the budget check throws (never breaks the reply)', async () => {
+    const d = deps();
+    d.budget.getStatus = vi.fn().mockRejectedValue(new Error('budget service down'));
+    const svc = make(d);
+    await svc.createSession(CLAIMS, { creativeId: 'cr_1' });
+    const reply = await svc.message(CLAIMS, 'sess_1', { text: 'hi' });
+    expect(d.runtime.sendMessage).toHaveBeenCalled(); // model still runs
+    expect(reply.answer).toBe('Here is the answer');
+  });
+
+  // p95 latency was a permanently-dead metric because the edge never emitted
+  // latencyMs. The model round-trip is now measured and stamped on answer_rendered
+  // (the field projections.agentRuntimeHealth reads).
+  it('emits a numeric latencyMs on answer_rendered so platform-health p95 populates', async () => {
+    const d = deps();
+    const svc = make(d);
+    await svc.createSession(CLAIMS, { creativeId: 'cr_1' });
+    await svc.message(CLAIMS, 'sess_1', { text: 'hi' });
+    const answerRendered = d.events.emit.mock.calls.find((c: any[]) => c[2]?.type === 'answer_rendered');
+    expect(answerRendered).toBeTruthy();
+    expect(typeof answerRendered[2].payload.latencyMs).toBe('number');
+    expect(answerRendered[2].payload.latencyMs).toBeGreaterThanOrEqual(0);
+  });
+
   it('rejects a lead submission without explicit consent', async () => {
     const d = deps();
     const svc = make(d);
@@ -123,6 +217,56 @@ describe('AdSessionService (edge)', () => {
       /consent/i,
     );
     expect(d.lead.createLead).not.toHaveBeenCalled();
+  });
+
+  // P2 security (token scope): a creative token is scoped to ONE creative. The
+  // request body must not be able to widen that scope — a token for creative A
+  // driving a session for creative B is a cross-creative escalation.
+  it('createSession rejects a dto.creativeId that does not match the token', async () => {
+    const d = deps();
+    const svc = make(d);
+    await expect(
+      svc.createSession(CLAIMS, { creativeId: 'cr_evil', platform: 'google_ads' }),
+    ).rejects.toThrow(/creativeId|token/i);
+    expect(d.prisma.adSession.create).not.toHaveBeenCalled();
+  });
+
+  it('createSession binds the session to the TOKEN creative (never the dto value)', async () => {
+    const d = deps();
+    const svc = make(d);
+    await svc.createSession(CLAIMS, { creativeId: 'cr_1', platform: 'google_ads' });
+    // The persisted row uses claims.creativeId as the source of truth.
+    expect(d.prisma.adSession.create.mock.calls[0][0].data.creativeId).toBe('cr_1');
+    // resolveAgent is looked up by the token creative, not any body-supplied id.
+    expect(d.prisma.creativeVariant.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { orgId: 'org_1', id: 'cr_1' } }),
+    );
+  });
+
+  // P2 security (lead without session): a Lead must never be written for a
+  // missing/expired/cross-tenant session id — that is an unauthenticated write
+  // path. submitLead requires a valid owned session first.
+  it('submitLead rejects and writes NO lead when the session is missing/expired', async () => {
+    const d = deps();
+    const svc = make(d);
+    // Session was never created → loadOwnedSession returns null.
+    await expect(
+      svc.submitLead(CLAIMS, 'sess_missing', { fields: { email: 'a@b.com' }, consent: true }),
+    ).rejects.toThrow(/valid ad session|not found|expired/i);
+    expect(d.lead.createLead).not.toHaveBeenCalled();
+    expect(d.prisma.adSession.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('submitLead rejects and writes NO lead for a session owned by another org', async () => {
+    const d = deps();
+    const svc = make(d);
+    // Seed a session owned by a DIFFERENT org directly in the store.
+    await d.store.create({ id: 'sess_other', orgId: 'org_evil', creativeId: 'cr_1' } as any);
+    await expect(
+      svc.submitLead(CLAIMS, 'sess_other', { fields: { email: 'a@b.com' }, consent: true }),
+    ).rejects.toThrow(/valid ad session|not found|expired/i);
+    expect(d.lead.createLead).not.toHaveBeenCalled();
+    expect(d.prisma.adSession.updateMany).not.toHaveBeenCalled();
   });
 
   it('message 404s when the session is missing/expired', async () => {

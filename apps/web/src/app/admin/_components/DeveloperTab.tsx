@@ -10,6 +10,7 @@ import {
   ApiClientError,
   type ApiKeyCreated,
   type WebhookCreated,
+  type WebhookDelivery,
 } from '@acp/api-client';
 import { Panel, Button, Chip, StatusChip, DataState } from '@/components/ui';
 
@@ -39,11 +40,20 @@ export function DeveloperTab() {
   const { role } = useOrg();
   const isAdmin = role === 'admin';
 
+  // A Test send records a new delivery attempt, but the Deliveries panel owns its
+  // own reload state, so it never showed the new attempt until a manual refresh.
+  // Bump this from Webhooks → Deliveries so the log updates immediately.
+  const [deliveriesReload, setDeliveriesReload] = useState(0);
+
   return (
     <div className="stack">
       {!isAdmin ? <ReadOnlyNote /> : null}
       <ApiKeysSection isAdmin={isAdmin} />
-      <WebhooksSection isAdmin={isAdmin} />
+      <WebhooksSection
+        isAdmin={isAdmin}
+        onDelivery={() => setDeliveriesReload((n) => n + 1)}
+      />
+      <DeliveriesSection isAdmin={isAdmin} reloadSignal={deliveriesReload} />
     </div>
   );
 }
@@ -318,7 +328,14 @@ function CreateKeyModal({
 /* Webhooks                                                            */
 /* ------------------------------------------------------------------ */
 
-function WebhooksSection({ isAdmin }: { isAdmin: boolean }) {
+function WebhooksSection({
+  isAdmin,
+  onDelivery,
+}: {
+  isAdmin: boolean;
+  /** Called after a Test send records an attempt, so the Deliveries log refreshes. */
+  onDelivery: () => void;
+}) {
   const client = useApiClient();
   const toast = useToast();
   const [reload, setReload] = useState(0);
@@ -341,7 +358,10 @@ function WebhooksSection({ isAdmin }: { isAdmin: boolean }) {
       } else {
         toast.error(`Test delivery failed · ${res.status}`);
       }
+      // The test recorded a new attempt (whether it delivered or failed): refresh
+      // this webhook's row AND the sibling Deliveries log so it shows immediately.
       refetch();
+      onDelivery();
     } catch (e) {
       toast.error(errMsg(e, 'Could not send a test delivery'));
     } finally {
@@ -546,6 +566,133 @@ function WebhooksSection({ isAdmin }: { isAdmin: boolean }) {
           onClose={() => setCreated(null)}
         />
       ) : null}
+    </Panel>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Webhook deliveries (durable event dispatch log)                     */
+/* ------------------------------------------------------------------ */
+
+/** Delivery status → chip tone. delivered ok, pending in-flight, failed/dead bad. */
+const DELIVERY_TONE: Record<WebhookDelivery['status'], 'success' | 'warning' | 'danger'> = {
+  delivered: 'success',
+  pending: 'warning',
+  failed: 'danger',
+  dead: 'danger',
+};
+
+function DeliveriesSection({
+  isAdmin,
+  reloadSignal,
+}: {
+  isAdmin: boolean;
+  /** Bumped by a webhook Test send elsewhere on the page to force a refetch. */
+  reloadSignal: number;
+}) {
+  const client = useApiClient();
+  const toast = useToast();
+  const [reload, setReload] = useState(0);
+  const refetch = () => setReload((n) => n + 1);
+  const { data, error, loading } = useAsync(
+    () => client.webhooks.deliveries(),
+    [client, reload, reloadSignal],
+  );
+  const deliveries = data ?? [];
+  const [retryingId, setRetryingId] = useState<string | null>(null);
+
+  async function retry(id: string) {
+    setRetryingId(id);
+    try {
+      await client.webhooks.retryDelivery(id);
+      toast.success('Delivery re-queued');
+      refetch();
+    } catch (e) {
+      toast.error(errMsg(e, 'Could not retry the delivery'));
+    } finally {
+      setRetryingId(null);
+    }
+  }
+
+  return (
+    <Panel
+      title="Deliveries"
+      note="recent outbound webhook attempts, with automatic retries"
+      actions={
+        <Button size="sm" variant="ghost" icon="refresh" onClick={refetch} disabled={loading}>
+          Refresh
+        </Button>
+      }
+    >
+      <DataState
+        loading={loading}
+        error={error}
+        isEmpty={deliveries.length === 0}
+        onRetry={refetch}
+        loadingLabel="Loading deliveries…"
+        emptyTitle="No deliveries yet"
+        emptyHint="When a subscribed event fires (e.g. lead.created), each attempt is recorded here with its status, retry count and response code."
+      >
+        <div className="table-wrap">
+          <table className="table">
+            <thead>
+              <tr>
+                <th>Event</th>
+                <th>Status</th>
+                <th>Attempts</th>
+                <th>Response</th>
+                <th>Last update</th>
+                {isAdmin ? <th style={{ textAlign: 'right' }}>Actions</th> : null}
+              </tr>
+            </thead>
+            <tbody>
+              {deliveries.map((d) => {
+                const retryable = d.status === 'failed' || d.status === 'dead';
+                return (
+                  <tr key={d.id}>
+                    <td>
+                      <span style={{ fontFamily: MONO, fontSize: 12.5 }}>{d.event}</span>
+                    </td>
+                    <td>
+                      <Chip tone={DELIVERY_TONE[d.status]} dot>
+                        {d.status}
+                      </Chip>
+                    </td>
+                    <td className="cell-muted" style={{ whiteSpace: 'nowrap' }}>
+                      {d.attempts}/{d.maxAttempts}
+                    </td>
+                    <td className="cell-muted" style={{ whiteSpace: 'nowrap' }}>
+                      {d.responseCode ?? (d.lastStatus ? shortStatus(d.lastStatus) : '—')}
+                    </td>
+                    <td className="cell-muted" style={{ whiteSpace: 'nowrap' }}>
+                      <span title={new Date(d.updatedAt).toLocaleString()}>
+                        {fmtDateTime(d.updatedAt)}
+                      </span>
+                    </td>
+                    {isAdmin ? (
+                      <td style={{ textAlign: 'right' }}>
+                        {retryable ? (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            icon="refresh"
+                            onClick={() => retry(d.id)}
+                            disabled={retryingId === d.id}
+                          >
+                            {retryingId === d.id ? 'Retrying…' : 'Retry'}
+                          </Button>
+                        ) : (
+                          <span className="cell-muted">—</span>
+                        )}
+                      </td>
+                    ) : null}
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </DataState>
     </Panel>
   );
 }
@@ -866,4 +1013,21 @@ function fmtDate(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return '';
   return d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+}
+
+/** Short date + time (e.g. "Sep 11, 14:32"); '' on bad input. */
+function fmtDateTime(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  return d.toLocaleString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+/** Truncate a long last-status string (e.g. an error message) for the table. */
+function shortStatus(s: string): string {
+  return s.length > 24 ? s.slice(0, 23) + '…' : s;
 }

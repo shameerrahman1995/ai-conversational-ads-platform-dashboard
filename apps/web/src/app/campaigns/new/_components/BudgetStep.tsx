@@ -1,5 +1,6 @@
 'use client';
 
+import { useState } from 'react';
 import { Icon } from '@/components/Icon';
 import { BID_STRATEGIES, type StepProps } from './types';
 
@@ -22,6 +23,16 @@ export function BudgetStep({ state, patch }: StepProps) {
   const today = iso(new Date());
   const symbol = CURRENCIES.find((c) => c.code === state.currency)?.symbol ?? '$';
   const fmt = (n: number) => `${symbol}${Math.round(n).toLocaleString()}`;
+
+  // Local string draft (mirrors the age inputs in AudienceStep) so the field can
+  // be cleared and accept fractional values while typing. A raw parse that wrote
+  // 0 back to state was snapping the input back and rejecting decimals mid-entry.
+  // We commit the parsed number live when it's a valid positive amount, and clear
+  // it to 0 (so validation flags it) when empty/invalid — without touching the
+  // draft, so the field keeps what the user typed. Blur normalizes a valid draft.
+  const [amountDraft, setAmountDraft] = useState(
+    Number.isFinite(state.budgetAmount) && state.budgetAmount > 0 ? String(state.budgetAmount) : '',
+  );
 
   const validAmount = Number.isFinite(state.budgetAmount) && state.budgetAmount > 0;
   const ongoing = !state.endDate;
@@ -141,11 +152,17 @@ export function BudgetStep({ state, patch }: StepProps) {
               min={1}
               step={10}
               inputMode="decimal"
-              value={Number.isFinite(state.budgetAmount) ? state.budgetAmount : ''}
+              value={amountDraft}
               placeholder="50"
               onChange={(e) => {
-                const n = parseFloat(e.target.value);
-                patch({ budgetAmount: Number.isFinite(n) ? Math.max(0, n) : 0 });
+                const raw = e.target.value;
+                setAmountDraft(raw);
+                const n = parseFloat(raw);
+                patch({ budgetAmount: Number.isFinite(n) && n > 0 ? n : 0 });
+              }}
+              onBlur={() => {
+                const n = parseFloat(amountDraft);
+                if (Number.isFinite(n) && n > 0) setAmountDraft(String(n));
               }}
               style={{ paddingLeft: symbol.length > 1 ? '2.2rem' : '1.6rem' }}
             />

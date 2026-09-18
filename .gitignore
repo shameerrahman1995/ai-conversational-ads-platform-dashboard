@@ -23,6 +23,7 @@ packages/*/generated/
 *.log
 npm-debug.log*
 pnpm-debug.log*
+.run-local.out
 
 # coverage & test
 coverage/

@@ -1,5 +1,7 @@
 'use client';
 
+import { useState } from 'react';
+import { ApiClientError } from '@acp/api-client';
 import { Button, Chip, EmptyState } from '@/components/ui';
 import { Icon } from '@/components/Icon';
 import { SectionTitle } from '../atoms';
@@ -9,12 +11,27 @@ import type { TabProps } from './types';
 /**
  * Versions — immutable history (V10 §9 / U4.3).
  *
- * Read-only. Campaigns pin an immutable agent version; publishing mints a new
- * version rather than mutating live campaigns. "Restore" and the per-row actions
- * are framed through toasts — this tab does not itself write config.
+ * Campaigns pin an immutable agent version; publishing mints a new version
+ * rather than mutating live campaigns. Restore rolls a previous version back in
+ * as the working config (a governed publish still applies before it goes live).
  */
-export function VersionsTab({ agent, settings, notify }: TabProps) {
+export function VersionsTab({ agent, settings, notify, client, refetch }: TabProps) {
   const versions = agent.versions;
+  const [restoring, setRestoring] = useState<string | null>(null);
+
+  async function restore(versionId: string, versionNumber: number) {
+    if (restoring) return;
+    setRestoring(versionId);
+    try {
+      await client.agents.restoreVersion(agent.id, versionId);
+      notify('Version restored', `v${versionNumber} is now the working configuration. Publish to make it live.`, 'success');
+      refetch();
+    } catch (e) {
+      notify('Restore failed', e instanceof ApiClientError ? e.body.message : 'Try again.', 'danger');
+    } finally {
+      setRestoring(null);
+    }
+  }
 
   return (
     <div className="agent-section">
@@ -67,10 +84,11 @@ export function VersionsTab({ agent, settings, notify }: TabProps) {
                   ) : (
                     <Button
                       size="sm"
-                      disabled
-                      title="Restore isn't wired yet — it will arrive with the versions API"
+                      disabled={restoring !== null}
+                      title={`Restore v${v.version} as the working configuration`}
+                      onClick={() => restore(v.id, v.version)}
                     >
-                      Restore
+                      {restoring === v.id ? 'Restoring…' : 'Restore'}
                     </Button>
                   )}
                   <Button
@@ -107,8 +125,8 @@ export function VersionsTab({ agent, settings, notify }: TabProps) {
           <strong style={{ fontSize: 13 }}>Campaigns stay pinned</strong>
           <div className="muted" style={{ fontSize: 12.5 }}>
             Existing campaigns remain pinned to their current version until an authorised user updates the campaign
-            and completes review. Restoring a previous version isn&apos;t available yet — it will arrive with the
-            versions API.
+            and completes review. Restoring a previous version rolls it back in as the working configuration; it does
+            not go live until you publish it through the governance gate.
           </div>
         </div>
       </div>

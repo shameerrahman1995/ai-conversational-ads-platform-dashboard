@@ -1,6 +1,7 @@
-import { Body, Controller, Delete, Get, Param, Post, Req, UseGuards } from '@nestjs/common';
-import { ApiHeader, ApiTags } from '@nestjs/swagger';
+import { Body, Controller, Delete, Get, Param, Post, Query, Req, UseGuards } from '@nestjs/common';
+import { ApiHeader, ApiQuery, ApiTags } from '@nestjs/swagger';
 import { WebhooksService } from './webhooks.service';
+import { WebhookDeliveryService } from './webhook-delivery.service';
 import { CreateWebhookDto } from './dto';
 import { TenantGuard } from '../../common/tenant/tenant.guard';
 import { RolesGuard } from '../../common/rbac/roles.guard';
@@ -17,12 +18,33 @@ import { Roles } from '../../common/rbac/roles.decorator';
 @Controller('v1/webhooks')
 @UseGuards(TenantGuard, RolesGuard)
 export class WebhooksController {
-  constructor(private readonly webhooks: WebhooksService) {}
+  constructor(
+    private readonly webhooks: WebhooksService,
+    private readonly deliveries: WebhookDeliveryService,
+  ) {}
 
   @Get()
   @Roles('admin')
   list(@Req() req: { orgId: string }) {
     return this.webhooks.list(req.orgId);
+  }
+
+  /**
+   * Recent delivery attempts for the org, optionally filtered to one webhook.
+   * Declared before the `:id` routes so the literal `deliveries` segment wins.
+   */
+  @Get('deliveries')
+  @Roles('admin')
+  @ApiQuery({ name: 'webhookId', required: false })
+  listDeliveries(@Req() req: { orgId: string }, @Query('webhookId') webhookId?: string) {
+    return this.deliveries.listDeliveries(req.orgId, webhookId || undefined);
+  }
+
+  /** Manually re-arm a failed/dead delivery to fire again immediately. */
+  @Post('deliveries/:id/retry')
+  @Roles('admin')
+  retryDelivery(@Req() req: { orgId: string }, @Param('id') id: string) {
+    return this.deliveries.retryDelivery(req.orgId, id);
   }
 
   @Post()

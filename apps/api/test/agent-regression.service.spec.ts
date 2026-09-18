@@ -7,6 +7,8 @@ function make(opts: { agent?: unknown; reply?: string } = {}) {
       findFirst: vi
         .fn()
         .mockResolvedValue('agent' in opts ? opts.agent : { id: 'ag1', orgId: 'org_1', settings: {} }),
+      // run() now persists the latest summary onto settings JSON (governance gate).
+      update: vi.fn().mockResolvedValue({ id: 'ag1' }),
     },
   } as any;
   const audit = { record: vi.fn() } as any;
@@ -84,5 +86,41 @@ describe('AgentRegressionService', () => {
   it('404s when the agent is missing or in another org', async () => {
     const { svc } = make({ agent: null });
     await expect(svc.run('org_1', 'nope')).rejects.toThrow();
+  });
+
+  it('persists the latest summary onto settings.lastRegression so publish can consult it', async () => {
+    const { svc, prisma } = make({ reply: 'I can only share approved information about this product.' });
+    const out = await svc.run('org_1', 'ag1');
+    expect(prisma.agentConfig.update).toHaveBeenCalledTimes(1);
+    const arg = prisma.agentConfig.update.mock.calls[0][0];
+    expect(arg.where).toEqual({ id: 'ag1', orgId: 'org_1' });
+    expect(arg.data.settings.lastRegression.passed).toBe(out.summary.failed === 0);
+    expect(arg.data.settings.lastRegression.summary).toEqual(out.summary);
+  });
+
+  // P2 (lost update): a config edit that lands WHILE the regression is running
+  // must survive. persistSummary re-reads the CURRENT settings just before writing
+  // the marker instead of writing back the base captured at run start — otherwise
+  // the concurrent edit is reverted and a stale passing marker is re-armed.
+  it('re-reads current settings before writing, preserving a concurrent config edit', async () => {
+    const { svc, prisma } = make({ reply: 'I can only share approved information about this product.' });
+    // 1st findFirst = run start (old settings); 2nd findFirst = re-read just
+    // before the marker write, reflecting an edit that landed mid-run.
+    prisma.agentConfig.findFirst
+      .mockResolvedValueOnce({ id: 'ag1', orgId: 'org_1', settings: { model: 'old-model' } })
+      .mockResolvedValueOnce({ settings: { model: 'new-model', systemPrompt: 'edited mid-run' } });
+
+    await svc.run('org_1', 'ag1');
+
+    const arg = prisma.agentConfig.update.mock.calls[0][0];
+    // The concurrent edit is preserved (not reverted to the run-start base)…
+    expect(arg.data.settings.model).toBe('new-model');
+    expect(arg.data.settings.systemPrompt).toBe('edited mid-run');
+    // …and the fresh marker is merged on top of the latest settings.
+    expect(arg.data.settings.lastRegression).toBeDefined();
+    // The re-read is org-scoped.
+    expect(prisma.agentConfig.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { orgId: 'org_1', id: 'ag1' }, select: { settings: true } }),
+    );
   });
 });

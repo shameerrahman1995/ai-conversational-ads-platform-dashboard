@@ -3,9 +3,31 @@
 import { useEffect, useState } from 'react';
 import type { ConversationSummary, TranscriptMessage } from '@acp/api-client';
 import { Icon } from '@/components/Icon';
-import { Button, Chip, DataState, DefinitionList, StatusChip, type Tone } from '@/components/ui';
+import {
+  Button,
+  Chip,
+  DataState,
+  DefinitionList,
+  ScorePill,
+  StatusChip,
+  type Tone,
+} from '@/components/ui';
 import { useApiClient } from '@/lib/api';
 import { useAsync } from '@/lib/useAsync';
+
+/**
+ * The transcript endpoint enriches assistant turns with grounding meta (V10
+ * U2.3): a 0..1 `groundedScore` and the `citations` (source ids/titles) it
+ * drew on. The api-client `TranscriptMessage` type doesn't declare these, so
+ * we widen it locally (both optional — user turns carry neither).
+ */
+type GroundedTranscriptMessage = TranscriptMessage & {
+  groundedScore?: number | null;
+  citations?: string[] | null;
+};
+
+/** Assistant turns at/above this confidence count as "grounded" (matches API). */
+const GROUNDED_THRESHOLD = 0.5;
 
 /* ------------------------------------------------------------------ */
 /* Shared conversation helpers + presentational bits (used by the page  */
@@ -77,6 +99,69 @@ function isVisitor(role: string): boolean {
   return role.toLowerCase() === 'user' || role.toLowerCase() === 'visitor';
 }
 
+/**
+ * Per-message grounding meta for an assistant turn: a grounding indicator from
+ * `groundedScore` (a tiered ScorePill on the 0..100 scale, or an "Ungrounded"
+ * badge when the turn carries no score) plus the cited sources beneath it.
+ */
+function GroundingMeta({
+  score,
+  citations,
+}: {
+  score?: number | null;
+  citations?: string[] | null;
+}) {
+  const hasScore = typeof score === 'number' && Number.isFinite(score);
+  const grounded = hasScore && (score as number) >= GROUNDED_THRESHOLD;
+  const sources = Array.isArray(citations)
+    ? citations.filter((c): c is string => typeof c === 'string' && c.trim() !== '')
+    : [];
+
+  return (
+    <div
+      style={{
+        marginTop: 5,
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 5,
+        alignItems: 'flex-start',
+      }}
+    >
+      <div className="row" style={{ gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+        <span
+          className="muted"
+          style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.04em' }}
+        >
+          Grounding
+        </span>
+        {hasScore ? (
+          <ScorePill score={Math.round((score as number) * 100)} />
+        ) : (
+          <Chip tone="neutral" icon="alert">
+            Ungrounded
+          </Chip>
+        )}
+      </div>
+      {sources.length ? (
+        <div className="row" style={{ gap: 4, flexWrap: 'wrap', alignItems: 'center' }}>
+          <span className="muted" style={{ fontSize: 10 }}>
+            Sources
+          </span>
+          {sources.map((c, i) => (
+            <Chip key={`${c}-${i}`} tone="info" icon="doc">
+              {c}
+            </Chip>
+          ))}
+        </div>
+      ) : grounded ? (
+        <span className="muted" style={{ fontSize: 10 }}>
+          No sources cited
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
 export function ConversationDrawer({
   conversation,
   onClose,
@@ -90,7 +175,7 @@ export function ConversationDrawer({
     () => client.conversations.transcript(conversation.id),
     [client, conversation.id, reload],
   );
-  const messages: TranscriptMessage[] = data ?? [];
+  const messages: GroundedTranscriptMessage[] = data ?? [];
 
   // Close on Escape, and lock body scroll while the drawer is open.
   useEffect(() => {
@@ -245,6 +330,10 @@ export function ConversationDrawer({
                     >
                       {visitor ? 'Visitor' : 'AI agent'}
                     </div>
+                    {/* Per-message grounding meta — assistant (AI) turns only. */}
+                    {!visitor ? (
+                      <GroundingMeta score={m.groundedScore} citations={m.citations} />
+                    ) : null}
                   </div>
                 );
               })}

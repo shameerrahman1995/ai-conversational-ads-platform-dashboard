@@ -30,11 +30,12 @@ function deps(opts: { lead?: any; dup?: any; conversation?: any; messages?: any[
     message: { findMany: vi.fn().mockResolvedValue(opts.messages ?? []) },
   } as any;
   const audit = { record: vi.fn() } as any;
-  return { prisma, audit };
+  const webhookDelivery = { dispatch: vi.fn().mockResolvedValue([]) } as any;
+  return { prisma, audit, webhookDelivery };
 }
 
 function make(d: ReturnType<typeof deps>) {
-  return new LeadService(d.prisma, d.audit);
+  return new LeadService(d.prisma, d.audit, d.webhookDelivery);
 }
 
 describe('LeadService', () => {
@@ -60,13 +61,28 @@ describe('LeadService', () => {
     expect(emailRow.value.startsWith('enc:v1:')).toBe(true);
     expect(decryptField(emailRow.value)).toBe('a@b.com');
     expect(d.prisma.consentRecord.createMany).toHaveBeenCalled();
+    // A new, high-intent lead fires BOTH webhook domain events, keyed by leadId.
+    expect(d.webhookDelivery.dispatch).toHaveBeenCalledWith(
+      'org_1',
+      'lead.created',
+      expect.objectContaining({ leadId: 'l1' }),
+      { dedupeSeed: 'l1' },
+    );
+    expect(d.webhookDelivery.dispatch).toHaveBeenCalledWith(
+      'org_1',
+      'lead.qualified',
+      expect.objectContaining({ leadId: 'l1' }),
+      { dedupeSeed: 'l1' },
+    );
   });
 
-  it('createLead dedupes on a matching email (no new lead)', async () => {
+  it('createLead dedupes on a matching email (no new lead, no webhook event)', async () => {
     const d = deps({ dup: { leadId: 'existing' } });
     const out = await make(d).createLead('org_1', { fields: { email: 'a@b.com' } });
     expect(out).toEqual({ leadId: 'existing', deduped: true });
     expect(d.prisma.lead.create).not.toHaveBeenCalled();
+    // A dedupe is not a capture — no outbound event fires.
+    expect(d.webhookDelivery.dispatch).not.toHaveBeenCalled();
     expect(d.prisma.leadFieldValue.findFirst).toHaveBeenCalledWith({
       where: { OR: [{ field: 'email', value: 'a@b.com' }], lead: { orgId: 'org_1' } },
     });

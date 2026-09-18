@@ -4,7 +4,19 @@ import { useState, type ReactNode } from 'react';
 import { Card, Button, Chip, Meter, MetricCard, Segmented } from '@/components/ui';
 import { Icon } from '@/components/Icon';
 import { AreaChart } from '@/components/charts';
+import { useAsync } from '@/lib/useAsync';
 import type { StageProps } from './types';
+
+/** A persisted synthetic-simulation trace (Simulate stage → createSimulation). */
+interface SimTrace {
+  id: string;
+  persona?: { persona?: string } | null;
+  conditions?: { network?: string; placement?: string; offline?: boolean } | null;
+  events?: unknown[] | null;
+  intentScore?: number | null;
+  outcome?: string | null;
+  createdAt: string;
+}
 
 /** [label, count, share] pre-conversion question themes. */
 const THEMES: [string, number, string][] = [
@@ -48,8 +60,20 @@ function CardHead({ title, subtitle, actions }: { title: string; subtitle?: stri
  * (last period), not live platform truth. Every AI recommendation requires a
  * controlled experiment and human approval — nothing here edits live creative.
  */
-export function LearnStage({ notify }: StageProps) {
+export function LearnStage({ notify, client, blueprintId }: StageProps) {
   const [metric, setMetric] = useState<MetricTab>('Qualified leads');
+
+  const { data: sims, loading: simsLoading } = useAsync(
+    () => (blueprintId ? (client.creative.simulations(blueprintId) as Promise<SimTrace[]>) : Promise.resolve([])),
+    [client, blueprintId],
+  );
+  const traces = sims ?? [];
+  const withIntent = traces.filter((t) => typeof t.intentScore === 'number');
+  const avgIntent =
+    withIntent.length > 0
+      ? Math.round((withIntent.reduce((n, t) => n + (t.intentScore ?? 0), 0) / withIntent.length) * 100)
+      : 0;
+  const converted = traces.filter((t) => t.outcome === 'reached_convert').length;
 
   return (
     <div className="stage-page">
@@ -81,6 +105,49 @@ export function LearnStage({ notify }: StageProps) {
           footNote="vs prior creative"
         />
       </div>
+
+      <Card className="card-pad">
+        <CardHead
+          title="Recorded simulations"
+          subtitle={
+            blueprintId
+              ? 'Real synthetic-session traces saved from the Simulate stage'
+              : 'Save or generate a blueprint, then record runs in Simulate to populate this'
+          }
+          actions={<Chip tone={traces.length ? 'success' : 'neutral'}>{traces.length} recorded</Chip>}
+        />
+        {simsLoading ? (
+          <div className="muted" style={{ fontSize: 12.5 }}>Loading recorded simulations…</div>
+        ) : traces.length === 0 ? (
+          <div className="muted" style={{ fontSize: 12.5 }}>
+            No simulations recorded yet. Run a journey in the Simulate stage to capture one.
+          </div>
+        ) : (
+          <>
+            <div className="learn-metrics" style={{ marginBottom: '0.7rem' }}>
+              <MetricCard label="Runs recorded" value={String(traces.length)} icon="flask" footNote="this blueprint" />
+              <MetricCard label="Avg. synthetic intent" value={`${avgIntent}`} icon="trend-up" footNote="/ 100 across runs" />
+              <MetricCard label="Reached convert" value={String(converted)} icon="contact" footNote="of recorded runs" />
+            </div>
+            <div className="stack" style={{ gap: '0.4rem' }}>
+              {traces.slice(0, 6).map((t) => (
+                <div key={t.id} className="spread" style={{ fontSize: 12.5, borderBottom: '1px solid var(--color-line)', padding: '0.35rem 0' }}>
+                  <span>
+                    {t.persona?.persona ?? 'Synthetic persona'}
+                    <span className="muted"> · {t.conditions?.placement ?? t.conditions?.network ?? 'sandbox'}</span>
+                  </span>
+                  <span className="row" style={{ gap: '0.5rem' }}>
+                    <Chip tone={t.outcome === 'reached_convert' ? 'success' : 'neutral'}>
+                      {t.outcome ?? 'run'}
+                    </Chip>
+                    <strong className="tnum">{Math.round((t.intentScore ?? 0) * 100)}</strong>
+                  </span>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
+      </Card>
 
       <div className="learn-layout">
         <Card className="card-pad">

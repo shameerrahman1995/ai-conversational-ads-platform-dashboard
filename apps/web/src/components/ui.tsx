@@ -187,6 +187,10 @@ const STATUS_TONE: Record<string, Tone> = {
   DISCONNECTED: 'neutral',
   AUTHORIZING: 'info',
   REVOKED: 'danger',
+  // agent lifecycle (the agents API returns these lowercase)
+  live: 'success',
+  draft: 'neutral',
+  paused: 'warning',
   // generic
   active: 'success',
   invited: 'warning',
@@ -428,56 +432,43 @@ export function JsonViewer({ data }: { data: unknown }) {
   );
 }
 
-export interface Column<Row> {
-  key: string;
-  header: ReactNode;
-  render: (row: Row) => ReactNode;
-  align?: 'left' | 'right';
-}
-
-/** Generic table over the shared `.table` styles, with an empty state. */
-export function DataTable<Row>({
-  columns,
-  rows,
-  rowKey,
-  onRowClick,
-  empty,
-}: {
-  columns: Column<Row>[];
-  rows: Row[];
-  rowKey: (row: Row) => string;
-  onRowClick?: (row: Row) => void;
-  empty?: ReactNode;
-}) {
-  if (rows.length === 0) return <>{empty ?? <EmptyState title="Nothing here yet" />}</>;
-  return (
-    <div className="table-wrap">
-      <table className="table">
-        <thead>
-          <tr>
-            {columns.map((c) => (
-              <th key={c.key} className={c.align === 'right' ? 'cell-num' : undefined}>
-                {c.header}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((r) => (
-            <tr
-              key={rowKey(r)}
-              onClick={onRowClick ? () => onRowClick(r) : undefined}
-              style={onRowClick ? { cursor: 'pointer' } : undefined}
-            >
-              {columns.map((c) => (
-                <td key={c.key} className={c.align === 'right' ? 'cell-num' : undefined}>
-                  {c.render(r)}
-                </td>
-              ))}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-}
+/* ---- Shared kit (V10 U0.3) ---------------------------------------- */
+/* Interactive primitives live in ./kit ('use client'); re-exported here */
+/* so every page keeps importing from '@/components/ui'. The upgraded    */
+/* DataTable (sortable/selectable/responsive) and its Column interface   */
+/* are re-exported too — the original props still work unchanged.        */
+export {
+  Pagination,
+  Drawer,
+  Tabs,
+  Dropdown,
+  MenuItem,
+  MenuSeparator,
+  Skeleton,
+  SkeletonPage,
+  PlatformMark,
+  PlatformStack,
+  toPlatformId,
+  ScorePill,
+  scorePill,
+  Notice,
+  DataTable,
+} from './kit';
+export type {
+  PaginationProps,
+  DrawerProps,
+  TabItem,
+  TabsProps,
+  DropdownProps,
+  MenuItemProps,
+  SkeletonProps,
+  PlatformId,
+  PlatformMarkProps,
+  PlatformStackProps,
+  ScoreTier,
+  ScorePillProps,
+  NoticeVariant,
+  NoticeProps,
+  Column,
+  DataTableProps,
+} from './kit';

@@ -31,4 +31,8 @@ export interface StageProps {
   campaignId: string | null;
   /** Replace the whole working creative (Brief uses it after generate). */
   setCreative: (c: StudioCreative) => void;
+  /** The persisted blueprint row id (null until a generate/save persists one). */
+  blueprintId: string | null;
+  /** Record the persisted blueprint id (Brief sets it after generate). */
+  setBlueprintId: (id: string | null) => void;
 }

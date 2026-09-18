@@ -3,7 +3,14 @@ import { ApiHeader, ApiTags } from '@nestjs/swagger';
 import { AnalyticsService } from './analytics.service';
 import { SpendService } from './spend.service';
 import { AttributionService } from './attribution.service';
-import { AttributionQueryDto, ImportSpendDto, SpendQueryDto, TrackEventDto } from './dto';
+import { ProjectionsService, type TimeseriesMetric } from './projections.service';
+import {
+  AttributionQueryDto,
+  ImportSpendDto,
+  SpendQueryDto,
+  TimeseriesQueryDto,
+  TrackEventDto,
+} from './dto';
 import { TenantGuard } from '../../common/tenant/tenant.guard';
 import { RolesGuard } from '../../common/rbac/roles.guard';
 import { Roles } from '../../common/rbac/roles.decorator';
@@ -18,6 +25,7 @@ export class AnalyticsController {
     private readonly analytics: AnalyticsService,
     private readonly spend: SpendService,
     private readonly attribution: AttributionService,
+    private readonly projections: ProjectionsService,
   ) {}
 
   @Post('events')
@@ -57,5 +65,33 @@ export class AnalyticsController {
   @Roles('analyst')
   attributionReport(@Req() req: { orgId: string }, @Query() query: AttributionQueryDto) {
     return this.attribution.report(req.orgId, { since: query.since, until: query.until });
+  }
+
+  // ---- V10 U1.7 projections that unblock the dashboard charts/insights/health ----
+
+  // Daily series for one metric + the equally-long prior window (deltas/sparklines).
+  @Get('analytics/timeseries')
+  @Roles('analyst')
+  timeseries(@Req() req: { orgId: string }, @Query() query: TimeseriesQueryDto) {
+    return this.projections.timeseries(req.orgId, {
+      metric: query.metric as TimeseriesMetric,
+      from: query.from,
+      to: query.to,
+      interval: query.interval,
+    });
+  }
+
+  // Ranked, evidence-backed recommendations across experiments/analytics/spend.
+  @Get('analytics/insights')
+  @Roles('analyst')
+  insights(@Req() req: { orgId: string }) {
+    return this.projections.insights(req.orgId);
+  }
+
+  // Connector + agent-runtime health for the dashboard status strip.
+  @Get('analytics/platform-health')
+  @Roles('analyst')
+  platformHealth(@Req() req: { orgId: string }) {
+    return this.projections.platformHealth(req.orgId);
   }
 }

@@ -1,31 +1,15 @@
 'use client';
 
 import { useState, type CSSProperties } from 'react';
+import type { RuntimeProfileDoc } from '@acp/shared-types';
 import { Card, Button, Chip, Segmented, Meter } from '@/components/ui';
 import { Modal } from '@/components/feedback';
+import { useAsync } from '@/lib/useAsync';
 import { KeyValue, StudioStatus, Switch } from '../atoms';
 import { cx } from '../model';
+import { AgentBadge, CompiledBadge } from '../LinkageBadges';
+import { deriveVariants, type DerivedVariant } from '../variants';
 import type { StageProps } from './types';
-
-/** A single placement adaptation derived from the approved blueprint. */
-interface Variant {
-  id: string;
-  platform: string;
-  size: string;
-  status: string;
-  mode: string;
-  score: number;
-  note: string;
-}
-
-const VARIANTS: Variant[] = [
-  { id: 'var-1', platform: 'Google', size: '336 × 280', status: 'Ready', mode: 'Live AI', score: 96, note: 'Uploaded HTML5 candidate' },
-  { id: 'var-2', platform: 'Google', size: '728 × 90', status: 'Review', mode: 'Concise interaction', score: 89, note: 'Copy reduction required' },
-  { id: 'var-3', platform: 'Meta', size: '1080 × 1080', status: 'Ready', mode: 'Native fallback', score: 92, note: 'Feed-compatible journey' },
-  { id: 'var-4', platform: 'Meta', size: '1080 × 1920', status: 'Gated', mode: 'Concept preview', score: 84, note: 'Runtime capability not assumed' },
-  { id: 'var-5', platform: 'TikTok', size: '1080 × 1920', status: 'Gated', mode: 'Offline decision graph', score: 86, note: 'No external HTTP in package' },
-  { id: 'var-6', platform: 'Publisher', size: '970 × 250', status: 'Ready', mode: 'Live AI', score: 98, note: 'Full first-party runtime' },
-];
 
 type Filter = 'All' | 'Ready' | 'Review' | 'Gated';
 const FILTERS: { value: Filter; label: string }[] = [
@@ -43,36 +27,46 @@ const RULES: [name: string, desc: string, scope: string][] = [
   ['Malayalam language', 'Approved localized copy', 'Publisher'],
 ];
 
-/** Variants — adapt one approved blueprint across channels. (Full build: U3.4) */
-export function VariantsStage({ creative, patch, notify }: StageProps) {
+const NETWORK_LABEL: Record<string, string> = {
+  allowed: 'In-ad network calls allowed',
+  validation_required: 'In-ad network calls need validation',
+  blocked: 'No in-ad network calls',
+};
+
+/**
+ * Variants — adapt one approved blueprint across channels (V10 U3.7).
+ *
+ * Cards are DERIVED from the blueprint's own `variants` reconciled against the
+ * versioned runtime-profile capability registry (`publishing.runtimeProfiles()`).
+ * Capability-gated placements are marked from the profile's real platform
+ * support, so readiness is computed — never illustrative.
+ */
+export function VariantsStage({ creative, patch, notify, client, setStage }: StageProps) {
   const [filter, setFilter] = useState<Filter>('All');
-  const [generating, setGenerating] = useState(false);
-  const [openVariant, setOpenVariant] = useState<Variant | null>(null);
+  const [openVariant, setOpenVariant] = useState<DerivedVariant | null>(null);
   const [rulesEnabled, setRulesEnabled] = useState<boolean[]>([true, true, true, false]);
 
-  const shown = filter === 'All' ? VARIANTS : VARIANTS.filter((v) => v.status === filter);
+  const { data, loading } = useAsync(() => client.publishing.runtimeProfiles(), [client]);
+  const profiles = (data?.profiles ?? []) as RuntimeProfileDoc[];
+  const registryVersion = data?.version ?? '—';
 
-  /** Simulated adaptation pass over the approved blueprint (no live model call). */
-  function generate() {
-    setGenerating(true);
-    window.setTimeout(() => {
-      setGenerating(false);
-      notify(
-        'Variants generated',
-        'Responsive copy, layout and interaction adaptations are ready.',
-        'success',
-      );
-    }, 700);
+  const variants = deriveVariants(creative.variants, profiles);
+  const shown = filter === 'All' ? variants : variants.filter((v) => v.status === filter);
+
+  function summarize() {
+    const ready = variants.filter((v) => v.status === 'Ready').length;
+    const gated = variants.filter((v) => v.gated).length;
+    notify(
+      'Variants derived',
+      `${variants.length} placement(s) resolved against runtime registry ${registryVersion} — ${ready} ready, ${gated} capability-gated.`,
+      'success',
+    );
   }
 
   function toggleRule(i: number) {
     setRulesEnabled((prev) => {
       const next = prev.map((v, idx) => (idx === i ? !v : v));
-      notify(
-        'Personalization rule updated',
-        `${RULES[i][0]} is now ${next[i] ? 'enabled' : 'disabled'}.`,
-        'success',
-      );
+      notify('Personalization rule updated', `${RULES[i][0]} is now ${next[i] ? 'enabled' : 'disabled'}.`, 'success');
       return next;
     });
   }
@@ -90,11 +84,20 @@ export function VariantsStage({ creative, patch, notify }: StageProps) {
           <h1>Adapt one approved blueprint across channels</h1>
           <p>
             Variants inherit protected content while adjusting layout, copy density and runtime
-            behavior for each placement.
+            behavior for each placement. Readiness is resolved against runtime registry {registryVersion}.
           </p>
+          {/* Which agent every derived variant talks to at runtime, and whether
+              the blueprint has compiled into a shippable html5 creative. */}
+          <div
+            className="row"
+            style={{ gap: '0.4rem', marginTop: '0.6rem', flexWrap: 'wrap', alignItems: 'center' }}
+          >
+            <AgentBadge agentId={creative.agentId} agentName={creative.agentName} />
+            <CompiledBadge variantId={creative.variantId} />
+          </div>
         </div>
-        <Button variant="primary" icon="sparkles" disabled={generating} onClick={generate}>
-          {generating ? 'Generating…' : 'Generate variants'}
+        <Button variant="primary" icon="sparkles" onClick={summarize}>
+          Re-derive variants
         </Button>
       </div>
 
@@ -106,6 +109,10 @@ export function VariantsStage({ creative, patch, notify }: StageProps) {
           <Chip tone="danger">Capability gated</Chip>
         </div>
       </div>
+
+      {loading ? (
+        <div className="muted" style={{ fontSize: 12.5 }}>Resolving runtime capabilities…</div>
+      ) : null}
 
       <div className="variant-grid">
         {shown.map((v) => (
@@ -131,40 +138,36 @@ export function VariantsStage({ creative, patch, notify }: StageProps) {
               </div>
               <h3>{v.size}</h3>
               <p>{v.mode}</p>
+              {/* The interactive ad's runtime agent — same for every placement,
+                  shown per-card so the binding is obvious at a glance. */}
+              <AgentBadge agentId={creative.agentId} agentName={creative.agentName} as="inline" />
               <small>{v.note}</small>
               <div className="variant-score">
-                <span>
-                  Readiness{' '}
-                  <span
-                    className="muted"
-                    style={{ fontSize: 10, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}
-                  >
-                    · Illustrative
-                  </span>
-                </span>
+                <span>Readiness</span>
                 <strong>{v.score}%</strong>
               </div>
               <Meter pct={v.score} />
               <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', marginTop: '0.2rem' }}>
                 <Button
                   size="sm"
+                  disabled={v.gated}
+                  title={v.gated ? 'This placement is capability gated' : undefined}
                   onClick={() => {
                     patch({ platform: v.platform, size: v.size });
-                    notify('Variant opened', `${v.platform} ${v.size}`, 'success');
+                    setStage('studio');
+                    notify('Variant opened', `${v.platform} ${v.size} — now editing in Studio.`, 'success');
                   }}
                 >
                   Open in Studio
                 </Button>
-                <Button
-                  variant="ghost"
-                  icon="more"
-                  aria-label="Variant details"
-                  onClick={() => setOpenVariant(v)}
-                />
+                <Button variant="ghost" icon="more" aria-label="Variant details" onClick={() => setOpenVariant(v)} />
               </div>
             </div>
           </Card>
         ))}
+        {!loading && shown.length === 0 ? (
+          <div className="muted" style={{ fontSize: 12.5 }}>No variants match this filter.</div>
+        ) : null}
       </div>
 
       <Card className="card-pad">
@@ -175,13 +178,7 @@ export function VariantsStage({ creative, patch, notify }: StageProps) {
               variant="ghost"
               size="sm"
               icon="plus"
-              onClick={() =>
-                notify(
-                  'Rule builder opened',
-                  'Add approved audience and product conditions.',
-                  'info',
-                )
-              }
+              onClick={() => notify('Rule builder opened', 'Add approved audience and product conditions.', 'info')}
             >
               Add rule
             </Button>
@@ -223,10 +220,45 @@ export function VariantsStage({ creative, patch, notify }: StageProps) {
             </div>
             <div className="policy-grid">
               <KeyValue label="Runtime mode" value={openVariant.mode} />
-              <KeyValue label="Readiness" value={`${openVariant.score}%`} note="Illustrative — not computed per creative yet" />
+              <KeyValue label="Readiness" value={`${openVariant.score}%`} note={`Registry ${registryVersion}`} />
+              <KeyValue label="Network policy" value={NETWORK_LABEL[openVariant.network] ?? openVariant.network} />
+              <KeyValue label="Capabilities" value={`${openVariant.voice ? 'Voice · ' : ''}${openVariant.lead ? 'Lead capture' : 'No lead capture'}`} />
               <KeyValue label="Creative" value={creative.name} />
+              <KeyValue
+                label="Conversational agent"
+                value={creative.agentName ?? 'None configured'}
+                note={
+                  creative.agentId
+                    ? 'The served ad talks to this agent at runtime'
+                    : 'No AI agent on this campaign yet'
+                }
+              />
+              <KeyValue
+                label="Compiled creative"
+                value={creative.variantId ? 'Ready to publish' : 'Not compiled yet'}
+                note={creative.variantId ?? undefined}
+              />
               <KeyValue label="Protection" value="Brand, product and legal locks inherited" />
             </div>
+            {openVariant.gated && openVariant.reasons.length ? (
+              <div
+                style={{
+                  marginTop: '0.75rem',
+                  padding: '0.6rem 0.7rem',
+                  border: '1px solid var(--color-danger)',
+                  borderRadius: 10,
+                  background: 'var(--color-danger-soft)',
+                  fontSize: 12.5,
+                }}
+              >
+                <strong>Capability gated</strong>
+                <ul style={{ margin: '0.3rem 0 0', paddingLeft: '1.1rem' }}>
+                  {openVariant.reasons.map((r) => (
+                    <li key={r}>{r}</li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
           </>
         ) : null}
       </Modal>

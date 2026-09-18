@@ -1,12 +1,13 @@
 import type { Tone } from '@/components/ui';
+import type { Audience } from '@acp/api-client';
 
 /* ==================================================================== */
-/* Audiences — static configuration model.                              */
+/* Audiences — view model over the /v1/audiences service.               */
 /*                                                                      */
-/* There is no /v1/audiences endpoint yet, so this screen is an honest  */
-/* configuration surface over curated example segments. Everything here */
-/* is client-side: creating a segment or toggling a rule mutates local  */
-/* React state and is intentionally not persisted.                      */
+/* Persisted rows are `Audience` (kind: segment | personalization); the */
+/* rich per-kind shape lives in the provider-neutral `definition` blob. */
+/* The mappers below project a row into the presentation types this     */
+/* screen renders, and back into a definition blob on write.            */
 /* ==================================================================== */
 
 export type Channel = 'google' | 'meta' | 'tiktok' | 'publisher';
@@ -92,128 +93,100 @@ export function signalTone(value: number): string {
   return 'warning';
 }
 
-/* ---- Seed data (curated examples) --------------------------------- */
+/* ---- Row ⇄ view-model mappers -------------------------------------- */
 
-export const SEED_SEGMENTS: Segment[] = [
-  {
-    id: 'cart-abandoners',
-    name: 'High-Intent Cart Abandoners',
-    type: 'Retargeting',
-    status: 'Active',
-    description:
-      'Visitors who added to cart or started checkout in the last 30 days without converting. Highest near-term recovery potential.',
-    sizeLow: 2_400_000,
-    sizeHigh: 3_100_000,
-    channels: ['google', 'meta'],
-    signals: [
-      { label: 'Cart adds · 30d', value: 72 },
-      { label: 'Checkout starts', value: 58 },
-      { label: 'Return visits', value: 64 },
-      { label: 'Price-page views', value: 49 },
-    ],
-  },
-  {
-    id: 'demo-lookalike',
-    name: 'Demo Requesters Lookalike',
-    type: 'Lookalike',
-    status: 'Active',
-    description:
-      'Modeled from customers who booked a demo, expanded on firmographic and behavioral similarity across the network.',
-    sizeLow: 5_200_000,
-    sizeHigh: 6_800_000,
-    channels: ['google', 'meta', 'tiktok'],
-    signals: [
-      { label: 'Seed match', value: 81 },
-      { label: 'Firmographic fit', value: 67 },
-      { label: 'Intent overlap', value: 54 },
-      { label: 'Lookalike density', value: 73 },
-    ],
-  },
-  {
-    id: 'content-readers',
-    name: 'Engaged Content Readers',
-    type: 'Behavioral',
-    status: 'Active',
-    description:
-      'Deep readers of long-form guides and comparison content — strong top-of-funnel intent, responsive to editorial framing.',
-    sizeLow: 1_100_000,
-    sizeHigh: 1_600_000,
-    channels: ['publisher', 'meta'],
-    signals: [
-      { label: 'Article depth', value: 69 },
-      { label: 'Scroll completion', value: 61 },
-      { label: 'Repeat sessions', value: 57 },
-      { label: 'Newsletter opens', value: 44 },
-    ],
-  },
-  {
-    id: 'saas-inmarket',
-    name: 'In-Market SaaS Buyers',
-    type: 'Interest',
-    status: 'Draft',
-    description:
-      'Actively researching category solutions — pricing pages, competitor comparisons and review-site activity in the last 14 days.',
-    sizeLow: 3_800_000,
-    sizeHigh: 4_500_000,
-    channels: ['google', 'tiktok', 'publisher'],
-    signals: [
-      { label: 'Category affinity', value: 76 },
-      { label: 'Competitor research', value: 63 },
-      { label: 'Pricing intent', value: 52 },
-      { label: 'Review-site visits', value: 47 },
-    ],
-  },
-];
+const SEGMENT_TYPE_SET = new Set<SegmentType>(SEGMENT_TYPES);
+const SEGMENT_STATUS: SegmentStatus[] = ['Active', 'Draft', 'Paused'];
+const SEGMENT_STATUS_SET = new Set<SegmentStatus>(SEGMENT_STATUS);
+const CHANNEL_SET = new Set<Channel>(CHANNELS);
 
-export const SEED_RULES: Rule[] = [
-  {
-    id: 'r1',
-    segmentId: 'cart-abandoners',
-    variant: 'Return offer — 10% incentive',
-    channel: 'meta',
-    enabled: true,
-  },
-  {
-    id: 'r2',
-    segmentId: 'demo-lookalike',
-    variant: 'Product tour — enterprise framing',
-    channel: 'google',
-    enabled: true,
-  },
-  {
-    id: 'r3',
-    segmentId: 'content-readers',
-    variant: 'Editorial explainer — soft CTA',
-    channel: 'publisher',
-    enabled: false,
-  },
-  {
-    id: 'r4',
-    segmentId: 'saas-inmarket',
-    variant: 'Comparison landing — pricing-forward',
-    channel: 'google',
-    enabled: true,
-  },
-  {
-    id: 'r5',
-    segmentId: 'demo-lookalike',
-    variant: 'Case-study proof — mid-market',
-    channel: 'tiktok',
-    enabled: false,
-  },
-];
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' ? (value as Record<string, unknown>) : {};
+}
 
-/** Symmetric overlap percentages between the seed segments, aligned to the
- *  order of {@link SEED_SEGMENTS}. Diagonal is self (rendered as "—"). */
-export const OVERLAP: number[][] = [
-  [100, 14, 9, 18],
-  [14, 100, 11, 16],
-  [9, 11, 100, 7],
-  [18, 16, 7, 100],
-];
+function toChannels(value: unknown): Channel[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((c): c is Channel => typeof c === 'string' && CHANNEL_SET.has(c as Channel));
+}
+
+function toSignals(value: unknown): Signal[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((s) => asRecord(s))
+    .filter((s) => typeof s.label === 'string' && typeof s.value === 'number')
+    .map((s) => ({ label: s.label as string, value: s.value as number }));
+}
+
+/** Project a `segment`-kind Audience into the card/detail presentation type. */
+export function audienceToSegment(a: Audience): Segment {
+  const d = asRecord(a.definition);
+  const type = typeof d.type === 'string' && SEGMENT_TYPE_SET.has(d.type as SegmentType) ? (d.type as SegmentType) : 'Behavioral';
+  const status =
+    typeof d.status === 'string' && SEGMENT_STATUS_SET.has(d.status as SegmentStatus)
+      ? (d.status as SegmentStatus)
+      : 'Draft';
+  const sizeLow = typeof d.sizeLow === 'number' ? d.sizeLow : 0;
+  const sizeHigh = typeof d.sizeHigh === 'number' ? d.sizeHigh : (a.estimatedSize ?? sizeLow);
+  return {
+    id: a.id,
+    name: a.name,
+    type,
+    status,
+    description: a.description ?? (typeof d.description === 'string' ? d.description : ''),
+    sizeLow,
+    sizeHigh,
+    channels: toChannels(d.channels),
+    signals: toSignals(d.signals),
+  };
+}
+
+/** Project a `personalization`-kind Audience into a rule row. */
+export function audienceToRule(a: Audience): Rule {
+  const d = asRecord(a.definition);
+  return {
+    id: a.id,
+    segmentId: typeof d.segmentId === 'string' ? d.segmentId : '',
+    variant: typeof d.variant === 'string' ? d.variant : a.name,
+    channel: typeof d.channel === 'string' && CHANNEL_SET.has(d.channel as Channel) ? (d.channel as Channel) : 'google',
+    enabled: typeof d.enabled === 'boolean' ? d.enabled : false,
+  };
+}
+
+/** Build the persisted `definition` blob for a segment audience. */
+export function segmentDefinition(seg: Omit<Segment, 'id'>): Record<string, unknown> {
+  return {
+    type: seg.type,
+    status: seg.status,
+    description: seg.description,
+    sizeLow: seg.sizeLow,
+    sizeHigh: seg.sizeHigh,
+    channels: seg.channels,
+    signals: seg.signals,
+  };
+}
 
 /** Concurrency-safety threshold for the overlap recommendation. */
 export const OVERLAP_THRESHOLD = 20;
+
+/**
+ * Deterministic client-side overlap estimate between fetched segments. Real
+ * cross-segment measurement is a service concern; until then we approximate
+ * shared reach from channel affinity (Jaccard) plus a same-type nudge, so the
+ * matrix is symmetric, stable, and honest about being an estimate.
+ */
+export function computeOverlap(segments: Segment[]): number[][] {
+  return segments.map((a, i) =>
+    segments.map((b, j) => {
+      if (i === j) return 100;
+      const bChannels = new Set(b.channels);
+      const shared = a.channels.filter((c) => bChannels.has(c)).length;
+      const union = new Set([...a.channels, ...b.channels]).size || 1;
+      const channelAffinity = (shared / union) * 24; // 0–24
+      const typeBonus = a.type === b.type ? 8 : 0;
+      return Math.round(channelAffinity + typeBonus);
+    }),
+  );
+}
 
 /** Look up a segment by id from a working list. */
 export function findSegment(list: Segment[], id: string): Segment | undefined {

@@ -6,9 +6,10 @@ import { useAsync } from '@/lib/useAsync';
 import { Button, StatusChip, DataState, EmptyState } from '@/components/ui';
 import { useToast } from '@/components/feedback';
 import { Icon } from '@/components/Icon';
-import { ApiClientError, type AgentDetail, type AgentSettings } from '@acp/api-client';
+import { ApiClientError, type AgentDetail, type AgentSettings, type AgentSummary } from '@acp/api-client';
 import {
   AGENT_TABS,
+  computeReadiness,
   cx,
   modelLabel,
   type AgentTabId,
@@ -58,13 +59,25 @@ export default function AgentStudioPage() {
     () => client.agents.list(),
     [client, listReload],
   );
+  // useAsync nulls `data` on every refetch (a Save/Publish bumps `listReload`).
+  // Retain the last successfully-loaded list so a background refetch doesn't blank
+  // the studio to "Loading agents…", collapse `activeId` to '', and drop the
+  // in-progress tab state (e.g. the Testing conversation/trace). The cache only
+  // updates when a fresh list arrives, so the very first load still shows the
+  // spinner.
+  const [loadedAgents, setLoadedAgents] = useState<AgentSummary[] | null>(null);
+  useEffect(() => {
+    if (agents) setLoadedAgents(agents);
+  }, [agents]);
+  const agentList = agents ?? loadedAgents;
+
   const { data: modelData } = useAsync(() => client.agents.models(), [client]);
   const models = modelData?.models ?? [];
   const capabilities = modelData?.capabilities ?? {};
 
   const [query, setQuery] = useState('');
   const [selectedId, setSelectedId] = useState<string>('');
-  const activeId = selectedId || agents?.[0]?.id || '';
+  const activeId = selectedId || agentList?.[0]?.id || '';
 
   const [draft, setDraft] = useState<StudioAgent | null>(null);
   const [saved, setSaved] = useState<StudioAgent | null>(null);
@@ -103,6 +116,24 @@ export default function AgentStudioPage() {
     [draft, saved],
   );
 
+  // Publish gate (V10 §9 / U4.5). Mirror the ReadinessRail so the header
+  // "Publish version" button can't bypass the governance gate: disabled below a
+  // readiness score of 75 OR without a passing regression run this session. The
+  // tooltip names the outstanding checks. The server enforces the same rule, so
+  // this only removes the client-side bypass affordance.
+  const readiness = useMemo(
+    () => (draft ? computeReadiness(draft.settings, regressionPassed) : null),
+    [draft, regressionPassed],
+  );
+  const failingChecks = readiness ? readiness.checks.filter((c) => !c.ok) : [];
+  const canPublish = Boolean(readiness && readiness.score >= 75 && regressionPassed === true);
+  const publishBlockedReason =
+    canPublish || !readiness
+      ? undefined
+      : `Not ready to publish — readiness ${readiness.score}/100 (needs ≥ 75)${
+          failingChecks.length ? `. Outstanding: ${failingChecks.map((c) => c.label).join(', ')}` : ''
+        }.`;
+
   const patch = (partial: Partial<AgentSettings>) =>
     setDraft((d) => (d ? { ...d, settings: { ...d.settings, ...partial } } : d));
 
@@ -139,7 +170,7 @@ export default function AgentStudioPage() {
     }
   }
 
-  const filtered = (agents ?? []).filter(
+  const filtered = (agentList ?? []).filter(
     (a) => !query || `${a.name} ${a.campaignName}`.toLowerCase().includes(query.toLowerCase()),
   );
 
@@ -154,6 +185,10 @@ export default function AgentStudioPage() {
         models,
         capabilities,
         onRegression: setRegressionPassed,
+        refetch: () => {
+          setDetailReload((n) => n + 1);
+          setListReload((n) => n + 1);
+        },
       }
     : null;
 
@@ -196,14 +231,14 @@ export default function AgentStudioPage() {
           ))}
           {!listLoading && filtered.length === 0 ? (
             <div className="muted" style={{ fontSize: 12.5, padding: '0.5rem' }}>
-              {agents?.length ? 'No agents match your search.' : 'No agents yet — create one from a campaign.'}
+              {agentList?.length ? 'No agents match your search.' : 'No agents yet — create one from a campaign.'}
             </div>
           ) : null}
         </div>
       </aside>
 
       <div className="agent-main">
-        <DataState loading={listLoading && !agents} error={listErr} onRetry={() => setListReload((n) => n + 1)} loadingLabel="Loading agents…">
+        <DataState loading={listLoading && !agentList} error={listErr} onRetry={() => setListReload((n) => n + 1)} loadingLabel="Loading agents…">
           {!draft ? (
             <EmptyState icon="agents" title="Select an agent" hint="Choose an agent from the list to configure it, or create one from a campaign." />
           ) : (
@@ -235,9 +270,23 @@ export default function AgentStudioPage() {
                   <Button size="sm" variant="ghost" icon="save" disabled={saving || !dirty} onClick={saveDraft}>
                     {saving ? 'Saving…' : 'Save draft'}
                   </Button>
-                  <Button size="sm" variant="primary" icon="rocket" disabled={publishing} onClick={publish}>
-                    Publish version
-                  </Button>
+                  {/* Wrapper carries the tooltip: a disabled <button> is inert
+                      and won't surface its own title on hover. */}
+                  <span
+                    title={publishBlockedReason}
+                    style={{ display: 'inline-flex', cursor: canPublish ? undefined : 'not-allowed' }}
+                  >
+                    <Button
+                      size="sm"
+                      variant="primary"
+                      icon="rocket"
+                      disabled={publishing || !canPublish}
+                      aria-disabled={!canPublish}
+                      onClick={publish}
+                    >
+                      Publish version
+                    </Button>
+                  </span>
                 </div>
               </div>
 

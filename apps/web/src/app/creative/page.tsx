@@ -1,14 +1,24 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { ApiClientError, type CreativeBlueprint } from '@acp/api-client';
 import { useApiClient } from '@/lib/api';
 import { useAsync } from '@/lib/useAsync';
-import { Button, Chip, StatusChip } from '@/components/ui';
+import { Button, Chip, StatusChip, DataState } from '@/components/ui';
 import { Modal, useToast } from '@/components/feedback';
 import { Icon } from '@/components/Icon';
-import { SEED_CREATIVE, cloneData, cx, downloadJson, uid, type StudioCreative, type StudioVersion } from './_studio/model';
+import {
+  SEED_CREATIVE,
+  cx,
+  downloadJson,
+  fromBlueprint,
+  mergeServerState,
+  toBlueprintContent,
+  type StudioCreative,
+} from './_studio/model';
 import type { Notify, StageId, StageProps } from './_studio/stages/types';
+import { AgentBadge, CompiledBadge } from './_studio/LinkageBadges';
 import { BriefStage } from './_studio/stages/BriefStage';
 import { DirectionsStage } from './_studio/stages/DirectionsStage';
 import { ExperienceStage } from './_studio/stages/ExperienceStage';
@@ -43,10 +53,16 @@ export default function CreativeStudioPage() {
   const campaignId = picked || campaigns?.[0]?.id || null;
 
   const [creative, setCreativeState] = useState<StudioCreative>(SEED_CREATIVE);
+  const [blueprintId, setBlueprintId] = useState<string | null>(null);
   const [stage, setStage] = useState<StageId>('studio');
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
+
+  // History
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [historyRows, setHistoryRows] = useState<CreativeBlueprint[] | null>(null);
+  const [historyError, setHistoryError] = useState<Error | null>(null);
+  const [restoring, setRestoring] = useState<number | null>(null);
 
   const notify: Notify = (title, body, tone) => {
     const msg = body ? `${title} — ${body}` : title;
@@ -64,34 +80,125 @@ export default function CreativeStudioPage() {
     setDirty(true);
   };
 
-  function saveVersion() {
-    if (saving) return;
-    setSaving(true);
-    window.setTimeout(() => {
-      // Capture a real deep snapshot of the working creative so this version can
-      // be truly restored later (Restore swaps it back into `creative`). The
-      // snapshot omits its own version history to avoid nesting past snapshots.
-      // NOTE: kept in this browser session only — there is no server persistence
-      // endpoint for the blueprint yet, so nothing here is saved to the backend.
-      const snapshot = cloneData(creative);
-      snapshot.versions = [];
-      const version: StudioVersion = {
-        id: uid('v'),
-        label: `Version ${creative.versions.length + 1}`,
-        createdAt: new Date().toISOString(),
-        actor: 'You',
-        note: 'Working draft snapshot (kept in this session)',
-        snapshot,
-      };
-      setCreativeState((c) => ({ ...c, versions: [version, ...c.versions] }));
+  // Keep the freshest dirty/blueprintId available to the (once-per-campaign)
+  // auto-load effect without forcing it to re-run on every keystroke.
+  const stateRef = useRef({ dirty, blueprintId });
+  stateRef.current = { dirty, blueprintId };
+  const autoloadedRef = useRef<string | null>(null);
+
+  // Durable resume: on first sight of a campaign, load its most recent saved
+  // blueprint into the studio (unless the user already has unsaved work). When
+  // the selected campaign changes, reset the working blueprint/creative first so
+  // Save always targets the currently-selected campaign — never the previous one.
+  useEffect(() => {
+    if (!campaignId || autoloadedRef.current === campaignId) return;
+    const isSwitch = autoloadedRef.current !== null;
+    autoloadedRef.current = campaignId;
+
+    // On an explicit campaign switch, drop the previous campaign's blueprint so a
+    // subsequent Save (or a campaign with no saved work) targets the new campaign.
+    if (isSwitch) {
+      setCreativeState(SEED_CREATIVE);
+      setBlueprintId(null);
       setDirty(false);
+    }
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const rows = await client.creative.blueprints(campaignId);
+        if (cancelled || rows.length === 0) return;
+        // Only protect unsaved work on the initial load; a switch already reset it.
+        if (!isSwitch && (stateRef.current.dirty || stateRef.current.blueprintId)) return;
+        const latest = rows[0];
+        setCreativeState(fromBlueprint(latest));
+        setBlueprintId(latest.id);
+        setDirty(false);
+      } catch {
+        /* no durable blueprint yet — keep the deterministic seed */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [campaignId, client]);
+
+  /** Save version: create the durable row the first time, then patch (each patch
+   *  is a new server version). Locked-block edits are rejected server-side (403). */
+  async function saveVersion() {
+    if (saving) return;
+    if (!campaignId) {
+      notify('Pick a campaign', 'Choose a campaign to design for before saving a version.', 'warning');
+      return;
+    }
+    setSaving(true);
+    try {
+      const content = toBlueprintContent(creative);
+      let saved: CreativeBlueprint;
+      if (!blueprintId) {
+        saved = await client.creative.saveBlueprint({ campaignId, ...content, note: 'Saved from Studio' });
+        setBlueprintId(saved.id);
+      } else {
+        saved = await client.creative.patchBlueprint(blueprintId, { ...content, note: 'Saved from Studio' });
+      }
+      setCreativeState((c) => mergeServerState(c, saved));
+      setDirty(false);
+      notify('Version saved', `Saved to the server as version ${saved.version}.`, 'success');
+    } catch (e) {
+      if (e instanceof ApiClientError && e.status === 403) {
+        notify(
+          'Locked block protected',
+          `${e.body.message} Revert that block (or unlock it in the Studio) and save again.`,
+          'danger',
+        );
+      } else {
+        const msg = e instanceof ApiClientError ? e.body.message : 'Could not save this version.';
+        notify('Save failed', msg, 'danger');
+      }
+    } finally {
       setSaving(false);
-      notify(
-        'Saved a working version',
-        `${version.label} is kept in this session — not yet persisted to the server.`,
-        'success',
-      );
-    }, 500);
+    }
+  }
+
+  async function openHistory() {
+    setHistoryOpen(true);
+    setHistoryError(null);
+    setHistoryRows(null);
+    if (!campaignId) {
+      setHistoryRows([]);
+      return;
+    }
+    try {
+      setHistoryRows(await client.creative.blueprints(campaignId));
+    } catch (e) {
+      setHistoryError(e instanceof Error ? e : new Error('Failed to load history'));
+    }
+  }
+
+  async function restoreVersion(version: number) {
+    if (!blueprintId || restoring !== null) return;
+    setRestoring(version);
+    try {
+      const restored = await client.creative.restoreBlueprint(blueprintId, version);
+      setCreativeState(fromBlueprint(restored));
+      setBlueprintId(restored.id);
+      setDirty(false);
+      setHistoryOpen(false);
+      notify('Version restored', `Reinstated version ${version} as new version ${restored.version}.`, 'success');
+    } catch (e) {
+      const msg = e instanceof ApiClientError ? e.body.message : 'Could not restore that version.';
+      notify('Restore failed', msg, 'danger');
+    } finally {
+      setRestoring(null);
+    }
+  }
+
+  function loadBlueprint(row: CreativeBlueprint) {
+    setCreativeState(fromBlueprint(row));
+    setBlueprintId(row.id);
+    setDirty(false);
+    setHistoryOpen(false);
+    notify('Blueprint loaded', `Loaded ${row.name ?? 'blueprint'} v${row.version}.`, 'success');
   }
 
   function buildPackage() {
@@ -101,7 +208,23 @@ export default function CreativeStudioPage() {
     notify('Manifest exported', 'The interactive blueprint manifest was downloaded.', 'success');
   }
 
-  const stageProps: StageProps = { creative, patch, setStage, notify, client, campaignId, setCreative };
+  const stageProps: StageProps = {
+    creative,
+    patch,
+    setStage,
+    notify,
+    client,
+    campaignId,
+    setCreative,
+    blueprintId,
+    setBlueprintId,
+  };
+
+  // The current blueprint's version trail. A freshly fetched row is authoritative
+  // (server order); otherwise the working creative's own (already-mapped) trail.
+  const currentRow = historyRows?.find((r) => r.id === blueprintId) ?? null;
+  const currentVersions = currentRow ? fromBlueprint(currentRow).versions : creative.versions;
+  const otherRows = (historyRows ?? []).filter((r) => r.id !== blueprintId);
 
   return (
     <div className="creative-page">
@@ -138,17 +261,33 @@ export default function CreativeStudioPage() {
             ) : (
               <span className="saved-dot">
                 <i />
-                Saved
+                {blueprintId ? 'Saved' : 'Not saved yet'}
               </span>
             )}
           </div>
           <div className="muted row" style={{ gap: '0.35rem', fontSize: 11.5, marginTop: '0.35rem' }}>
             <Icon name="doc" size={12} />
-            Working draft — versions are kept in this browser session; server persistence isn&apos;t wired yet.
+            {blueprintId
+              ? `Durable blueprint · version ${creative.version}. Save version writes a new server version.`
+              : 'Working draft — Save version persists it to the server as a durable, versioned blueprint.'}
+          </div>
+
+          {/* Linkage strip: this HTML5 ad → belongs to this campaign → talks to
+              this agent → publishes this creative. Fields ride on the blueprint
+              contract; when one is missing we say so honestly. */}
+          <div
+            className="row"
+            style={{ gap: '0.4rem', marginTop: '0.55rem', flexWrap: 'wrap', alignItems: 'center' }}
+          >
+            <AgentBadge agentId={creative.agentId} agentName={creative.agentName} />
+            <span className="muted" style={{ fontSize: 12 }} aria-hidden="true">
+              <Icon name="chevron-right" size={11} />
+            </span>
+            <CompiledBadge variantId={creative.variantId} />
           </div>
         </div>
         <div className="creative-topbar-actions">
-          <Button size="sm" variant="ghost" icon="clock" onClick={() => setHistoryOpen(true)}>
+          <Button size="sm" variant="ghost" icon="clock" onClick={openHistory}>
             History
           </Button>
           <Button size="sm" variant="ghost" icon="eye" onClick={() => router.push('/preview')}>
@@ -229,46 +368,73 @@ export default function CreativeStudioPage() {
               <Icon name="doc" size={15} />
             </span>
             <span className="muted">
-              Working draft — versions are captured in this browser session and can be restored here. Server
-              persistence isn&apos;t wired yet, so they aren&apos;t saved to the backend.
+              {blueprintId
+                ? 'Durable history — every saved version is stored on the server and can be restored here.'
+                : 'No durable blueprint yet. Use Save version to persist this creative, then its versions appear here.'}
             </span>
           </div>
-          {creative.versions.map((v, i) => (
-            <div key={v.id} className="row" style={{ gap: '0.75rem', alignItems: 'flex-start' }}>
-              <Chip tone={i === 0 ? 'brand' : 'neutral'}>{i === 0 ? 'Current' : `v${creative.versions.length - i}`}</Chip>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <strong style={{ fontSize: 13 }}>{v.label}</strong>
-                <div className="muted" style={{ fontSize: 12 }}>{v.note}</div>
-                <div className="muted" style={{ fontSize: 11.5 }}>
-                  {v.actor} · {new Date(v.createdAt).toLocaleString()}
+
+          {historyOpen ? (
+            <DataState
+              loading={campaignId != null && historyRows === null && historyError === null}
+              error={historyError}
+              loadingLabel="Loading version history…"
+              onRetry={openHistory}
+            >
+              {currentVersions.map((v, i) => (
+                <div key={v.id} className="row" style={{ gap: '0.75rem', alignItems: 'flex-start' }}>
+                  <Chip tone={i === 0 ? 'brand' : 'neutral'}>
+                    {i === 0 ? 'Current' : v.version != null ? `v${v.version}` : `v${currentVersions.length - i}`}
+                  </Chip>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <strong style={{ fontSize: 13 }}>{v.label}</strong>
+                    <div className="muted" style={{ fontSize: 12 }}>{v.note}</div>
+                    <div className="muted" style={{ fontSize: 11.5 }}>
+                      {v.actor} · {new Date(v.createdAt).toLocaleString()}
+                      {v.status ? ` · ${v.status}` : ''}
+                    </div>
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    disabled={i === 0 || v.version == null || !blueprintId || restoring !== null}
+                    title={
+                      i === 0
+                        ? 'This is the current version'
+                        : v.version == null
+                          ? 'This version predates durable persistence'
+                          : undefined
+                    }
+                    onClick={() => v.version != null && restoreVersion(v.version)}
+                  >
+                    {restoring === v.version ? 'Restoring…' : 'Restore'}
+                  </Button>
                 </div>
-              </div>
-              <Button
-                size="sm"
-                variant="ghost"
-                disabled={i === 0 || !v.snapshot}
-                title={
-                  i === 0
-                    ? 'This is the current working draft'
-                    : v.snapshot
-                      ? undefined
-                      : 'No working snapshot was captured for this version'
-                }
-                onClick={() => {
-                  if (i === 0 || !v.snapshot) return;
-                  const restored = v.snapshot;
-                  setHistoryOpen(false);
-                  // Real local restore: swap the captured snapshot back into the
-                  // working creative, keeping the existing version history intact.
-                  setCreativeState((cur) => ({ ...restored, versions: cur.versions }));
-                  setDirty(true);
-                  notify('Restored working version', `Restored to ${v.label} in this working session.`, 'success');
-                }}
-              >
-                Restore
-              </Button>
-            </div>
-          ))}
+              ))}
+
+              {otherRows.length > 0 ? (
+                <>
+                  <div className="section-title" style={{ marginTop: '0.4rem' }}>
+                    Other blueprints for this campaign
+                  </div>
+                  {otherRows.map((r) => (
+                    <div key={r.id} className="row" style={{ gap: '0.75rem', alignItems: 'flex-start' }}>
+                      <Chip tone="neutral">v{r.version}</Chip>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <strong style={{ fontSize: 13 }}>{r.name}</strong>
+                        <div className="muted" style={{ fontSize: 11.5 }}>
+                          Updated {new Date(r.updatedAt).toLocaleString()}
+                        </div>
+                      </div>
+                      <Button size="sm" variant="ghost" onClick={() => loadBlueprint(r)}>
+                        Load
+                      </Button>
+                    </div>
+                  ))}
+                </>
+              ) : null}
+            </DataState>
+          ) : null}
         </div>
       </Modal>
     </div>

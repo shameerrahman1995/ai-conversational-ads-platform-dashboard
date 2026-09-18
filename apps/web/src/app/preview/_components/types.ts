@@ -23,6 +23,22 @@ export const STEP_LABEL: Record<Step, string> = {
   convert: 'Convert',
 };
 
+/**
+ * The shared `InteractiveAd` runtime is driven by a journey-state LABEL (see
+ * `JOURNEY_STATES`), while the preview page tracks a `Step`. These map between
+ * the two so Preview drives the same runtime the Studio and Simulator use.
+ */
+export const STATE_LABEL_BY_STEP: Record<Step, string> = STEP_LABEL;
+
+export const STEP_BY_STATE_LABEL: Record<string, Step> = {
+  Hook: 'hook',
+  Explore: 'explore',
+  'Ask AI': 'ask',
+  Answer: 'answer',
+  Qualify: 'qualify',
+  Convert: 'convert',
+};
+
 export const PLACEMENT_LABEL: Record<Placement, string> = {
   google: 'Google',
   meta: 'Meta',

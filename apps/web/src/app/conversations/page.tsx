@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import type { ConversationSummary } from '@acp/api-client';
+import type { ApiClient, ConversationSummary } from '@acp/api-client';
 import { useApiClient } from '@/lib/api';
 import { useAsync } from '@/lib/useAsync';
 import { Icon } from '@/components/Icon';
@@ -26,6 +26,9 @@ import {
 
 type OutcomeFilter = 'all' | 'open' | 'converted' | 'qualified';
 
+/** Shape returned by `client.conversations.summary()` — the V10 grounding KPIs. */
+type ConversationsSummary = Awaited<ReturnType<ApiClient['conversations']['summary']>>;
+
 const OUTCOME_OPTIONS: { value: OutcomeFilter; label: string }[] = [
   { value: 'all', label: 'All' },
   { value: 'open', label: 'Open' },
@@ -33,18 +36,29 @@ const OUTCOME_OPTIONS: { value: OutcomeFilter; label: string }[] = [
   { value: 'qualified', label: 'Qualified' },
 ];
 
-/** Median of a numeric list (0 for an empty list). */
-function median(nums: number[]): number {
-  if (nums.length === 0) return 0;
-  const sorted = [...nums].sort((a, b) => a - b);
-  const mid = Math.floor(sorted.length / 2);
-  return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid];
+/** Format a millisecond duration as a human string, e.g. 130000 → "2m 10s". */
+function formatDuration(ms: number): string {
+  if (!Number.isFinite(ms) || ms <= 0) return '0s';
+  const totalSeconds = Math.round(ms / 1000);
+  const h = Math.floor(totalSeconds / 3600);
+  const m = Math.floor((totalSeconds % 3600) / 60);
+  const s = totalSeconds % 60;
+  if (h > 0) return `${h}h ${m}m`;
+  if (m > 0) return `${m}m ${s}s`;
+  return `${s}s`;
 }
 
 export default function ConversationsPage() {
   const client = useApiClient();
   const [reload, setReload] = useState(0);
   const { data, error, loading } = useAsync(() => client.conversations.list(), [client, reload]);
+
+  // V10 grounding KPIs come from the server-computed summary (real, org-scoped).
+  const summaryState = useAsync(() => client.conversations.summary(), [client, reload]);
+  const [summary, setSummary] = useState<ConversationsSummary | null>(null);
+  useEffect(() => {
+    if (summaryState.data) setSummary(summaryState.data);
+  }, [summaryState.data]);
 
   // Keep the last good result so filtering never blanks the table into a spinner.
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
@@ -56,18 +70,6 @@ export default function ConversationsPage() {
   const [query, setQuery] = useState('');
   const [outcome, setOutcome] = useState<OutcomeFilter>('all');
   const [selected, setSelected] = useState<ConversationSummary | null>(null);
-
-  // KPIs are computed from the full list (not the filtered view) — all real.
-  const kpis = useMemo(() => {
-    const total = conversations.length;
-    const qualified = conversations.filter((c) => c.outcome === 'qualified').length;
-    const converted = conversations.filter(
-      (c) => c.outcome === 'converted' || c.outcome === 'qualified',
-    ).length;
-    const qualifiedRate = total ? (qualified / total) * 100 : 0;
-    const medianMessages = median(conversations.map((c) => c.messageCount));
-    return { total, converted, qualifiedRate, medianMessages };
-  }, [conversations]);
 
   const visible = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -134,29 +136,43 @@ export default function ConversationsPage() {
         emptyHint="No conversations yet — when a visitor chats with your AI agent after clicking an ad, it appears here."
         onRetry={() => setReload((n) => n + 1)}
       >
-        {/* KPI strip */}
+        {/* KPI strip — V10 grounding KPIs from the server summary */}
         <div className="grid grid-kpi">
           <MetricCard
             label="Total conversations"
-            value={formatCompact(kpis.total, 'en-US')}
+            value={summary ? formatCompact(summary.totalConversations, 'en-US') : '—'}
             icon="message"
             footNote="Captured to date"
           />
           <MetricCard
-            label="Qualified rate"
-            value={formatPct(kpis.qualifiedRate)}
+            label="Grounded-answer rate"
+            value={summary ? formatPct(summary.groundedAnswerRate * 100) : '—'}
+            icon="shield-check"
+            footNote={
+              summary
+                ? `${formatCompact(summary.groundedTurns, 'en-US')} of ${formatCompact(
+                    summary.assistantTurns,
+                    'en-US',
+                  )} AI turns grounded`
+                : 'Grounded assistant turns'
+            }
+          />
+          <MetricCard
+            label="Qualification rate"
+            value={summary ? formatPct(summary.qualificationRate * 100) : '—'}
             icon="check-circle"
-            footNote="Qualified outcomes"
+            footNote={
+              summary
+                ? `${formatCompact(summary.qualifiedConversations, 'en-US')} of ${formatCompact(
+                    summary.totalConversations,
+                    'en-US',
+                  )} qualified`
+                : 'Qualified conversations'
+            }
           />
           <MetricCard
-            label="Converted"
-            value={formatCompact(kpis.converted, 'en-US')}
-            icon="sparkles"
-            footNote="Converted or qualified"
-          />
-          <MetricCard
-            label="Median messages"
-            value={kpis.medianMessages}
+            label="Median duration"
+            value={summary ? formatDuration(summary.medianDurationMs) : '—'}
             icon="clock"
             footNote="Per conversation"
           />

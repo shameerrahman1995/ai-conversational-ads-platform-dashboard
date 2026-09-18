@@ -1,9 +1,11 @@
 'use client';
 
-import { useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import Link from 'next/link';
 import { useApiClient } from '@/lib/api';
 import { useAsync } from '@/lib/useAsync';
+import { useOrg } from '@/lib/org-context';
+import { roleSatisfies, type UserRole } from '@acp/shared-types';
 import { useToast, Modal } from '@/components/feedback';
 import { Icon } from '@/components/Icon';
 import {
@@ -16,6 +18,7 @@ import {
   StatusChip,
   DataState,
   Meter,
+  Skeleton,
 } from '@/components/ui';
 import {
   ApiClientError,
@@ -26,11 +29,13 @@ import {
 } from '@acp/api-client';
 import { AdPreviewModal } from '../creative/_components/AdPreviewModal';
 import { readSpec } from '../creative/_components/spec';
+import { AgentBadge } from '../creative/_studio/LinkageBadges';
 import {
   CapabilitiesPreview,
   RequestPlanDetails,
   type CreatePlanResult,
 } from './_components/RequestPlan';
+import { ReconciliationDrawer } from './_components/ReconciliationDrawer';
 
 /* Platform display metadata — order fixes the account-map layout. */
 const PLATFORM_ORDER = ['google_ads', 'meta', 'tiktok'];
@@ -91,9 +96,100 @@ function connAccountLabel(c: Connection): string {
   return name ? `${name} — ${acct}` : acct;
 }
 
+/* ------------------------------------------------------------------ */
+/* First-load skeleton — content-shaped (KPI strip + account map cards  */
+/* + review-queue table) so first paint shows structure, not a spinner. */
+/* `.skeleton` already respects prefers-reduced-motion.                 */
+/* ------------------------------------------------------------------ */
+function PublishingSkeleton() {
+  return (
+    <div className="stack" aria-busy="true" aria-live="polite">
+      <span className="sr-only">Loading publish plans…</span>
+      <div className="grid grid-kpi">
+        {Array.from({ length: 4 }).map((_, i) => (
+          <div key={i} className="card stat">
+            <div className="stat-top">
+              <Skeleton width="45%" height={12} radius={6} />
+              <Skeleton width={30} height={30} radius={9} />
+            </div>
+            <div style={{ marginTop: '0.55rem' }}>
+              <Skeleton width="55%" height={28} radius={8} />
+            </div>
+            <div style={{ marginTop: '0.5rem' }}>
+              <Skeleton width="70%" height={12} radius={6} />
+            </div>
+          </div>
+        ))}
+      </div>
+      <div className="card">
+        <div className="panel-head">
+          <Skeleton width={120} height={15} radius={6} />
+          <Skeleton width={90} height={20} radius={999} />
+        </div>
+        <div className="card-pad">
+          <div className="grid grid-3">
+            {Array.from({ length: 3 }).map((_, i) => (
+              <div key={i} className="card card-pad" style={{ background: 'var(--color-surface-2)' }}>
+                <div className="spread" style={{ alignItems: 'flex-start' }}>
+                  <span className="row" style={{ gap: '0.6rem' }}>
+                    <Skeleton width={30} height={30} radius={9} />
+                    <span style={{ display: 'grid', gap: 6 }}>
+                      <Skeleton width={90} height={14} radius={6} />
+                      <Skeleton width={70} height={12} radius={6} />
+                    </span>
+                  </span>
+                  <Skeleton width={70} height={20} radius={999} />
+                </div>
+                <hr className="divider" style={{ margin: '0.85rem 0' }} />
+                <div className="spread">
+                  <Skeleton width="40%" height={12} radius={6} />
+                  <Skeleton width="30%" height={12} radius={6} />
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+      <div className="card">
+        <div className="panel-head">
+          <Skeleton width={130} height={15} radius={6} />
+          <Skeleton width={110} height={20} radius={999} />
+        </div>
+        <div className="table-wrap">
+          <table className="table">
+            <thead>
+              <tr>
+                {Array.from({ length: 7 }).map((_, i) => (
+                  <th key={i}>
+                    <Skeleton width={i === 0 ? 90 : 52} height={11} radius={5} />
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {Array.from({ length: 5 }).map((_, r) => (
+                <tr key={r}>
+                  {Array.from({ length: 7 }).map((_, c) => (
+                    <td key={c}>
+                      <Skeleton width={c === 0 ? '72%' : '46%'} height={13} radius={6} />
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function PublishingPage() {
   const client = useApiClient();
   const toast = useToast();
+  const { role, orgId, token, ready } = useOrg();
+  // Rollback is a privileged (publisher/admin) deployment-governance op.
+  const privileged = roleSatisfies(role as UserRole, ['publisher']);
 
   // `reload` refreshes everything (manual retry); `plansReload` refreshes only
   // the queue after a mutation/poll so we don't re-fetch the whole catalog.
@@ -130,6 +226,8 @@ export default function PublishingPage() {
   const [busyId, setBusyId] = useState<string | null>(null);
   const [pauseTarget, setPauseTarget] = useState<PublishPlan | null>(null);
   const [cancelTarget, setCancelTarget] = useState<PublishPlan | null>(null);
+  const [rollbackTarget, setRollbackTarget] = useState<PublishPlan | null>(null);
+  const [reconcilePlan, setReconcilePlan] = useState<PublishPlan | null>(null);
   const [newPlanOpen, setNewPlanOpen] = useState(false);
   const [previewVariant, setPreviewVariant] = useState<CreativeVariant | null>(null);
   // Over-budget approval gate.
@@ -141,6 +239,45 @@ export default function PublishingPage() {
 
   const refetch = () => setPlansReload((n) => n + 1);
   const retryAll = () => setReload((n) => n + 1);
+
+  // Live updates (V10 U8.3): subscribe to the server's publish-plan SSE stream and
+  // refetch the queue whenever a plan's status changes, so the page reflects
+  // platform-review transitions without a manual refresh. EventSource can't send
+  // auth headers, so we first mint a short-lived, org-scoped token from the guarded
+  // `stream-token` endpoint and pass it on the URL. Every failure path degrades
+  // gracefully to the existing manual/refetch flow — the stream is a pure bonus.
+  useEffect(() => {
+    if (!ready || typeof window === 'undefined' || typeof EventSource === 'undefined') return;
+    const base = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:4000';
+    let es: EventSource | null = null;
+    let cancelled = false;
+
+    (async () => {
+      try {
+        const headers: Record<string, string> = { 'x-org-id': orgId, 'x-user-role': role };
+        if (token) headers['authorization'] = `Bearer ${token}`;
+        const res = await fetch(`${base}/v1/publish-plans/stream-token`, { headers });
+        if (!res.ok) return; // no live stream — manual refresh still works
+        const { token: streamToken } = (await res.json()) as { token?: string };
+        if (cancelled || !streamToken) return;
+        es = new EventSource(`${base}/v1/publish-plans/stream?token=${encodeURIComponent(streamToken)}`);
+        // Any message means a plan changed (or the initial snapshot): refetch.
+        es.onmessage = () => setPlansReload((n) => n + 1);
+        es.onerror = () => {
+          // Fall back to manual refresh rather than let EventSource retry-loop.
+          es?.close();
+          es = null;
+        };
+      } catch {
+        /* network/parse hiccup — silently keep the manual refresh path */
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      es?.close();
+    };
+  }, [ready, orgId, role, token]);
 
   const allPlans = data ?? [];
   const plans = allPlans.filter((p) => p.status !== 'ARCHIVED'); // hide archived
@@ -305,6 +442,24 @@ export default function PublishingPage() {
     }
   }
 
+  /* LIVE / IN_REVIEW → roll back (privileged, confirmed via modal). Pauses the
+     remote object and marks the plan rolled-back — history/audit preserved. */
+  async function confirmRollback() {
+    if (!rollbackTarget) return;
+    const id = rollbackTarget.id;
+    setBusyId(id);
+    try {
+      await client.publishing.rollback(id);
+      toast.success('Deployment rolled back');
+      setRollbackTarget(null);
+      refetch();
+    } catch (e) {
+      toast.error(errMsg(e, "Couldn't roll back this plan"));
+    } finally {
+      setBusyId(null);
+    }
+  }
+
   /* REJECTED → resubmit for another review pass. */
   async function resubmit(id: string) {
     setBusyId(id);
@@ -391,8 +546,9 @@ export default function PublishingPage() {
         }
       />
 
+      {loading ? <PublishingSkeleton /> : (
       <DataState
-        loading={loading}
+        loading={false}
         error={error}
         isEmpty={plans.length === 0}
         onRetry={retryAll}
@@ -588,7 +744,7 @@ export default function PublishingPage() {
           }
         >
           <div className="table-wrap">
-            <table className="table">
+            <table className="table" aria-label="Publish plans review queue">
               <thead>
                 <tr>
                   <th>Creative / plan</th>
@@ -604,6 +760,10 @@ export default function PublishingPage() {
                 {plans.map((plan) => {
                   const variant = variantMap.get(plan.variantId);
                   const headline = variant ? readSpec(variant.spec).headline : null;
+                  // Source context: the campaign's agent this served ad will talk to.
+                  const planAgent = variant
+                    ? agentByCampaign.get(variant.campaignId)
+                    : undefined;
                   return (
                   <tr key={plan.id}>
                     <td>
@@ -622,6 +782,14 @@ export default function PublishingPage() {
                             >
                               Preview
                             </Button>
+                          </div>
+                          {/* Which AI agent the served ad converses with post-click. */}
+                          <div style={{ marginTop: 3 }}>
+                            <AgentBadge
+                              agentId={planAgent?.id}
+                              agentName={planAgent?.name}
+                              as="inline"
+                            />
                           </div>
                         </>
                       ) : (
@@ -674,6 +842,7 @@ export default function PublishingPage() {
                           plan={plan}
                           busy={busyId === plan.id}
                           disabled={busyId !== null}
+                          privileged={privileged}
                           onApprove={approveAndPublish}
                           onPublishNow={publishNow}
                           onSync={syncStatus}
@@ -681,6 +850,8 @@ export default function PublishingPage() {
                           onResume={resume}
                           onResubmit={resubmit}
                           onCancel={setCancelTarget}
+                          onRollback={setRollbackTarget}
+                          onReconcile={setReconcilePlan}
                         />
                       </div>
                     </td>
@@ -715,6 +886,7 @@ export default function PublishingPage() {
         </Card>
         </div>
       </DataState>
+      )}
 
       {/* Pause confirmation */}
       <Modal
@@ -773,6 +945,49 @@ export default function PublishingPage() {
         ) : null}
       </Modal>
 
+      {/* Rollback confirmation (privileged) */}
+      <Modal
+        open={rollbackTarget != null}
+        onClose={() => (busyId ? null : setRollbackTarget(null))}
+        title="Roll back this deployment?"
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setRollbackTarget(null)} disabled={!!busyId}>
+              Keep it deployed
+            </Button>
+            <Button variant="danger" icon="alert" onClick={confirmRollback} disabled={!!busyId}>
+              {busyId ? 'Rolling back…' : 'Roll back'}
+            </Button>
+          </>
+        }
+      >
+        {rollbackTarget ? (
+          <div className="stack" style={{ gap: '0.6rem' }}>
+            <div className="chip chip-warning" style={{ alignSelf: 'flex-start' }}>
+              <Icon name="shield" size={12} /> Privileged action — publisher/admin only
+            </div>
+            <p style={{ margin: 0 }}>
+              Rolling back pauses <strong>Plan #{shortId(rollbackTarget.id)}</strong> on{' '}
+              <strong>{platformLabel(rollbackTarget.platform)}</strong> at the platform and marks the
+              plan rolled back. The remote ad record and its history are preserved — nothing is
+              deleted — but it stops serving and leaves the active queue.
+            </p>
+            <p className="muted" style={{ margin: 0, fontSize: 12.5 }}>
+              This differs from Cancel: cancel only archives a plan that never went live, whereas
+              rollback reverts a live/in-review deployment and pauses it remotely.
+            </p>
+            {rollbackTarget.remoteId ? (
+              <div className="chip chip-neutral" style={{ alignSelf: 'flex-start' }}>
+                <Icon name="globe" size={12} /> Remote {rollbackTarget.remoteId}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+      </Modal>
+
+      {/* Desired-vs-remote reconciliation + remote-object tree */}
+      <ReconciliationDrawer plan={reconcilePlan} onClose={() => setReconcilePlan(null)} />
+
       {/* Over-budget approval gate */}
       <Modal
         open={pendingApprove != null}
@@ -827,6 +1042,7 @@ function PlanAction({
   plan,
   busy,
   disabled,
+  privileged,
   onApprove,
   onPublishNow,
   onSync,
@@ -834,10 +1050,13 @@ function PlanAction({
   onResume,
   onResubmit,
   onCancel,
+  onRollback,
+  onReconcile,
 }: {
   plan: PublishPlan;
   busy: boolean;
   disabled: boolean;
+  privileged: boolean;
   onApprove: (id: string) => void;
   onPublishNow: (id: string) => void;
   onSync: (id: string) => void;
@@ -845,6 +1064,8 @@ function PlanAction({
   onResume: (id: string) => void;
   onResubmit: (id: string) => void;
   onCancel: (plan: PublishPlan) => void;
+  onRollback: (plan: PublishPlan) => void;
+  onReconcile: (plan: PublishPlan) => void;
 }) {
   const status = plan.status;
   let primary: ReactNode = null;
@@ -894,12 +1115,45 @@ function PlanAction({
   }
 
   const showCancel = status !== 'LIVE' && status !== 'ARCHIVED';
+  // Reconcile + rollback only make sense once a plan has a remote object.
+  const published = !!plan.remoteId;
+  const canReconcile = published;
+  const canRollback = published && ['IN_REVIEW', 'LIVE', 'PAUSED'].includes(status);
 
-  if (!primary && !showCancel) return <span className="cell-muted">—</span>;
+  if (!primary && !showCancel && !canReconcile && !canRollback)
+    return <span className="cell-muted">—</span>;
 
   return (
     <div className="row" style={{ gap: '0.4rem', justifyContent: 'flex-end' }}>
       {primary}
+      {canReconcile ? (
+        <Button
+          size="sm"
+          variant="ghost"
+          icon="layers"
+          disabled={disabled}
+          onClick={() => onReconcile(plan)}
+          title="Reconcile local state against the platform's current view"
+        >
+          Reconcile
+        </Button>
+      ) : null}
+      {canRollback ? (
+        <Button
+          size="sm"
+          variant="danger"
+          icon="alert"
+          disabled={disabled || !privileged}
+          onClick={() => onRollback(plan)}
+          title={
+            privileged
+              ? 'Roll back — pause the remote object and mark this plan rolled-back'
+              : 'Rolling back a deployment requires a publisher or admin role'
+          }
+        >
+          Roll back
+        </Button>
+      ) : null}
       {showCancel ? (
         <Button size="sm" variant="ghost" icon="x" disabled={disabled} onClick={() => onCancel(plan)}>
           Cancel
@@ -944,6 +1198,13 @@ function NewPlanModal({
 
   const campaignsState = useAsync(() => client.campaigns.list(), [client]);
   const campaigns = campaignsState.data ?? [];
+
+  // The campaign's AI agent — surfaced so the user sees which agent this plan's
+  // served ad will converse with before they create it.
+  const agentsState = useAsync(() => client.agents.list().catch(() => []), [client]);
+  const planAgent = campaignId
+    ? (agentsState.data ?? []).find((a) => a.campaignId === campaignId)
+    : undefined;
 
   // Variants reload whenever the chosen campaign changes.
   const variantsState = useAsync(
@@ -1097,6 +1358,11 @@ function NewPlanModal({
               </option>
             ))}
           </select>
+          {campaignId ? (
+            <div style={{ marginTop: '0.45rem' }}>
+              <AgentBadge agentId={planAgent?.id} agentName={planAgent?.name} as="inline" />
+            </div>
+          ) : null}
         </div>
 
         <div className="field">

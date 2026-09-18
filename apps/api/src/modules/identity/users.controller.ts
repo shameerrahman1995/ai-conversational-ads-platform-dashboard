@@ -1,7 +1,7 @@
 import { Body, Controller, Get, Param, Patch, Post, Req, UseGuards } from '@nestjs/common';
 import { ApiHeader, ApiTags } from '@nestjs/swagger';
 import { IdentityService } from './identity.service';
-import { ChangeUserRoleDto, InviteUserDto } from './dto';
+import { ChangeUserRoleDto, InviteUserDto, ResetPasswordDto } from './dto';
 import { TenantGuard } from '../../common/tenant/tenant.guard';
 import { RolesGuard } from '../../common/rbac/roles.guard';
 import { Roles } from '../../common/rbac/roles.decorator';
@@ -39,5 +39,27 @@ export class UsersController {
     @Body() dto: ChangeUserRoleDto,
   ) {
     return this.identity.changeUserRole(req.orgId, id, dto.role);
+  }
+
+  @Post(':id/suspend')
+  @Roles('admin')
+  suspend(@Req() req: { orgId: string; user?: { userId?: string } }, @Param('id') id: string) {
+    return this.identity.suspendUser(req.orgId, id, req.user?.userId);
+  }
+
+  @Post(':id/reactivate')
+  @Roles('admin')
+  reactivate(@Req() req: { orgId: string; user?: { userId?: string } }, @Param('id') id: string) {
+    return this.identity.reactivateUser(req.orgId, id, req.user?.userId);
+  }
+
+  @Post(':id/reset-password')
+  @Roles('admin')
+  resetPassword(
+    @Req() req: { orgId: string; user?: { userId?: string } },
+    @Param('id') id: string,
+    @Body() dto: ResetPasswordDto,
+  ) {
+    return this.identity.resetUserPassword(req.orgId, id, dto.password, req.user?.userId);
   }
 }

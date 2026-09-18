@@ -1,11 +1,12 @@
 'use client';
 
-import { useState, type CSSProperties } from 'react';
+import { useRef, useState, type CSSProperties } from 'react';
 import { Card, Button, Chip, Segmented } from '@/components/ui';
 import { Modal } from '@/components/feedback';
 import { Icon, type IconName } from '@/components/Icon';
 import { InteractiveAd } from '../InteractiveAd';
 import { cloneData, cx, downloadJson, platformClass, type StudioBlock, type StudioCreative } from '../model';
+import { computeQaChecks } from '../qa';
 import { StudioTabs, SwitchRow, SliderField, SectionTitle } from '../atoms';
 import type { StageProps } from './types';
 
@@ -48,15 +49,40 @@ export function StudioStage({ creative, patch, notify }: StageProps) {
   const [redo, setRedo] = useState<StudioCreative[]>([]);
 
   const selected = creative.blocks.find((b) => b.id === selectedBlock) ?? creative.blocks[0];
+  const qa = computeQaChecks(creative);
 
-  const snapshot = () => setUndo((u) => [cloneData(creative), ...u].slice(0, 20));
+  // Coalesce a burst of edits to the same field (e.g. per-keystroke text or a
+  // color-picker drag) into a single undo entry, so the 20-slot history holds
+  // real checkpoints rather than one snapshot per keystroke. A snapshot is only
+  // pushed when the edit target changes or the previous burst has gone idle.
+  const coalesceRef = useRef<{ key: string; at: number } | null>(null);
+  const COALESCE_MS = 500;
+  const snapshot = (coalesceKey?: string) => {
+    if (coalesceKey) {
+      const prev = coalesceRef.current;
+      const now = Date.now();
+      coalesceRef.current = { key: coalesceKey, at: now };
+      // Same field, still within the burst window → the pre-burst state is
+      // already captured; don't push another entry.
+      if (prev && prev.key === coalesceKey && now - prev.at < COALESCE_MS) return;
+    } else {
+      coalesceRef.current = null;
+    }
+    setUndo((u) => [cloneData(creative), ...u].slice(0, 20));
+  };
+  /** A coalesce key for continuous single-field edits, else undefined (discrete). */
+  const coalesceKeyFor = (change: Record<string, unknown>, scope: string, fields: string[]) => {
+    const keys = Object.keys(change);
+    return keys.length === 1 && fields.includes(keys[0]) ? `${scope}:${keys[0]}` : undefined;
+  };
   const patchCreative = (change: Partial<StudioCreative>) => {
-    snapshot();
+    snapshot(coalesceKeyFor(change, 'creative', ['accent', 'background']));
     setRedo([]);
     patch(change);
   };
   const patchBlock = (change: Partial<StudioBlock>) => {
-    snapshot();
+    snapshot(coalesceKeyFor(change, `block:${selected.id}`, ['value']));
+    setRedo([]);
     const blocks = creative.blocks.map((b) => (b.id === selected.id ? { ...b, ...change } : b));
     const top: Partial<StudioCreative> = { blocks };
     if (change.value !== undefined) {
@@ -105,12 +131,14 @@ export function StudioStage({ creative, patch, notify }: StageProps) {
 
   const doUndo = () => {
     if (!undo.length) return;
+    coalesceRef.current = null; // next edit starts a fresh undo entry
     setRedo((r) => [cloneData(creative), ...r]);
     patch(undo[0]);
     setUndo((u) => u.slice(1));
   };
   const doRedo = () => {
     if (!redo.length) return;
+    coalesceRef.current = null; // next edit starts a fresh undo entry
     setUndo((u) => [cloneData(creative), ...u]);
     patch(redo[0]);
     setRedo((r) => r.slice(1));
@@ -183,7 +211,7 @@ export function StudioStage({ creative, patch, notify }: StageProps) {
             Redo
           </Button>
           <Button size="sm" variant="ghost" icon="shield-check" onClick={() => setQaOpen(true)}>
-            QA {creative.qaScore}%
+            QA {qa.score}%
           </Button>
         </div>
       </div>
@@ -473,39 +501,32 @@ export function StudioStage({ creative, patch, notify }: StageProps) {
           </>
         }
       >
-        <QaPanel />
+        <QaPanel creative={creative} />
       </Modal>
     </div>
   );
 }
 
-function QaPanel() {
-  const checks: [string, 'Passed' | 'Review', string][] = [
-    ['Brand compliance', 'Passed', 'Logo, palette and tone match the approved kit'],
-    ['Product fidelity', 'Passed', 'Product geometry and approved colour preserved'],
-    ['Legal copy', 'Passed', 'Required disclaimer is visible'],
-    ['Accessibility', 'Passed', 'Contrast, labels and focus states pass'],
-    ['Package size', 'Passed', 'Estimated bundle 812 KB'],
-    ['Agent grounding', 'Passed', 'Pinned snapshot available'],
-    ['Voice runtime', 'Review', 'Placement-level permission must be tested'],
-    ['Meta capability', 'Review', 'Fallback required for selected placement'],
-  ];
+function QaPanel({ creative }: { creative: StudioCreative }) {
+  const { checks, passed, total } = computeQaChecks(creative);
   return (
     <div className="qa-list">
       <div className="spread" style={{ alignItems: 'center', marginBottom: '0.4rem' }}>
-        <span className="muted" style={{ fontSize: 12 }}>Illustrative checks — not computed per creative yet</span>
-        <Chip tone="neutral">Illustrative</Chip>
+        <span className="muted" style={{ fontSize: 12 }}>Computed from this creative&rsquo;s blocks and journey states</span>
+        <Chip tone={passed === total ? 'success' : 'warning'}>
+          {passed}/{total} passing
+        </Chip>
       </div>
-      {checks.map(([label, status, detail]) => (
-        <div key={label}>
-          <span className={status === 'Passed' ? 'success' : 'warning'}>
-            <Icon name={status === 'Passed' ? 'check-circle' : 'alert'} size={16} />
+      {checks.map((c) => (
+        <div key={c.key}>
+          <span className={c.status === 'Passed' ? 'success' : 'warning'}>
+            <Icon name={c.status === 'Passed' ? 'check-circle' : 'alert'} size={16} />
           </span>
           <div>
-            <strong>{label}</strong>
-            <small>{detail}</small>
+            <strong>{c.label}</strong>
+            <small>{c.detail}</small>
           </div>
-          <Chip tone={status === 'Passed' ? 'success' : 'warning'}>{status}</Chip>
+          <Chip tone={c.status === 'Passed' ? 'success' : 'warning'}>{c.status}</Chip>
         </div>
       ))}
     </div>

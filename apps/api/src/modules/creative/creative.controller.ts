@@ -1,16 +1,32 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Req, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Param,
+  Patch,
+  Post,
+  Query,
+  Req,
+  UseGuards,
+} from '@nestjs/common';
 import { ApiHeader, ApiTags } from '@nestjs/swagger';
 import { CreativeService } from './creative.service';
 import { CreativeBlueprintService } from './creative-blueprint.service';
+import { BlueprintPersistenceService } from './blueprint-persistence.service';
 import { Html5CompilerService } from './html5-compiler.service';
 import type { CreativeManifest } from '@acp/shared-types';
 import {
   CompileBundleDto,
   CompileHtml5Dto,
+  CreateBlueprintDto,
+  CreateSimulationDto,
   CreateVariantDto,
   GenerateAdaptiveDto,
   GenerateBlueprintDto,
   GenerateImageDto,
+  HandoffBlueprintDto,
+  PatchBlueprintDto,
   UpdateVariantDto,
 } from './dto';
 import { TenantGuard } from '../../common/tenant/tenant.guard';
@@ -26,6 +42,7 @@ export class CreativeController {
   constructor(
     private readonly creative: CreativeService,
     private readonly blueprint: CreativeBlueprintService,
+    private readonly blueprintStore: BlueprintPersistenceService,
     private readonly html5: Html5CompilerService,
   ) {}
 
@@ -89,12 +106,81 @@ export class CreativeController {
 
   @Post('campaigns/:id/creative/blueprint')
   @Roles('creator')
-  generateBlueprint(
+  async generateBlueprint(
     @Req() req: { orgId: string },
     @Param('id') id: string,
     @Body() dto: GenerateBlueprintDto,
   ) {
-    return this.blueprint.generate(req.orgId, id, dto);
+    // Generate (deterministic planner) then persist the result as a draft so the
+    // Studio has a durable row to edit; return the saved blueprint (with its id).
+    const blueprint = await this.blueprint.generate(req.orgId, id, dto);
+    return this.blueprintStore.createFromGenerated(req.orgId, id, blueprint);
+  }
+
+  // ---- Creative Studio blueprint persistence (V10 U3.10) ------------------
+
+  @Post('creative/blueprints')
+  @Roles('creator')
+  createBlueprint(@Req() req: { orgId: string }, @Body() dto: CreateBlueprintDto) {
+    return this.blueprintStore.create(req.orgId, dto);
+  }
+
+  @Get('creative/blueprints')
+  @Roles('creator')
+  listBlueprints(@Req() req: { orgId: string }, @Query('campaignId') campaignId?: string) {
+    return this.blueprintStore.list(req.orgId, campaignId);
+  }
+
+  @Get('creative/blueprints/:id')
+  @Roles('creator')
+  getBlueprint(@Req() req: { orgId: string }, @Param('id') id: string) {
+    return this.blueprintStore.get(req.orgId, id);
+  }
+
+  @Patch('creative/blueprints/:id')
+  @Roles('creator')
+  patchBlueprint(
+    @Req() req: { orgId: string },
+    @Param('id') id: string,
+    @Body() dto: PatchBlueprintDto,
+  ) {
+    return this.blueprintStore.patch(req.orgId, id, dto);
+  }
+
+  @Post('creative/blueprints/:id/restore/:version')
+  @Roles('creator')
+  restoreBlueprint(
+    @Req() req: { orgId: string },
+    @Param('id') id: string,
+    @Param('version') version: string,
+  ) {
+    return this.blueprintStore.restore(req.orgId, id, Number(version));
+  }
+
+  @Post('creative/blueprints/:id/handoff')
+  @Roles('creator')
+  handoffBlueprint(
+    @Req() req: { orgId: string },
+    @Param('id') id: string,
+    @Body() dto: HandoffBlueprintDto,
+  ) {
+    return this.blueprintStore.handoff(req.orgId, id, dto);
+  }
+
+  @Post('creative/blueprints/:id/simulations')
+  @Roles('creator')
+  addSimulation(
+    @Req() req: { orgId: string },
+    @Param('id') id: string,
+    @Body() dto: CreateSimulationDto,
+  ) {
+    return this.blueprintStore.addSimulation(req.orgId, id, dto);
+  }
+
+  @Get('creative/blueprints/:id/simulations')
+  @Roles('creator')
+  listSimulations(@Req() req: { orgId: string }, @Param('id') id: string) {
+    return this.blueprintStore.listSimulations(req.orgId, id);
   }
 
   @Get('campaigns/:id/variants')

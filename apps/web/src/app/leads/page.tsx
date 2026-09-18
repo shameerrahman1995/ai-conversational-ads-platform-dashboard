@@ -13,8 +13,94 @@ import {
   Panel,
   Chip,
   DataState,
+  Skeleton,
 } from '@/components/ui';
 import { LeadDetail } from './_components/LeadDetail';
+
+/* ------------------------------------------------------------------ */
+/* First-load skeletons — content-shaped so first paint shows the      */
+/* page's structure (KPI strip + inbox table + detail) instead of a    */
+/* bare spinner. `.skeleton` already respects prefers-reduced-motion.  */
+/* ------------------------------------------------------------------ */
+function KpiStripSkeleton({ count = 4 }: { count?: number }) {
+  return (
+    <div className="grid grid-kpi">
+      {Array.from({ length: count }).map((_, i) => (
+        <div key={i} className="card stat">
+          <div className="stat-top">
+            <Skeleton width="45%" height={12} radius={6} />
+            <Skeleton width={30} height={30} radius={9} />
+          </div>
+          <div style={{ marginTop: '0.55rem' }}>
+            <Skeleton width="55%" height={28} radius={8} />
+          </div>
+          <div style={{ marginTop: '0.5rem' }}>
+            <Skeleton width="70%" height={12} radius={6} />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function TableRowsSkeleton({ cols, rows = 6 }: { cols: number; rows?: number }) {
+  return (
+    <div className="table-wrap">
+      <table className="table">
+        <thead>
+          <tr>
+            {Array.from({ length: cols }).map((_, i) => (
+              <th key={i}>
+                <Skeleton width={i === 0 ? 80 : 54} height={11} radius={5} />
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {Array.from({ length: rows }).map((_, r) => (
+            <tr key={r}>
+              {Array.from({ length: cols }).map((_, c) => (
+                <td key={c}>
+                  <Skeleton width={c === 0 ? '72%' : '46%'} height={13} radius={6} />
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function LeadsSkeleton() {
+  return (
+    <div aria-busy="true" aria-live="polite">
+      <span className="sr-only">Loading your lead inbox…</span>
+      <KpiStripSkeleton count={4} />
+      <div className="grid grid-hero" style={{ marginTop: '1rem', alignItems: 'start' }}>
+        <div className="card">
+          <div className="panel-head">
+            <Skeleton width={120} height={15} radius={6} />
+            <Skeleton width={90} height={20} radius={999} />
+          </div>
+          <TableRowsSkeleton cols={5} rows={7} />
+        </div>
+        <div
+          className="card card-pad"
+          style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}
+        >
+          <Skeleton width="60%" height={20} radius={8} />
+          <Skeleton width="40%" height={13} radius={6} />
+          <div style={{ marginTop: '0.5rem', display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
+            {Array.from({ length: 5 }).map((_, i) => (
+              <Skeleton key={i} width={`${88 - (i % 3) * 12}%`} height={13} radius={6} />
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 const usd = (n: number) => `$${n.toLocaleString('en-US', { maximumFractionDigits: 0 })}`;
 
@@ -245,10 +331,11 @@ export default function LeadsPage() {
         }
       />
 
+      {firstLoad ? <LeadsSkeleton /> : (
       <DataState
-        loading={firstLoad}
+        loading={false}
         error={leads.length ? null : error}
-        isEmpty={!firstLoad && !error && leads.length === 0}
+        isEmpty={!error && leads.length === 0}
         loadingLabel="Loading your lead inbox…"
         emptyTitle="No leads captured yet"
         emptyHint="When a visitor chats with your AI agent after clicking an ad, qualified contacts will land here automatically."
@@ -343,7 +430,7 @@ export default function LeadsPage() {
             </div>
 
             <div className="table-wrap">
-              <table className="table">
+              <table className="table" aria-label="Leads inbox">
                 <thead>
                   <tr>
                     <th>Lead</th>
@@ -458,6 +545,7 @@ export default function LeadsPage() {
           </div>
         </div>
       </DataState>
+      )}
     </div>
   );
 }
